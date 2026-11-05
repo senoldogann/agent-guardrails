@@ -15,7 +15,7 @@ requires-python = ">=3.12"
 pythonpath = ["src"]
 testpaths = ["tests"]
 EOF
-uv add -q --dev pytest hypothesis pytest-reportlog ruff >"$project/.setup.log" 2>&1 || {
+uv add -q --dev pytest hypothesis pytest-reportlog ruff mutmut >"$project/.setup.log" 2>&1 || {
   cat "$project/.setup.log"
   exit 1
 }
@@ -152,5 +152,48 @@ expect_output "report-log forgery: lint bans sys" "\`sys\` is banned"
 
 write_correct
 expect_success "correct: restriction lint passes" restriction_lint
+
+# Mutation gate inputs: mutmut (it mutates numeric literals itself) over a scoped file.
+write_correct
+cat >src/pkg/discount.py <<'EOF'
+def discount_minor(subtotal: int, percent: int) -> int:
+    """Rounded discount in minor units: round_half_up(subtotal * percent / 100)."""
+    return (subtotal * percent + 50) // 100
+EOF
+cat >tests/property/test_discount.py <<'EOF'
+from pkg.discount import discount_minor
+
+TABLE = [(1234, 15, 185), (49, 1, 0), (50, 1, 1), (0, 100, 0)]
+
+
+def test_ac1_rounds_half_up_at_the_boundaries() -> None:
+    for subtotal, percent, expected in TABLE:
+        assert discount_minor(subtotal, percent) == expected
+EOF
+lock_file_tests M-1 tests/property/test_discount.py
+run_mutation "strong suite" src/pkg/discount.py
+expect_all_killed "strong suite: zero non-killed mutants"
+expect_mutant "strong suite: mutmut kills + 50 -> + 51" killed "+ 51"
+
+cat >tests/property/test_discount.py <<'EOF'
+from pkg.discount import discount_minor
+
+
+def test_ac1_returns_an_int() -> None:
+    assert isinstance(discount_minor(1234, 15), int)
+EOF
+cat >tests/test_discount_extra.py <<'EOF'
+from pkg.discount import discount_minor
+
+
+def test_unit_rounds_half_up_not_locked() -> None:
+    assert discount_minor(49, 1) == 0
+    assert discount_minor(50, 1) == 1
+    assert discount_minor(1234, 15) == 185
+EOF
+lock_file_tests M-1 tests/property/test_discount.py
+run_mutation "weak locked suite" src/pkg/discount.py
+expect_mutant "weak locked suite: + 50 -> + 51 survives (unlocked tests do not count)" survived "+ 51"
+rm tests/test_discount_extra.py
 
 finish python

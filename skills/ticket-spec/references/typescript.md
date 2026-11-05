@@ -6,6 +6,13 @@ loads the integrity guard, which fails every test once implementation code patch
 fast-check's global config. Implementation code under `src/` also passes the restriction lint
 (`.agent/lint/biome-restrictions.json`): it may not import test frameworks, exit the process,
 use `globalThis`/`process`, access `.constructor`/`__proto__`, or modify built-ins and prototypes. `src/domain/**` may not import Node built-ins at all.
+It may not `throw` either, except the stub's `throw new Error("NotImplemented: ...")`: contracts return
+typed results, and a throwing self-check would kill mutants without any locked test noticing.
+
+Mutation gate (`make test-mutation`): StrykerJS plus a numeric-literal mutator (n+1, n-1) run against
+the changed source files; a mutant counts as killed only when a locked test fails. Every boundary
+constant therefore needs a deterministic example on each side of it (e.g. a rounding table with
+`x.49` and `x.50` cases), not only random property inputs.
 
 ## Contract (locked): `src/domain/percent.contract.ts`
 

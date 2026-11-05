@@ -1,0 +1,10 @@
+// Biome plugin: implementation code returns typed results; the only allowed `throw` is a stub's
+// `throw new Error("NotImplemented: <name>")`. A self-check that throws would make mutants "killed"
+// without any locked test noticing, so it is banned rather than trusted.
+
+language js
+
+`throw $error` as $node where {
+  not $error <: `new Error($message)` where { $message <: r"^[\"'`]NotImplemented: .*" },
+  register_diagnostic(span=$node, message="`throw` is banned in implementation code (contracts return typed results); only a stub may throw new Error('NotImplemented: <name>').", severity="error")
+}

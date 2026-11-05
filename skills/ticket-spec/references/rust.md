@@ -3,7 +3,13 @@
 Tools: cargo check/clippy (`-D warnings`), rustfmt, proptest, plain libtest (not nextest: under
 nextest a test that calls `process::exit(0)` is reported as passed). Clippy runs with
 `.agent/lint/clippy.toml`, which disallows `process::exit`/`abort`, environment mutation and panic
-hooks. `Cargo.toml` (human-owned) sets `[lints.rust] unsafe_code = "forbid"`.
+hooks. `Cargo.toml` (human-owned) sets `[lints.rust] unsafe_code = "forbid"`. The library itself is
+linted without `panic!`, `unwrap`, `expect`, `unreachable!` and `unimplemented!`: contracts return
+`Result`, and only a stub uses `todo!("NotImplemented: ...")`.
+
+Mutation gate (`make test-mutation`): cargo-mutants (only the locked test targets run, so every locked
+test file must be `tests/<name>.rs`) plus a numeric-literal mutator (n+1, n-1). Every boundary
+constant needs a deterministic example on each side of it, not only random proptest inputs.
 Rust gives the real guarantee: a tuple struct with a private field can only be built inside its
 module and its child modules.
 

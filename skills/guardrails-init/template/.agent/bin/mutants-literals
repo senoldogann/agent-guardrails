@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# Usage: mutants-literals <extended-regex>
+# Numeric-literal mutator for TS/JS/Rust (StrykerJS and cargo-mutants never mutate numbers).
+# For every decimal numeric literal outside comments and strings in the scoped files matching
+# <extended-regex> (see mutants-scope), tries n+1 and, when n > 0, n-1, one variant at a time:
+# `make test MUTATION_RUN=1` (fixed property-test seeds), then `make verify-green-all`.
+# Prints normalized mutants TSV rows (see mutants-lib.sh) with mutator `NumericLiteral`:
+#   killed   verify-green-all failed and a locked test failed
+#   survived verify-green-all passed
+#   timeout  the test run exceeded 10x the baseline duration + 30 s
+#   invalid  verify-green-all failed without a failed locked test (build or load error)
+# Every mutated file is restored on exit, including on failure or interrupt.
+# Not mutated: hex/octal/binary literals, exponents, numbers inside regex literals or template
+# strings (TS), and Rust code from a `#[cfg(test)]` line to the end of the file.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 1 $# "mutants-literals <extended-regex>"
+cd_project_root
+
+files=$(scope_files "$1")
+[[ -n $files ]] || exit 0
+
+work=$(mktemp -d)
+restore() {
+  local file
+  while IFS= read -r file; do
+    if [[ -f "$work/original/$file" ]]; then cp "$work/original/$file" "$file"; fi
+  done <<<"$files"
+  rm -rf "$work"
+}
+trap restore EXIT
+trap 'exit 130' INT TERM
+
+while IFS= read -r file; do
+  [[ -f $file ]] || die "scoped file does not exist: $file"
+  mkdir -p "$work/original/$(dirname "$file")"
+  cp "$file" "$work/original/$file"
+done <<<"$files"
+
+# Runs a command in its own process group and kills the whole group after <seconds>; exit 124 then.
+run_with_limit() {
+  local seconds=$1
+  shift
+  perl -e '
+    my $limit = shift;
+    my $pid = fork() // die "fork failed: $!";
+    if ($pid == 0) { setpgrp(0, 0); exec(@ARGV) or die "exec failed: $!"; }
+    local $SIG{ALRM} = sub { kill("KILL", -$pid); waitpid($pid, 0); exit(124); };
+    alarm($limit);
+    waitpid($pid, 0);
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+  ' "$seconds" "$@"
+}
+
+# Succeeds when the last results file has a failed result for a locked test.
+locked_test_failed() {
+  local lock
+  for lock in specs/*/tests.lock; do [[ -f $lock ]] && awk 'NF' "$lock"; done |
+    awk -F'\t' 'NR == FNR { locked[$0] = 1; next } ($1 in locked) && $2 == "failed" { found = 1 } END { exit !found }' \
+      - .agent/reports/results/test.tsv
+}
+
+# Prints the outcome of the suite against the current working tree: killed|survived|timeout|invalid.
+judge() {
+  local limit=$1 status=0
+  run_with_limit "$limit" make --no-print-directory test MUTATION_RUN=1 >"$work/test.log" 2>&1 || status=$?
+  if [[ $status -eq 124 ]]; then
+    echo timeout
+  elif make --no-print-directory verify-green-all >"$work/verify.log" 2>&1; then
+    echo survived
+  elif locked_test_failed; then
+    echo killed
+  else
+    echo invalid
+  fi
+}
+
+# Prints "<line>\t<column>\t<literal>" for every mutable numeric literal of a file (columns 1-based).
+literals() {
+  local file=$1 language=ts
+  case $file in *.rs) language=rs ;; esac
+  awk -v language="$language" '
+    function ident(ch) { return ch ~ /[A-Za-z0-9_$]/ }
+    {
+      line = $0
+      if (language == "rs" && block == 0 && quote == "" && raw < 0 && line ~ /^[ \t]*#\[cfg\(test\)\]/) exit
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        two = substr(line, i, 2)
+        if (block > 0) {
+          if (two == "*/") { block--; i++ }
+          else if (language == "rs" && two == "/*") { block++; i++ }
+          continue
+        }
+        if (quote != "") {
+          if (c == "\\") i++
+          else if (c == quote) quote = ""
+          continue
+        }
+        if (raw >= 0) {
+          closing = "\"" substr("################################", 1, raw)
+          if (substr(line, i, length(closing)) == closing) { i += length(closing) - 1; raw = -1 }
+          continue
+        }
+        if (two == "//") break
+        if (two == "/*") { block = 1; i++; continue }
+        if (c == "\"") { quote = c; continue }
+        if (language == "ts" && (c == "\047" || c == "`")) { quote = c; continue }
+        prev = i > 1 ? substr(line, i - 1, 1) : ""
+        if (language == "rs" && c == "r" && !ident(prev) && match(substr(line, i), /^r#*"/)) {
+          raw = RLENGTH - 2; i += RLENGTH - 1; continue
+        }
+        if (language == "rs" && c == "\047") {
+          if (substr(line, i + 1, 1) == "\\") { rest = substr(line, i + 2); end = index(rest, "\047"); if (end > 0) i += end + 1; continue }
+          if (substr(line, i + 2, 1) == "\047") { i += 2; continue }
+          continue
+        }
+        member = prev == "." && (i < 3 || substr(line, i - 2, 1) != ".")
+        if (c !~ /[0-9]/ || ident(prev) || member) continue
+        start = i
+        if (c == "0" && substr(line, i + 1, 1) ~ /[xXoObB]/) {
+          while (i <= n && substr(line, i, 1) ~ /[0-9A-Za-z_]/) i++
+          i--; continue
+        }
+        while (i <= n && substr(line, i, 1) ~ /[0-9_]/) i++
+        if (substr(line, i, 1) == "." && substr(line, i + 1, 1) ~ /[0-9]/) {
+          i++
+          while (i <= n && substr(line, i, 1) ~ /[0-9_]/) i++
+        }
+        skip = 0
+        if (substr(line, i, 1) ~ /[eE]/ && substr(line, i + 1, 1) ~ /[0-9+-]/) skip = 1
+        suffix_start = i
+        while (i <= n && substr(line, i, 1) ~ /[A-Za-z0-9_]/) i++
+        suffix = substr(line, suffix_start, i - suffix_start)
+        if (language == "ts" && suffix != "" && suffix != "n") skip = 1
+        literal = substr(line, start, i - start)
+        if (language == "ts" && literal ~ /^0[0-9]/) skip = 1
+        if (!skip) printf "%d\t%d\t%s\n", NR, start, literal
+        i--
+      }
+    }
+    BEGIN { block = 0; quote = ""; raw = -1 }
+  ' "$file"
+}
+
+# Prints the variants of a literal: n+1, and n-1 when n > 0. Fractions and suffixes are kept.
+variants() {
+  local literal=$1 digits fraction suffix
+  digits=$(sed -E 's/^([0-9_]+).*/\1/' <<<"$literal" | tr -d _)
+  fraction=$(sed -E 's/^[0-9_]+(\.[0-9_]+)?.*/\1/' <<<"$literal")
+  suffix=$(sed -E 's/^[0-9_]+(\.[0-9_]+)?//' <<<"$literal")
+  [[ ${#digits} -le 15 ]] || return 0
+  digits=$((10#$digits))
+  printf '%s%s%s\n' "$((digits + 1))" "$fraction" "$suffix"
+  [[ $digits -le 0 ]] || printf '%s%s%s\n' "$((digits - 1))" "$fraction" "$suffix"
+}
+
+# Writes <file> with the literal at <line>:<column> of the original replaced by <replacement>.
+write_variant() {
+  local file=$1 line=$2 column=$3 length=$4 replacement=$5
+  awk -v target="$line" -v column="$column" -v length_="$length" -v replacement="$replacement" '
+    NR == target { $0 = substr($0, 1, column - 1) replacement substr($0, column + length_) }
+    { print }
+  ' "$work/original/$file" >"$file"
+}
+
+start=$(date +%s)
+baseline=$(judge 3600)
+[[ $baseline == survived ]] || {
+  sed 's/^/  /' "$work/test.log" "$work/verify.log" >&2
+  die "mutants-literals: the unmutated suite is not green (outcome: $baseline); fix it before mutation testing"
+}
+limit=$((($(date +%s) - start) * 10 + 30))
+
+while IFS= read -r file; do
+  while IFS=$'\t' read -r line column literal; do
+    text=$(sed -n "${line}p" "$work/original/$file")
+    while IFS= read -r replacement; do
+      [[ -n $replacement ]] || continue
+      write_variant "$file" "$line" "$column" "${#literal}" "$replacement"
+      outcome=$(judge "$limit")
+      cp "$work/original/$file" "$file"
+      printf 'mutants-literals: %s:%s %s -> %s %s\n' "$file" "$line" "$literal" "$replacement" "$outcome" >&2
+      jq -rn --arg file "$file" --arg literal "$literal" --arg replacement "$replacement" --arg text "$text" \
+        --arg where "$file:$line" --arg outcome "$outcome" "$MUTANTS_JQ_LIB"'
+        [key($file; "NumericLiteral"; $literal; $replacement; $text), $where, $outcome,
+         describe("NumericLiteral"; $literal; $replacement)] | join("\t")
+      '
+    done < <(variants "$literal")
+  done < <(literals "$work/original/$file")
+done <<<"$files" | fingerprint_rows

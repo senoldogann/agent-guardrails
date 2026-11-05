@@ -8,7 +8,7 @@ include .agent/common.mk
 RESULTS := .agent/reports/results
 EVENT_STREAM := --experimental-event-stream-version 0 --experimental-event-stream-output
 
-.PHONY: typecheck lint fmt-check test-ids test test-prop
+.PHONY: typecheck lint fmt-check test-ids test test-prop test-mutation
 
 typecheck:
 	swift build --build-tests -Xswiftc -warnings-as-errors
@@ -42,3 +42,8 @@ test:
 ## Property tests (suites named *PropertyTests) -> $(RESULTS)/test-prop.tsv.
 test-prop:
 	$(call swift_results,test-prop,--filter PropertyTests)
+
+## No mutation gate for Swift: Muter reports wrong results on swift-testing and has no recent release.
+## Swift relies on deterministic boundary tables in the locked tests.
+test-mutation:
+	@echo "no mutation gate for Swift"

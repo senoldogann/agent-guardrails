@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Usage: mutants-cargo-run
+# Runs cargo-mutants on the Rust files of the mutation scope (see mutants-scope) with the kit's
+# configuration (.agent/mutation/cargo-mutants.toml; .cargo/mutants.toml is ignored), a fixed proptest
+# seed, and only the locked test targets (a kill must come from a locked test, so every locked test
+# file must be an integration test target tests/<name>.rs). Output: .agent/reports/mutation/mutants.out.
+# cargo-mutants exits 2 when mutants were missed and 3 on timeouts; both are results, not failures.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 0 $# "mutants-cargo-run"
+cd_project_root
+
+files=$(scope_files '\.rs$')
+[[ -n $files ]] || die "no Rust files in $MUTATION_SCOPE"
+tests=$(for lock in specs/*/tests.lock; do [[ -f $lock ]] && awk -F'::' 'NF { print $1 }' "$lock"; done | sort -u)
+[[ -n $tests ]] || die "no locked tests (specs/*/tests.lock); mutants can only be killed by locked tests"
+
+args=()
+while IFS= read -r file; do args+=(--file "$file"); done <<<"$files"
+args+=(--)
+while IFS= read -r test_file; do
+  [[ $test_file =~ ^tests/([A-Za-z0-9_-]+)\.rs$ ]] ||
+    die "locked test file $test_file is not an integration test target tests/<name>.rs; cargo-mutants cannot run it alone"
+  args+=(--test "${BASH_REMATCH[1]}")
+done <<<"$tests"
+
+rm -rf "$MUTATION_DIR/mutants.out"
+status=0
+PROPTEST_RNG_SEED=20261105 cargo mutants --config .agent/mutation/cargo-mutants.toml --output "$MUTATION_DIR" \
+  --jobs 4 --no-shuffle "${args[@]}" || status=$?
+case $status in
+  0 | 2 | 3) ;;
+  *) die "cargo mutants failed with exit code $status (baseline or usage error); see $MUTATION_DIR/mutants.out/log" ;;
+esac

@@ -2,10 +2,14 @@
 # Usage: escape-check <ts|js|py|rs|swift>
 # Fails on type-system escape hatches and lint suppressions in tracked source files.
 # Linters cover most of these; this catches suppression comments that would silence them.
+# In every language it also bans mutation-testing suppressions and probes (a test or implementation
+# that skips mutants or detects the active mutant would fake the mutation gate).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require_args 1 $# "escape-check <ts|js|py|rs|swift>"
 cd_project_root
+
+mutation='Stryker disable|stryMutAct|__stryker__|pragma: *no mutate|MUTANT_UNDER_TEST|mutants::skip'
 
 case $1 in
   ts | js)
@@ -27,7 +31,7 @@ case $1 in
   *) die "unknown language: $1" ;;
 esac
 
-hits=$(git ls-files -z -- "${globs[@]}" | xargs -0 grep -nE "$pattern" || true)
+hits=$(git ls-files -z -- "${globs[@]}" | xargs -0 grep -nE "$pattern|$mutation" || true)
 if [[ -n $hits ]]; then
   printf 'type/lint escape hatches found (fix the root cause; a human may change this rule):\n%s\n' "$hits" >&2
   exit 1

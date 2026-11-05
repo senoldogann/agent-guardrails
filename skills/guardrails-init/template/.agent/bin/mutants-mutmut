@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Usage: mutants-mutmut <mutmut-work-dir>
+# Converts the results of mutants-mutmut-run (the `*.meta` files under <work>/mutants and
+# `mutmut show <mutant>`) to the normalized mutants TSV (see mutants-lib.sh) on stdout.
+# mutmut has no operator names, so the mutator is "mutmut"; original and replacement are the removed
+# and added lines of the mutant's diff. Statuses from mutmut's exit codes: 1/3 killed, 0 survived,
+# 5/33 no-coverage ("no tests"), 24/36/152/255/-24 timeout, 37 invalid (caught by type check);
+# anything else (suspicious, skipped, segfault, not checked, interrupted) is error.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 1 $# "mutants-mutmut <mutmut-work-dir>"
+cd_project_root
+
+root=$(pwd -P)
+work=$1
+[[ -d "$work/mutants" ]] || die "$work/mutants is missing; mutants-mutmut-run did not finish"
+
+status_of() {
+  case $1 in
+    1 | 3) echo killed ;;
+    0) echo survived ;;
+    5 | 33) echo no-coverage ;;
+    24 | 36 | 152 | 255 | -24) echo timeout ;;
+    37) echo invalid ;;
+    *) echo error ;;
+  esac
+}
+
+# Prints the 1-based line of <text> in <file>, searching from the definition of <function>.
+line_of() {
+  local file=$1 function=$2 text=$3
+  awk -v def="def $function(" -v text="$text" '
+    !started && index($0, def) > 0 { started = 1; first = NR }
+    started && $0 == text { print NR; found = 1; exit }
+    END { if (!found) print (first ? first : 1) }
+  ' "$file"
+}
+
+find "$work/mutants" -name '*.py.meta' | sort | while IFS= read -r meta; do
+  file=${meta#"$work/mutants/"}
+  file=${file%.meta}
+  jq -r '.exit_code_by_key | to_entries[] | "\(.key)\t\(.value // "none")"' "$meta" |
+    while IFS=$'\t' read -r name code; do
+      diff=$(cd "$work" && uv run -q --project "$root" mutmut show "$name" 2>/dev/null) || die "mutmut show $name failed"
+      removed=$(awk '/^-/ && !/^---/ { print substr($0, 2) }' <<<"$diff")
+      added=$(awk '/^\+/ && !/^\+\+\+/ { print substr($0, 2) }' <<<"$diff")
+      first=$(head -n 1 <<<"$removed")
+      function=${name##*.}
+      function=${function##*ǁ}
+      function=${function#x_}
+      function=${function%__mutmut_*}
+      line=$(line_of "$file" "$function" "$first")
+      jq -rn --arg file "$file" --arg removed "$removed" --arg added "$added" --arg text "$first" \
+        --arg where "$file:$line" --arg status "$(status_of "$code")" --arg name "$name" "$MUTANTS_JQ_LIB"'
+        [key($file; "mutmut"; $removed; $added; $text), $where, $status,
+         describe("mutmut"; $removed; $added) + (if $status == "error" then " (" + $name + ")" else "" end)]
+        | join("\t")
+      '
+    done
+done | fingerprint_rows
