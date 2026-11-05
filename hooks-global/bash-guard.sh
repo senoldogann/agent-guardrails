@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Global Claude Code PreToolUse hook for Bash (registered in ~/.claude/settings.json by install.sh).
-# The agent works with the owner's GitHub identity, so actions reserved for the human must be blocked
-# before they run: approving or admin-merging PRs, approving deployments (merge-approval environment),
+# Scope: the full rule set applies only in repositories that use the kit (.agent/bin/ci-guard exists).
+# Everywhere else the agent works as if the kit did not exist, with one exception that protects the kit
+# repositories themselves: nothing may run approve-head/revoke-head or post a `merge-approval` status.
+# In kit repositories the agent works with the owner's GitHub identity, so actions reserved for the human
+# must be blocked before they run: approving or admin-merging PRs, approving deployments (merge-approval environment),
 # changing repo settings/rulesets/workflows/secrets, reading credentials, and pushing to the default
 # branch. `gh` is allow-listed per subcommand; everything else is a deny-list over the whole command
 # string, including text inside quotes (so `bash -c "..."` wrappers are covered).
@@ -9,6 +12,8 @@
 # The server-side backstop is a fine-grained GH_TOKEN without Administration/Workflows/Deployments/
 # Environments permissions. Exit code 2 blocks the call and shows stderr to the agent.
 set -euo pipefail
+# shellcheck source=kit-project.sh
+source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
 input=$(cat)
 raw=$(jq -r '.tool_input.command // empty' <<<"$input")
@@ -29,14 +34,20 @@ matches() {
   grep -Eiq -- "$1" <<<"$cmd"
 }
 
+# Everywhere: the owner's merge approval of kit repositories can only come from the owner's own shell.
+matches '(^|[;&|(]|\$\()[[:space:]]*((ba|z)?sh[[:space:]]+|exec[[:space:]]+|env[[:space:]]+)?[^[:space:];&|()]*(approve|revoke)-head([[:space:]]|$)|merge-approval' &&
+  deny "merge approval (owner-only commit status)"
+
+# Everything below applies only inside kit repositories.
+is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || exit 0
+
 # Credentials and token fallbacks.
 matches 'security[[:space:]]+(find|dump|export)-' && deny "reading the macOS keychain"
 matches 'git[[:space:]]+credential' && deny "git credential helper access"
 matches '\.config/gh|hosts\.yml|\.git-credentials|\.netrc|settings\.local\.json' && deny "reading stored GitHub credentials"
 matches '(GH|GITHUB)_(ENTERPRISE_)?TOKEN' && deny "referencing the GitHub token (read, override or unset)"
 matches 'pending_deployments|deployment_protection|/environments/' && deny "deployment approval or environment access"
-matches '(^|[;&|(]|\$\()[[:space:]]*((ba|z)?sh[[:space:]]+|exec[[:space:]]+|env[[:space:]]+)?[^[:space:];&|()]*(approve|revoke)-head([[:space:]]|$)|/statuses/' &&
-  deny "merge approval (owner-only commit status)"
+matches '/statuses/' && deny "commit statuses (merge approval is owner-only)"
 # shellcheck disable=SC2016 # backticks are literal regex characters
 matches '(^|[;&|(`"'"'"'[:space:]])(printenv|export[[:space:]]+-p|set)([[:space:]]*($|[;&|)`"'"'"']))|(^|[;&|(`[:space:]])env[[:space:]]*($|[;&|)`])' &&
   deny "dumping the environment (may expose tokens)"

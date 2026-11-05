@@ -21,8 +21,8 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   `~/.claude`), which is git-ignored and never the only place a team rule exists.
 - Repeated agent mistakes are fixed in context or checks via `/process-fix`, not by hand-editing code or docs:
   ask the agent why it happened first.
-- Agent identity: the agent works with the owner's GitHub account. The global bash-guard hook blocks
-  approvals, admin merges, settings changes and credential reads; the ruleset makes every merge wait for the
+- Agent identity: the agent works with the owner's GitHub account. In this repository the global bash-guard
+  hook blocks approvals, admin merges, settings changes and credential reads; the ruleset makes every merge wait for the
   owner's `merge-approval`. Accepted risk: bash-guard matches command text, so a deliberately disguised
   command could still act as the owner. The optional hardening is a fine-grained token for this repository
   only (Contents, Pull requests, Issues read/write; Actions, Commit statuses read; never Commit statuses
