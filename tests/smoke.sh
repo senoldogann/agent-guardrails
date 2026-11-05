@@ -116,6 +116,13 @@ expect_failure "'### Q 2' heading is checked too" .agent/bin/questions-check ABC
 printf '## Q1: Rounding?\nDecision: half-even to 2 decimals\n' >specs/ABC-1/OPEN_QUESTIONS.md
 expect_success "decided question passes" .agent/bin/questions-check ABC-1
 
+echo "questions-lint"
+expect_failure "question without recommendation and evidence fails" .agent/bin/questions-lint ABC-1
+printf '## Q1: Rounding?\nOptions: A) half-even / B) half-up\nRecommendation: A because ledgers sum many lines\nDecision: half-even to 2 decimals\n' >specs/ABC-1/OPEN_QUESTIONS.md
+expect_failure "question without evidence fails" .agent/bin/questions-lint ABC-1
+printf '## Q1: Rounding?\nOptions: A) half-even / B) half-up\nRecommendation: A because ledgers sum many lines\nEvidence: IEEE 754 default rounding\nDecision: half-even to 2 decimals\n' >specs/ABC-1/OPEN_QUESTIONS.md
+expect_success "question with recommendation and evidence passes" .agent/bin/questions-lint ABC-1
+
 echo "docs-check"
 expect_success "prose dates allowed" .agent/bin/docs-check
 printf 'Keep\n' >.gitignore
@@ -309,8 +316,10 @@ mkdir -p specs/ABC-2
 printf 'x\n' >specs/ABC-2/a.md
 git add -A
 git commit -qm one
-expect_success "branch naming its ticket passes" ci_guard feat/ABC-2-one feat/ABC-2-one main
+expect_failure "unlocked draft spec is not mergeable" ci_guard feat/ABC-2-one feat/ABC-2-one main
+expect_out "draft reason is explained" "spec for ABC-2 is not locked yet"
 expect_failure "branch not naming the ticket fails" ci_guard feat/ABC-2-one feat/other main
+expect_out "branch mismatch is explained" "does not name ticket ABC-2"
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]
