@@ -84,4 +84,38 @@ write_discount_tests 'expect(discountMinor(1234n, 15n)).toBe(185n);'
 run_mutation "weak locked suite" src/domain/discount.js
 expect_mutant "weak locked suite: 50n -> 51n survives" survived "NumericLiteral: 50n -> 51n"
 
+# Kit invariant (.js twin): the mutation run swaps it for the no-op, so only assertions kill.
+cat >src/domain/split.js <<'EOF'
+// @ts-check
+import { invariant } from "../../.agent/runtime/invariant.js";
+
+/**
+ * @param {bigint} subtotal
+ * @param {bigint} percent
+ */
+export const split = (subtotal, percent) => {
+  const discount = (subtotal * percent + 50n) / 100n;
+  const total = subtotal - discount;
+  invariant(total >= 0n, "Invariant: the total is non-negative");
+  return { discount, total };
+};
+EOF
+cat >src/domain/split.test.js <<'EOF'
+import { describe, expect, it } from "vitest";
+import { split } from "./split.js";
+
+describe("split", () => {
+  it("AC-1: splits into a rounded discount and the rest", () => {
+    for (const [subtotal, percent, discount, total] of [[1234n, 15n, 185n, 1049n], [49n, 1n, 0n, 49n], [50n, 1n, 1n, 49n], [1999n, 100n, 1999n, 0n]]) {
+      expect(split(subtotal, percent)).toEqual({ discount, total });
+    }
+  });
+});
+EOF
+lock_file_tests M-2 src/domain/split.test.js
+run_mutation "invariant" src/domain/split.js
+expect_all_killed "invariant: zero non-killed mutants"
+expect_mutant "invariant: '/ 100n -> * 100n' is killed by an assertion" killed "+ 50n) * 100n"
+expect_mutant "invariant: the invariant's own mutants are not counted" invalid "(inside a kit invariant, not counted)"
+
 finish javascript

@@ -11,7 +11,8 @@
 #   invalid  verify-green-all failed without a failed locked test (build or load error)
 # Every mutated file is restored on exit, including on failure or interrupt.
 # Not mutated: hex/octal/binary literals, exponents, numbers inside regex literals or template
-# strings (TS), and Rust code from a `#[cfg(test)]` line to the end of the file.
+# strings (TS), numbers inside a kit `invariant(...)` call (TS/JS; mutation runs make it a no-op), and
+# Rust code from a `#[cfg(test)]` line to the end of the file.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/mutants-lib.sh"
@@ -61,13 +62,13 @@ locked_test_failed() {
       - .agent/reports/results/test.tsv
 }
 
-# Succeeds when locked tests failed and every locked failure is an "Invariant: " error: the
-# implementation noticed the mutation, the tests did not.
+# Succeeds when locked tests failed and every locked failure is an "Invariant: " or "NotImplemented: "
+# error: the implementation noticed the mutation, the tests did not.
 locked_test_failed_by_invariant_only() {
   local lock
   for lock in specs/*/tests.lock; do [[ -f $lock ]] && awk 'NF' "$lock"; done |
     awk -F'\t' 'NR == FNR { locked[$0] = 1; next }
-      ($1 in locked) && $2 == "failed" { failed++; if ($3 !~ /Invariant: /) other++ }
+      ($1 in locked) && $2 == "failed" { failed++; if ($3 !~ /Invariant: |NotImplemented: /) other++ }
       END { exit !(failed > 0 && other == 0) }' - .agent/reports/results/test.tsv
 }
 
@@ -121,6 +122,14 @@ literals() {
         if (c == "\"") { quote = c; continue }
         if (language == "ts" && (c == "\047" || c == "`")) { quote = c; continue }
         prev = i > 1 ? substr(line, i - 1, 1) : ""
+        if (language == "ts" && guard > 0) {
+          if (c == "(") guard++
+          else if (c == ")") guard--
+        }
+        if (language == "ts" && guard == 0 && substr(line, i, 9) == "invariant" && !ident(prev) &&
+          match(substr(line, i + 9), /^[ \t]*\(/)) {
+          guard = 1; i += 8 + RLENGTH; continue
+        }
         if (language == "rs" && c == "r" && !ident(prev) && match(substr(line, i), /^r#*"/)) {
           raw = RLENGTH - 2; i += RLENGTH - 1; continue
         }
@@ -149,11 +158,11 @@ literals() {
         if (language == "ts" && suffix != "" && suffix != "n") skip = 1
         literal = substr(line, start, i - start)
         if (language == "ts" && literal ~ /^0[0-9]/) skip = 1
-        if (!skip) printf "%d\t%d\t%s\n", NR, start, literal
+        if (!skip && guard == 0) printf "%d\t%d\t%s\n", NR, start, literal
         i--
       }
     }
-    BEGIN { block = 0; quote = ""; raw = -1 }
+    BEGIN { block = 0; quote = ""; raw = -1; guard = 0 }
   ' "$file"
 }
 

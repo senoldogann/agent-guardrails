@@ -1,0 +1,49 @@
+// Biome plugin: shapes implementation code must keep so the mutation run cannot be detected or
+// influenced from inside the code under test.
+// - The kit `invariant` (.agent/runtime/invariant) is used only as a statement
+//   `invariant(<condition>, "Invariant: <what must hold>");`, never as a value: mutation runs swap it
+//   for a no-op, and code that could hold, compare or call it differently could notice the swap.
+// - The kit invariant is imported only as `import { invariant } from "<path>/.agent/runtime/invariant.ts";`
+//   (or .js): no alias, namespace or default import that would hide calls from the mutation ignorer.
+// - No try/catch/finally: catching would let code probe whether an invariant throws.
+// - No async code (async functions, await, .then/.catch/.finally): domain logic is synchronous, and
+//   deferred work could outlive the test that started it.
+// - No module-level `let`/`var`: state shared between tests could tell runs apart.
+
+language js
+
+or {
+  `invariant` as $node where {
+    $node <: not within `invariant($condition, $message);`,
+    $node <: not within JsImport(),
+    register_diagnostic(span=$node, message="Use the kit invariant only as a statement: invariant(<condition>, 'Invariant: <what must hold>');", severity="error")
+  },
+  JsImport() as $node where {
+    $node <: r"[\s\S]*\.agent/runtime/invariant[\s\S]*",
+    $node <: not r"^import \{ invariant \} from [\"'][^\"']*\.agent/runtime/invariant\.[tj]s[\"'];?$",
+    register_diagnostic(span=$node, message="Import the kit invariant exactly as: import { invariant } from '<path>/.agent/runtime/invariant.ts';", severity="error")
+  },
+  `invariant($condition, $message);` as $node where {
+    $message <: not r"^[\"']Invariant: [\s\S]*",
+    register_diagnostic(span=$node, message="The invariant message must be a string literal starting with 'Invariant: '.", severity="error")
+  },
+  or { JsTryStatement(), JsTryFinallyStatement() } as $node where {
+    register_diagnostic(span=$node, message="try/catch/finally is banned in implementation code (contracts return typed results; nothing may probe the invariant helper).", severity="error")
+  },
+  JsAwaitExpression() as $node where {
+    register_diagnostic(span=$node, message="Async code is banned in implementation code (no await).", severity="error")
+  },
+  or { JsFunctionDeclaration(), JsFunctionExpression(), JsArrowFunctionExpression(), JsMethodClassMember(), JsMethodObjectMember() } as $node where {
+    $node <: r"^async\s[\s\S]*",
+    register_diagnostic(span=$node, message="Async code is banned in implementation code (no async functions).", severity="error")
+  },
+  `$object.$member` as $node where {
+    $member <: or { `then`, `catch`, `finally` },
+    register_diagnostic(span=$node, message="Async code is banned in implementation code (no .then/.catch/.finally).", severity="error")
+  },
+  JsVariableStatement() as $node where {
+    $node <: or { r"^let\s[\s\S]*", r"^var\s[\s\S]*" },
+    $node <: not within JsFunctionBody(),
+    register_diagnostic(span=$node, message="Module-level let/var is banned in implementation code (no state shared between calls).", severity="error")
+  }
+}

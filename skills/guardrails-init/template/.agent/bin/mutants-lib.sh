@@ -8,7 +8,7 @@
 #   timeout      the run exceeded its time limit (counts as killed)
 #   survived     every locked test still passed
 #   no-coverage  no locked test reaches the mutated code (counts as survived)
-#   invalid      the mutant does not compile or load (listed, not counted)
+#   invalid      the mutant does not compile or load, or sits inside a kit invariant (listed, not counted)
 #   error        the tool reported anything else (ignored, pending, crashed, unknown); fails the gate
 # fingerprint: first 16 hex digits of the SHA-256 of the compact JSON array
 #   [file, mutator, original text, replacement, trimmed text of the mutated line]

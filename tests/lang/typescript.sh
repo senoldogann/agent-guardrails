@@ -155,7 +155,7 @@ export const makePercent = (input: number): unknown => {
 	return { ok: true, value: input };
 };
 EOF
-expect_success "invariant throw: restriction lint allows throw new Error(\"Invariant: ...\")" restriction_lint
+expect_failure "bare invariant throw: restriction lint rejects it (use the kit invariant)" restriction_lint
 printf '// Stryker disable next-line all: equivalent\nexport const one = 1;\n' >src/domain/suppressed.ts
 git add src/domain/suppressed.ts
 expect_failure "Stryker suppression comment: escape-check rejects it" .agent/bin/escape-check ts
@@ -211,5 +211,90 @@ run_mutation "weak locked suite" src/domain/discount.ts
 expect_mutant "weak locked suite: a kill by unlocked tests only counts as survived" survived "(killed only by unlocked tests)"
 expect_mutant "weak locked suite: 50n -> 51n survives" survived "NumericLiteral: 50n -> 51n"
 rm src/domain/discount-extra.test.ts
+
+# Kit invariant: mutation runs make it a no-op, so only assertions kill; its own mutants are not counted.
+cat >src/domain/split.ts <<'EOF'
+import { invariant } from "../../.agent/runtime/invariant.ts";
+
+type NonNegative = bigint & { readonly __brand: "NonNegative" };
+
+const isNonNegative = (n: bigint): n is NonNegative => n >= 0n;
+
+export const makeNonNegative = (n: bigint): NonNegative | undefined =>
+	isNonNegative(n) ? n : undefined;
+
+const provenNonNegative = (n: bigint): NonNegative => {
+	invariant(isNonNegative(n), "Invariant: split amounts are non-negative");
+	return n;
+};
+
+export const split = (
+	subtotal: bigint,
+	percent: bigint,
+): { readonly discount: NonNegative; readonly total: NonNegative } => {
+	const discount = (subtotal * percent + 50n) / 100n;
+	return {
+		discount: provenNonNegative(discount),
+		total: provenNonNegative(subtotal - discount),
+	};
+};
+EOF
+cat >src/domain/split.test.ts <<'EOF'
+import { describe, expect, it } from "vitest";
+import { makeNonNegative, split } from "./split.ts";
+
+describe("split", () => {
+	it("AC-1: splits into a rounded discount and the rest", () => {
+		const table: ReadonlyArray<readonly [bigint, bigint, bigint, bigint]> = [
+			[1234n, 15n, 185n, 1049n],
+			[49n, 1n, 0n, 49n],
+			[50n, 1n, 1n, 49n],
+			[0n, 100n, 0n, 0n],
+			[1999n, 100n, 1999n, 0n],
+		];
+		for (const [subtotal, percent, discount, total] of table) {
+			expect(split(subtotal, percent)).toEqual({ discount, total });
+		}
+	});
+	it("AC-2: accepts zero and rejects negative amounts", () => {
+		expect(makeNonNegative(0n)).toBe(0n);
+		expect(makeNonNegative(-1n)).toBeUndefined();
+	});
+});
+EOF
+lock_file_tests M-2 src/domain/split.test.ts
+expect_success "invariant: restriction lint accepts the kit invariant statement" restriction_lint
+run_mutation "invariant" src/domain/split.ts
+expect_all_killed "invariant: zero non-killed mutants"
+expect_mutant "invariant: '/ 100n -> * 100n' is killed by an assertion" killed "+ 50n) * 100n"
+expect_mutant "invariant: the invariant's own mutants are not counted" invalid "(inside a kit invariant, not counted)"
+if jq -e '[.files[].mutants[] | select(.status == "Killed" and ((.statusReason // "") | test("Invariant: ")))] | length > 0' \
+  "$project/.agent/reports/mutation/stryker.json" >/dev/null; then
+  fail "invariant: no mutant was killed by an Invariant error"
+else ok "invariant: no mutant was killed by an Invariant error"; fi
+
+cp src/domain/split.ts .split.ts.orig
+cat >src/domain/split.ts <<'EOF'
+import { invariant } from "../../.agent/runtime/invariant.ts";
+
+export const invariantIsLive = (): boolean => {
+	try {
+		invariant(false, "Invariant: probe");
+		return false;
+	} catch {
+		return true;
+	}
+};
+EOF
+expect_failure "probe: try/catch around invariant fails lint" restriction_lint
+expect_output "probe: lint names try/catch" "try/catch/finally is banned in implementation code"
+cat >src/domain/split.ts <<'EOF'
+import { invariant } from "../../.agent/runtime/invariant.ts";
+
+export const held = invariant;
+EOF
+expect_failure "probe: invariant used as a value fails lint" restriction_lint
+expect_output "probe: lint names the invariant shape" "Use the kit invariant only as a statement"
+mv .split.ts.orig src/domain/split.ts
 
 finish typescript

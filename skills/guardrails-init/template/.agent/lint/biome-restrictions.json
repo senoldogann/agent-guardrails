@@ -12,7 +12,8 @@
     "./no-type-assertion.grit",
     "./no-dynamic-import.grit",
     "./no-builtin-tampering.grit",
-    "./no-throw.grit"
+    "./no-throw.grit",
+    "./implementation-shape.grit"
   ],
   "linter": {
     "enabled": true,
@@ -78,6 +79,14 @@
                   "@fast-check/*"
                 ],
                 "message": "Implementation code must not import test frameworks or property-test runners; it runs inside the test process."
+              },
+              {
+                "group": [
+                  "**/.agent/**",
+                  "!**/.agent/runtime/invariant.ts",
+                  "!**/.agent/runtime/invariant.js"
+                ],
+                "message": "Implementation code may import nothing from .agent/ except the kit invariant (.agent/runtime/invariant.ts or .js)."
               }
             ]
           }
@@ -91,7 +100,8 @@
               "process": "Import the members you need from node:process (exit/kill/abort are banned).",
               "Function": "new Function() evaluates code at runtime; banned in implementation code.",
               "require": "Use static imports.",
-              "module": "Use ES modules."
+              "module": "Use ES modules.",
+              "Promise": "Async code is banned in implementation code (domain logic is synchronous)."
             }
           }
         }
@@ -197,6 +207,14 @@
                       "node:*"
                     ],
                     "message": "Domain code is pure: no Node built-ins (I/O belongs in adapters outside src/domain)."
+                  },
+                  {
+                    "group": [
+                      "**/.agent/**",
+                      "!**/.agent/runtime/invariant.ts",
+                      "!**/.agent/runtime/invariant.js"
+                    ],
+                    "message": "Implementation code may import nothing from .agent/ except the kit invariant (.agent/runtime/invariant.ts or .js)."
                   }
                 ]
               }
@@ -210,7 +228,8 @@
                   "process": "Import the members you need from node:process (exit/kill/abort are banned).",
                   "Function": "new Function() evaluates code at runtime; banned in implementation code.",
                   "require": "Use static imports.",
-                  "module": "Use ES modules."
+                  "module": "Use ES modules.",
+                  "Promise": "Async code is banned in implementation code (domain logic is synchronous)."
                 }
               }
             }

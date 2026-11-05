@@ -3,7 +3,9 @@
 Same layout, tools, test rules and integrity guard as `typescript.md`, with types in JSDoc checked by
 `tsc -p jsconfig.json` (`checkJs`, `strict`). Guarantees are compile-time only where tsc runs;
 callers outside the checked project get none, so constructors also validate at runtime.
-The `throw` ban and the mutation gate of `typescript.md` apply unchanged.
+The implementation-code rules (no `throw` except the stub's, no try/catch, no async code, no
+module-level `let`/`var`), the kit invariant and the mutation gate of `typescript.md` apply unchanged;
+import the invariant as `import { invariant } from "<relative path>/.agent/runtime/invariant.js";`.
 
 ## Contract (locked): `src/domain/percent.contract.js`
 
