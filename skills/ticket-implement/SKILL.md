@@ -28,6 +28,8 @@ disable-model-invocation: true
    Then push, mark the PR ready (`gh pr ready`), enable auto-merge
    (`gh pr merge --auto --squash`). It merges only after CI is green and the owner runs `approve-head` for
    that exact HEAD. Do not push after asking for approval unless asked: a push invalidates it.
+5. Post a PR comment for the owner, in plain language, with the command to copy:
+   `Ready for your approval. In your own terminal (not the agent's) run: approve-head <PR URL>`.
 
 ## Report (PR comment and final message)
 

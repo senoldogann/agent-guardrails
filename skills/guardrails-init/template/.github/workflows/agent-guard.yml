@@ -30,6 +30,7 @@ jobs:
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           PR_BASE: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -41,5 +42,11 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           echo "::${token}::"
-          { echo '### agent-guard'; echo '```text'; cat guard.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          {
+            echo '### agent-guard'
+            echo '```text'
+            cat guard.txt
+            echo '```'
+            echo "Owner approval for exactly this head, in your own terminal: \`approve-head ${PR_URL}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"

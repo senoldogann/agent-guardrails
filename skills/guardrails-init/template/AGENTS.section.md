@@ -9,7 +9,7 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   1. `/ticket-spec <ID>` → draft PR with contracts, stubs, locked tests (`AC-<n>` in test names), spec files.
   2. The owner answers `specs/<ID>/OPEN_QUESTIONS.md` and reviews the spec; the agent locks it (`spec-lock`).
   3. `/ticket-implement <ID>` → implementation in `specs/<ID>/write-allow` paths only.
-  4. The owner approves the exact HEAD with the kit's `bin/approve-head <pr>` (commit status
+  4. The owner approves the exact HEAD with `approve-head <PR link>` in their own terminal (commit status
      `merge-approval`); nothing merges without it, and every new push needs a new approval.
 - Locked files (`specs/<ID>/spec.lock`, test IDs in `tests.lock`) change only by re-locking in a reviewed PR.
 - Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.github/`, `specs/`, tests,
