@@ -68,3 +68,31 @@ worktree_snapshot() {
   rm -rf "$dir"
   printf '%s\n' "$tree"
 }
+
+# Prints the number of the open PR for the current branch; nothing when there is none or the origin is
+# not on GitHub (local test repositories).
+current_pr() {
+  local url out
+  url=$(git remote get-url origin 2>/dev/null) || return 0
+  [[ $url == *github.com[:/]* ]] || return 0
+  if out=$(gh pr view --json number,state --jq 'select(.state == "OPEN") | .number' 2>&1); then
+    printf '%s' "$out"
+  elif grep -i 'no pull requests found' <<<"$out" >/dev/null; then
+    return 0
+  else
+    die "could not look up the PR of this branch: $out"
+  fi
+}
+
+# Ends a block: removes .agent/blocked and the PR's needs-decision label, so the owner's
+# `guardrails` inbox stops listing it.
+clear_block() {
+  local pr
+  [[ -f .agent/blocked ]] || return 0
+  rm -f .agent/blocked
+  pr=$(current_pr)
+  [[ -n $pr ]] || return 0
+  if gh pr view "$pr" --json labels --jq '.labels[].name' | grep -Fx needs-decision >/dev/null; then
+    gh pr edit "$pr" --remove-label needs-decision >/dev/null
+  fi
+}

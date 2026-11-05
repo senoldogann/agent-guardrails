@@ -16,6 +16,8 @@ require_args 1 $# "approve-head <pr-link-or-number>"
 [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
   die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run approve-head in your own shell."
 [[ -t 0 ]] || die "approve-head needs an interactive terminal (typed confirmation)"
+source "$kit/bin/guardrails-lib.sh"
+require_reviewed_kit
 
 read -r repo pr < <(pr_target "$1")
 default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
@@ -26,20 +28,34 @@ base=$(jq -r .baseRefName <<<"$pr_json")
 [[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
 [[ $(jq -r .isDraft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
 
-guard=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=guard" \
-  --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.completed_at) | last | .conclusion // "missing"')
-[[ $guard == success ]] || die "guard check for $sha is '$guard'; wait for it or fix the PR"
+ruleset_id=$(gh api "repos/$repo/rulesets" --jq '.[] | select(.name == "agent-guardrails" and .enforcement == "active") | .id')
+required=""
+if [[ -n $ruleset_id ]]; then
+  required=$(gh api "repos/$repo/rulesets/$ruleset_id" \
+    --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context')
+fi
+grep -Fx merge-approval <<<"$required" >/dev/null ||
+  die "the agent-guardrails ruleset on $repo is not active or does not require merge-approval, so an approval would not protect anything. Check the audit log, then restore it with: guardrails on $repo"
+
+# The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
+# from any check run named "guard": a workflow added by the PR could report a check run of that name.
+guard=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target&per_page=100" \
+  --jq '[.workflow_runs[] | select(.path == ".github/workflows/agent-guard.yml")] | sort_by(.created_at) | last | .conclusion // "missing"')
+[[ $guard == success ]] || die "guard run for $sha is '$guard'; wait for it or fix the PR"
 
 while IFS= read -r workflow; do
   [[ -n $workflow ]] || continue
   if gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content | base64 --decode |
-    grep -Ei 'statuses:[[:space:]]*write|write-all' >/dev/null; then
-    die "$workflow grants statuses: write (could forge merge-approval); refuse to approve"
+    grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null; then
+    die "$workflow lets its token write checks or statuses (could fake merge-approval); refuse to approve"
   fi
 done < <(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path')
 
-files=$(gh pr diff "$pr" -R "$repo" --name-only)
-printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$(jq -r .title <<<"$pr_json")" "$(jq -r .url <<<"$pr_json")" "$sha"
+files=$(gh api --paginate "repos/$repo/pulls/$pr/files?per_page=100" --jq '.[].filename')
+[[ -n $files ]] || die "could not list the files of PR #$pr"
+# Titles are written by the agent: drop control characters so they cannot redraw the lines below.
+printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$(jq -r '.title | gsub("[[:cntrl:]]"; "?")' <<<"$pr_json")" \
+  "$(jq -r .url <<<"$pr_json")" "$sha"
 workflow_changes=""
 while IFS= read -r file; do
   [[ -n $file ]] || continue

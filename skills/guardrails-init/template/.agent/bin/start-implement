@@ -12,6 +12,6 @@ bin=$(dirname "$0")
 "$bin/questions-check" "$ticket"
 "$bin/lock-verify" "$ticket"
 
-rm -f .agent/blocked
+clear_block
 printf 'implement %s\n' "$ticket" >.agent/active
 printf 'implement phase active for %s\n' "$ticket"

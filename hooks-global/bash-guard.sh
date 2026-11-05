@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # Global Claude Code PreToolUse hook for Bash (registered in ~/.claude/settings.json by install.sh).
-# Scope: the full rule set applies only in repositories that use the kit (.agent/bin/ci-guard exists).
-# Everywhere else the agent works as if the kit did not exist, with one exception that protects the kit
-# repositories themselves: nothing may run approve-head/revoke-head or post a `merge-approval` status.
+# Scope: the full rule set applies in kit repositories (.agent/bin/ci-guard exists, or the origin is in the
+# owner's list of enforced repositories) and to any command that names an enforced repository, from any
+# directory. Everywhere else the agent works as if the kit did not exist, with one exception that protects
+# the kit repositories themselves: nothing may run the owner's commands (approve-head, revoke-head,
+# guardrails on/off/approve/revoke), post a `merge-approval` status or touch the list of enforced repositories.
 # In kit repositories the agent works with the owner's GitHub identity, so actions reserved for the human
-# must be blocked before they run: approving or admin-merging PRs, approving deployments (merge-approval environment),
+# must be blocked before they run: approving or admin-merging PRs, approving deployments,
 # changing repo settings/rulesets/workflows/secrets, reading credentials, and pushing to the default
 # branch. `gh` is allow-listed per subcommand; everything else is a deny-list over the whole command
 # string, including text inside quotes (so `bash -c "..."` wrappers are covered).
-# Limits: obfuscated commands (string concatenation, scripts written to files) can evade text matching.
-# The server-side backstop is a fine-grained GH_TOKEN without Administration/Workflows/Deployments/
-# Environments permissions. Exit code 2 blocks the call and shows stderr to the agent.
-set -euo pipefail
+# Limits: obfuscated commands (string concatenation, scripts written to files) can evade text matching;
+# the ruleset on GitHub, which needs the owner's typed approval per HEAD, is the authority.
+# Exit code 2 blocks the call and shows stderr to the agent.
+set -Eeuo pipefail
+# Fail closed: an internal error (missing jq, unreadable file) blocks the call instead of letting it through.
+trap 'printf "BLOCKED by bash-guard: internal error near line %s; ask the user to check the hook\n" "$LINENO" >&2; exit 2' ERR
 # shellcheck source=kit-project.sh
 source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
@@ -34,12 +38,101 @@ matches() {
   grep -Eiq -- "$1" <<<"$cmd"
 }
 
-# Everywhere: the owner's merge approval of kit repositories can only come from the owner's own shell.
-matches '(^|[;&|(]|\$\()[[:space:]]*((ba|z)?sh[[:space:]]+|exec[[:space:]]+|env[[:space:]]+)?[^[:space:];&|()]*(approve|revoke)-head([[:space:]]|$)|merge-approval' &&
-  deny "merge approval (owner-only commit status)"
+# Everywhere: the owner's commands, the approval status and the rulesets of kit repositories, and the
+# owner's list of enforced repositories are the owner's alone.
+matches 'merge-approval' && deny "merge approval (owner-only commit status)"
+if matches '\.config' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
+if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit install"; fi
+if matches 'topic' && matches 'agent-guardrails'; then deny "the agent-guardrails topic marks enforced repositories (owner-only)"; fi
+if matches '(^|[^[:alnum:]_])gh[[:space:]]+api[[:space:]]+graphql' && matches 'ruleset|commitstatus|statuses'; then
+  deny "rulesets or statuses through GraphQL (owner-only)"
+fi
+if matches '(^|[^[:alnum:]_])gh[[:space:]]+api' && matches '/rulesets|/statuses/' &&
+  matches '(-X|--method)[[:space:]=]*(POST|PUT|PATCH|DELETE)|(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)'; then
+  deny "writing rulesets or commit statuses (owner-only)"
+fi
 
-# Everything below applies only inside kit repositories.
-is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || exit 0
+# split_commands prints one simple command per line. It reads the whole command (so a quoted newline
+# cannot hide the next command), splits at ; & | ( ) backticks and newlines outside quotes, keeps quoted
+# text inside its command (so `rg "a|b"` stays one rg call and `bash -c "..."` one bash call), keeps a
+# heredoc body with the command that reads it, and drops quote characters and backslashes (as the shell
+# does, so `ap\prove` is matched as approve).
+split_commands() {
+  awk '{ s = s $0 "\n" }
+    END {
+      out = ""; q = ""; pending = ""
+      n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") { continue }
+        if (q != "") { if (c == q) { q = "" } else if (c == "\n") { out = out " " } else { out = out c }; continue }
+        if (c == "\"" || c == "\047") { q = c; continue }
+        if (c == "<" && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<") {
+          j = i + 2
+          if (substr(s, j, 1) == "-") { j++ }
+          while (substr(s, j, 1) == " ") { j++ }
+          word = ""
+          while (j <= n && substr(s, j, 1) !~ /[[:space:];&|()<>]/) { word = word substr(s, j, 1); j++ }
+          gsub(/["\047\\]/, "", word)
+          if (word != "") { pending = word }
+          out = out "<<" word " "
+          i = j - 1
+          continue
+        }
+        if (c == "\n" && pending != "") {
+          # Append the heredoc body to the current command, up to the terminator line.
+          rest = substr(s, i + 1)
+          while (rest != "") {
+            k = index(rest, "\n")
+            line = (k > 0) ? substr(rest, 1, k - 1) : rest
+            rest = (k > 0) ? substr(rest, k + 1) : ""
+            i += (k > 0) ? k : length(line)
+            stripped = line
+            sub(/^\t+/, "", stripped)
+            if (stripped == pending) { break }
+            gsub(/\\/, "", line)
+            out = out " " line
+          }
+          pending = ""
+          out = out "\n"
+          continue
+        }
+        if (c ~ /[;&|()`\n]/) { c = "\n" }
+        out = out c
+      }
+      printf "%s\n", out
+    }'
+}
+# A command that only reads or records text may mention the owner's commands (a commit message, a PR
+# body, a search, a file written from a heredoc); any other program that names them could run them
+# (script, xargs, find -exec, bash -c, git difftool/bisect/submodule and similar). Readers lose that
+# status when the text can still execute: command substitution, rg --pre, or anything in the same
+# command line that runs a shell or interpreter (which could read the "text" from a pipe).
+owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])guardrails[[:space:]]+(on|off|approve|revoke)([[:space:]]|$)'
+segments=$(split_commands <<<"$raw")
+interpreter=0
+if grep -Eq '^[[:space:]]*([^[:space:]]*/)?(sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|deno|bun|perl|ruby|php|osascript|xargs|eval|source|\.|env|exec|script|expect|unbuffer|nohup|time|sudo)([[:space:]]|$)' <<<"$segments"; then
+  interpreter=1
+fi
+while IFS= read -r segment; do
+  grep -Eq "$owner_command" <<<"$segment" || continue
+  bare=$(sed -E 's/^[[:space:]]+//' <<<"$segment")
+  reader=0
+  if [[ $interpreter -eq 0 ]] && ! grep -Eq '\$\(|(^|[[:space:]])--pre(-glob)?([[:space:]=]|$)' <<<"$bare"; then
+    if grep -Eq '^([^[:space:]]*/)?(cat|tee|head|tail|grep|egrep|fgrep|rg|ls|wc|diff|shellcheck|stat|file|realpath|readlink|which)([[:space:]]|$)' <<<"$bare" ||
+      grep -Eq '^git[[:space:]]+(commit|log|show|grep|status|add|tag)([[:space:]]|$)' <<<"$bare" ||
+      grep -Eq '^gh[[:space:]]+(pr|issue|release)[[:space:]]+(create|comment|edit|view|list)([[:space:]]|$)' <<<"$bare"; then
+      reader=1
+    fi
+  fi
+  [[ $reader -eq 1 ]] && continue
+  deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke)"
+done <<<"$segments"
+
+# Everything below applies inside kit repositories, to commands that name an enforced repository, and to
+# commands that address a repository by its numeric id (which hides its name).
+is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" ||
+  matches 'repositories/[0-9]+' || exit 0
 
 # Credentials and token fallbacks.
 matches 'security[[:space:]]+(find|dump|export)-' && deny "reading the macOS keychain"
@@ -53,7 +146,7 @@ matches '(^|[;&|(`"'"'"'[:space:]])(printenv|export[[:space:]]+-p|set)([[:space:
   deny "dumping the environment (may expose tokens)"
 matches 'git[[:space:]]+config[^;&|]*(credential|insteadof|core\.hookspath|url\.)' && deny "changing git credential/URL/hook configuration"
 
-# Git over SSH would use the owner's key (full rights, incl. workflow files) instead of the agent token.
+# Git over SSH is refused so pushes go through the same HTTPS credentials as gh.
 matches 'git[[:space:]]+(push|remote|clone|fetch|pull)[^;&|]*(git@github\.com|ssh://)' && deny "git over SSH (use the HTTPS remote with the agent token)"
 
 # Direct GitHub API access outside gh.

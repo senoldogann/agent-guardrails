@@ -7,5 +7,5 @@ require_args 0 $# "unblock"
 cd_project_root
 
 [[ -f .agent/blocked ]] || die "not blocked"
-rm -f .agent/blocked
+clear_block
 printf 'unblocked\n'

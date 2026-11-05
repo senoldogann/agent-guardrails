@@ -11,6 +11,8 @@ require_args 1 $# "revoke-head <pr-link-or-number>"
 [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
   die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run revoke-head in your own shell."
 
+[[ -t 0 ]] || die "revoke-head needs an interactive terminal"
+
 read -r repo pr < <(pr_target "$1")
 sha=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid)
 gh api -X POST "repos/$repo/statuses/$sha" -f state=failure -f context=merge-approval \

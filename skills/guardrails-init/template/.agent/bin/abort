@@ -9,5 +9,6 @@ cd_project_root
 
 [[ -f .agent/active ]] || die "no active phase"
 read -r mode ticket <.agent/active
-rm -f .agent/active .agent/blocked ".agent/created-$ticket"
+clear_block
+rm -f .agent/active ".agent/created-$ticket"
 printf 'ABORTED %s phase for %s: %s\n' "$mode" "$ticket" "$*"

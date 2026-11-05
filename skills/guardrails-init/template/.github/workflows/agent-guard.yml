@@ -1,8 +1,8 @@
 # Judges every PR with the guard from the DEFAULT branch (pull_request_target), so a PR cannot weaken
 # it. PR code is fetched as a git ref and only read, never executed; no caches, no secrets.
 # Every PR merges only after the owner approves its exact HEAD: the owner runs the kit's
-# `bin/approve-head <pr>`, which posts the commit status `merge-approval` (agents cannot: their token
-# has no Commit statuses write). Repository setup (run .agent/bin/setup-github once): a ruleset
+# `guardrails approve` (or `approve-head <pr>`) in their own terminal, which posts the commit status
+# `merge-approval`; the agent's bash-guard blocks both. Repository setup (`guardrails on`): a ruleset
 # requiring `guard`, `checks-<lang>` (GitHub Actions) and `merge-approval`. Job names must stay unique.
 name: agent-guard
 on:

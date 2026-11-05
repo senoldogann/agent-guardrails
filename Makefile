@@ -9,6 +9,8 @@ lint:
 test:
 	tests/hooks-global.sh
 	tests/pr-target.sh
+	tests/guardrails-cli.sh
+	tests/install.sh
 	tests/human-owned.sh
 	tests/smoke.sh
 

@@ -48,7 +48,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
    (never global installs) and apply the config lines listed there, if any.
 7. **Context in one place:** create or update `AGENTS.md` with the project's verified setup, test, lint,
    typecheck and run commands ("Run: none" for a library without an entry point), then append
-   `template/AGENTS.section.md`. `CLAUDE.md` contains only `@AGENTS.md`.
+   `template/AGENTS.section.md` unchanged, including its start and end marker comments (`guardrails off`
+   removes exactly that block). `CLAUDE.md` contains only `@AGENTS.md`.
 8. **Commit, then verify** (`docs-check` requires `AGENTS.md` to be tracked): commit
    `chore: install agent guardrails kit`, run `make typecheck lint fmt-check test-ids test docs-check` and
    `make ci BASE_SHA=$(git merge-base HEAD origin/<default-branch>)`. Fix only what this installation broke;
@@ -56,10 +57,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
 9. **Open the bootstrap PR** (a normal PR, not a draft) with the verification commands and their real output
    in the description. **Never merge it, never enable auto-merge for it**, whatever general rules say: the
    guard is not on the default branch yet, so the owner reviews and merges this PR by hand.
-10. **Tell the owner the steps only they can do** (bash-guard blocks them for agents):
-    - review and merge the bootstrap PR;
-    - run `.agent/bin/setup-github` and do the manual step it prints;
-    - approve PRs with `approve-head <PR link>` in their own terminal (never the agent's); the command is
-      on PATH after the kit's `install.sh`, and every ready PR carries it in a comment;
-    - create the fine-grained token described in `AGENTS.md` "Agent identity", put it in
-      `.claude/settings.local.json` → `env.GH_TOKEN`, use an HTTPS remote and run `gh auth setup-git`.
+10. **Tell the owner the one step only they can do** (bash-guard blocks it for agents): in their own
+    terminal, `guardrails on <bootstrap PR link>`. It refuses unless the kit files in the PR are byte-identical
+    to the owner's installed kit, shows the files the agent wrote (Makefile, AGENTS.md, manifests), asks for
+    the typed short SHA, merges, and turns on the ruleset and repository settings. From then on the owner
+    runs `guardrails` to see what waits for them. Turning the kit off later is `guardrails off <owner/repo>`.
