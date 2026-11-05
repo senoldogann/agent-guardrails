@@ -16,8 +16,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
 - The kit is installed on this machine with the kit's `install.sh`: it provides the `/ticket-spec`,
   `/ticket-implement` and `/process-fix` skills and the global `bash-guard` hook that `AGENTS.md` refers to.
   If `~/.claude/skills/ticket-spec` is missing, say so in the PR description.
-- `bash`, a GNU-compatible `make`, `jq`, plus the language tools listed at the top of
-  `template/makefiles/Makefile.<lang>`.
+- `bash`, GNU make 3.81 or newer (the macOS default works), `jq`, plus the language tools listed at the top
+  of `template/makefiles/Makefile.<lang>`.
 
 ## Steps
 
@@ -26,7 +26,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
    `Package.swift` → swift. Several or none → stop and ask; do not guess.
 2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json` or `.github/workflows/agent-guard.yml`
    exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`).
-3. **Branch** `chore/agent-guardrails` from the default branch.
+3. **Branch** `chore/agent-guardrails` from the up-to-date default branch. If that branch already exists
+   locally or remotely, stop and ask (it may hold an earlier, unmerged installation).
 4. **Copy the template** with `cp -R`:
    - `template/.agent/` → `.agent/` as a whole. It contains files for every language; keep them all: they are
      inert unless the language Makefile uses them, and keeping the directory identical to the kit makes kit
@@ -39,12 +40,15 @@ The template lives in `template/` next to this file (resolve this skill's base d
      (node for typescript and javascript; one file per language in the repo)
    - append `template/gitignore.append` to `.gitignore`
 5. **Keep kit files out of the project's own formatter and linter** (they follow the kit's style and are
-   updated from the kit, never reformatted): Biome `files.includes` gets `"!.agent"`; ruff
-   `extend-exclude = [".agent"]`; SwiftLint/rustfmt need nothing (no kit sources in their scope).
+   updated from the kit, never reformatted): `.agent/` and `.claude/settings.json`.
+   - Biome: `"files": { "includes": ["**", "!.agent", "!.claude/settings.json"] }` (a list of only
+     negations matches nothing; keep any existing positive patterns instead of `"**"`).
+   - ruff: `extend-exclude = [".agent"]`. SwiftLint and rustfmt need nothing (no kit sources in their scope).
 6. **Install the dev dependencies** listed at the top of the copied `Makefile` with the package manager
-   (never global installs) and apply the config lines listed there.
+   (never global installs) and apply the config lines listed there, if any.
 7. **Context in one place:** create or update `AGENTS.md` with the project's verified setup, test, lint,
-   typecheck and run commands, then append `template/AGENTS.section.md`. `CLAUDE.md` contains only `@AGENTS.md`.
+   typecheck and run commands ("Run: none" for a library without an entry point), then append
+   `template/AGENTS.section.md`. `CLAUDE.md` contains only `@AGENTS.md`.
 8. **Commit, then verify** (`docs-check` requires `AGENTS.md` to be tracked): commit
    `chore: install agent guardrails kit`, run `make typecheck lint fmt-check test-ids test docs-check` and
    `make ci BASE_SHA=$(git merge-base HEAD origin/<default-branch>)`. Fix only what this installation broke;
