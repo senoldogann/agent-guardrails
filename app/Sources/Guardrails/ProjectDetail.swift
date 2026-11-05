@@ -62,8 +62,11 @@ struct ProjectHeader: View {
                     StateChip(state: project.state)
                     if project.private { Chip(text: "Private") }
                     if project.fork { Chip(text: "Fork") }
-                    Text(project.repo).font(.caption).foregroundStyle(Palette.textSecondary)
-                    Text("· pushed \(relativeTime(project.pushed))").font(.caption).foregroundStyle(Palette.textSecondary)
+                    Text("\(project.repo) · pushed \(relativeTime(project.pushed))")
+                        .font(.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             Spacer()
@@ -125,6 +128,7 @@ struct HeaderActions: View {
                     Image(systemName: "ellipsis")
                 }
                 .menuStyle(.button)
+                .menuIndicator(.hidden)
                 .buttonStyle(.glass)
                 .fixedSize()
             }
