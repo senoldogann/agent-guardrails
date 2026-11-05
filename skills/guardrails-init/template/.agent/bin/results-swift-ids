@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Usage: results-swift-ids <swift-test-list-output.txt>
+# Usage: results-swift-ids <swift-test-list-output.txt> <package-dir>
 # Prints normalized test IDs from `swift test list --disable-xctest` output (see results-lib.sh).
 # swift-testing reports no source file before running, so the kit requires one top-level @Suite
 # per file, named after it: "<Module>.<Suite>/<Nested>/<fn(args:)>" maps to
-# "Tests/<Module>/<Suite>.swift::<Suite> > <Nested> > <fn(args:)>". The file must exist.
+# "Tests/<Module>/<Suite>.swift::<Suite> > <Nested> > <fn(args:)>", prefixed with <package-dir> unless it
+# is "." (the package at the repository root). The file must exist.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/results-lib.sh"
-require_args 1 $# "results-swift-ids <swift-test-list-output.txt>"
+require_args 2 $# "results-swift-ids <swift-test-list-output.txt> <package-dir>"
 cd_project_root
 require_report "$1"
 
-mapped=$(awk '
+prefix=$(package_prefix "$2")
+mapped=$(awk -v prefix="$prefix" '
   NF == 0 { next }
   {
     dot = index($0, ".")
@@ -21,7 +23,7 @@ mapped=$(awk '
     if (count < 2) { print "!" $0; next }
     name = parts[1]
     for (i = 2; i <= count; i++) name = name " > " parts[i]
-    printf "Tests/%s/%s.swift\t%s\n", module, parts[1], name
+    printf "%sTests/%s/%s.swift\t%s\n", prefix, module, parts[1], name
   }
 ' "$1")
 

@@ -18,7 +18,7 @@ typecheck:
 lint:
 	uv run ruff check .
 	uv run ruff check --no-cache --config .agent/lint/ruff-restrictions.toml src
-	.agent/bin/escape-check py
+	.agent/bin/escape-check py .
 
 fmt-check:
 	uv run ruff format --check .

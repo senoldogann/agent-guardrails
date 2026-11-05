@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Integration test: Rust template (plain libtest + proptest) through the evidence pipeline.
 set -euo pipefail
+# CI toolchain actions force coloured cargo output; the Makefile must cope with that.
+export CARGO_TERM_COLOR=always
 source "$(dirname "$0")/lib.sh"
 
 new_project rust

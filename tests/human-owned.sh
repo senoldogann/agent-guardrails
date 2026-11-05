@@ -23,6 +23,13 @@ check yes stryker.config.mjs
 check yes .cargo/mutants.toml
 check yes src/domain/discount.test.ts
 check yes specs/DEMO-1/write-allow
+check yes App.xcodeproj/project.pbxproj
+check yes App.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+check yes App.xctestplan
+check yes project.yml
+check yes Packages/Core/Package.swift
+check yes Packages/Core/Tests/CoreTests/PasswordTests.swift
+check no Packages/Core/Sources/Core/Password.swift
 check no src/domain/discount.ts
 check no src/shared/math.ts
 [[ $failed -eq 0 ]]

@@ -19,6 +19,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # Use the newest Xcode on the runner, so the toolchain is as close as possible to the developers'.
+      # Package.swift should still declare the oldest swift-tools-version it needs: runners lag behind.
+      - run: |
+          xcode=$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -n 1)
+          [[ -n $xcode ]] && sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
       - run: brew install swiftlint
       - run: make ci BASE_SHA="$BASE_SHA"
         env:

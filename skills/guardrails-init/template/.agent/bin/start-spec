@@ -12,6 +12,6 @@ ticket=$1
 [[ ! -f "specs/$ticket/spec.lock" ]] || printf 'note: %s is locked; this amends it and needs spec-lock again\n' "$ticket"
 
 mkdir -p "specs/$ticket"
-rm -f .agent/blocked
+clear_block
 printf 'spec %s\n' "$ticket" >.agent/active
 printf 'spec phase active for %s\n' "$ticket"

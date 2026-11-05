@@ -241,14 +241,14 @@ echo "escape-check"
 git add -A && git commit -qm "spec(ABC-1): lock"
 expect_success "spec-commit-ticket names the locking commit" .agent/bin/spec-commit-ticket
 expect_out "ticket detected" "ABC-1"
-expect_success "clean ts passes" .agent/bin/escape-check ts
+expect_success "clean ts passes" .agent/bin/escape-check ts .
 printf '// @ts-ignore\nexport {};\n' >src/domain/percent.ts
 git add -A
-expect_failure "@ts-ignore fails" .agent/bin/escape-check ts
+expect_failure "@ts-ignore fails" .agent/bin/escape-check ts .
 git reset -q --hard
 printf '#[expect(dead_code)]\nfn x() {}\n' >src/lib.rs
 git add -A
-expect_failure "rust #[expect] fails" .agent/bin/escape-check rs
+expect_failure "rust #[expect] fails" .agent/bin/escape-check rs .
 git reset -q --hard
 
 echo "ci-guard"
