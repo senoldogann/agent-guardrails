@@ -2,14 +2,26 @@
 # Table tests for hooks-global/bash-guard.sh: which Bash commands are blocked (exit 2) or allowed (exit 0).
 set -euo pipefail
 
-guard="$(cd "$(dirname "$0")/.." && pwd -P)/hooks-global/bash-guard.sh"
+hooks="$(cd "$(dirname "$0")/.." && pwd -P)/hooks-global"
+guard="$hooks/bash-guard.sh"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+kit_repo="$work/kit-repo"
+plain_repo="$work/plain-repo"
+mkdir -p "$kit_repo/.agent/bin" "$plain_repo" "$work/not-a-repo"
+git -C "$kit_repo" init -q
+git -C "$plain_repo" init -q
+printf '#!/usr/bin/env bash\n' >"$kit_repo/.agent/bin/ci-guard"
+chmod +x "$kit_repo/.agent/bin/ci-guard"
+mkdir -p "$kit_repo/src/deep"
 passed=0
 failed=0
+cwd=$kit_repo
 
 check() {
   local want=$1 cmd=$2 got
   set +e
-  jq -n --arg c "$cmd" '{tool_input: {command: $c}}' | "$guard" >/dev/null 2>&1
+  jq -n --arg c "$cmd" --arg d "$cwd" '{cwd: $d, tool_input: {command: $c}}' | "$guard" >/dev/null 2>&1
   got=$?
   set -e
   if [[ $got -eq $want ]]; then
@@ -87,6 +99,34 @@ block 'gh api repos/o/r/statuses/abc -f state=success -f context=merge-approval'
 allow 'gh api repos/o/r/commits/abc/status'
 block 'git push origin --delete feat/x'
 block 'git config --global url.https://x.insteadOf https://github.com/'
+
+echo "bash-guard outside kit repositories"
+cwd=$plain_repo
+allow 'gh pr review 12 --approve'
+allow 'gh pr merge 12 --admin --squash'
+allow 'gh repo create acme/tool --private'
+allow 'gh auth token'
+allow 'printenv'
+allow 'cat ~/.config/gh/hosts.yml'
+allow 'git push origin main'
+block 'gh api repos/acme/shop/statuses/abc -f state=success -f context=merge-approval'
+block '/Users/x/agent-guardrails/bin/approve-head https://github.com/acme/shop/pull/1'
+cwd="$work/not-a-repo"
+allow 'gh pr review 12 --approve'
+block 'revoke-head 12'
+cwd="$kit_repo/src/deep"
+block 'gh pr review 12 --approve'
+
+echo "prompt-reminder"
+reminder_out() { jq -n --arg d "$1" '{cwd: $d, prompt: "hi"}' | "$hooks/prompt-reminder.sh"; }
+if [[ -n $(reminder_out "$kit_repo") ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  echo "  FAIL reminder missing in kit repository"
+fi
+if [[ -z $(reminder_out "$plain_repo") ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  echo "  FAIL reminder shown outside kit repository"
+fi
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

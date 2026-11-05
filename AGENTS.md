@@ -14,8 +14,10 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `template/.github/workflows/agent-guard.yml` base-branch guard + per-HEAD `merge-approval` environment.
 - `bin/approve-head`, `bin/revoke-head`: owner-only merge approval of a PR's exact HEAD (commit status
   `merge-approval`); kept outside projects so agents cannot edit the copy the owner runs.
-- `hooks-global/` user-level hooks installed into `~/.claude/settings.json`: `bash-guard.sh` blocks
-  owner-only GitHub actions and credential reads; `prompt-reminder.sh` adds a one-line reminder per prompt.
+- `hooks-global/` user-level hooks installed into `~/.claude/settings.json`. They act only in kit
+  repositories (`.agent/bin/ci-guard` exists): `bash-guard.sh` blocks owner-only GitHub actions and credential
+  reads, `prompt-reminder.sh` adds a one-line reminder per prompt. Elsewhere they only stop anything from
+  running the approval scripts or posting a `merge-approval` status.
 
 ## Commands
 
