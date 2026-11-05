@@ -1,4 +1,6 @@
 # Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Prerequisites: bash, GNU-compatible make, jq, Swift 6 toolchain (SwiftPM), SwiftLint.
+# Tests use swift-testing; one top-level @Suite per test file, named after the file.
 # Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
 # Tests use swift-testing only (XCTest is disabled), one top-level @Suite per file named after it.
 include .agent/common.mk

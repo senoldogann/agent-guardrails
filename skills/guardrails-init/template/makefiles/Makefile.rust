@@ -1,4 +1,6 @@
 # Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Prerequisites: bash, GNU-compatible make, jq, cargo with clippy and rustfmt.
+# Dev dependencies: cargo add --dev proptest; Cargo.toml: [lints.rust] unsafe_code = "forbid".
 # Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
 # Tests run under plain libtest (one process per test binary), not nextest: a test that exits the
 # process then drops the remaining results instead of being reported as passed.

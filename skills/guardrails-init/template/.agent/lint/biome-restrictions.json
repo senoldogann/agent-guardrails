@@ -9,6 +9,7 @@
     ]
   },
   "plugins": [
+    "./no-type-assertion.grit",
     "./no-dynamic-import.grit",
     "./no-builtin-tampering.grit"
   ],
