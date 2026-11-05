@@ -5,7 +5,7 @@
 # 2. Registers the global hooks in ~/.claude/settings.json (idempotent, keeps existing hooks):
 #    PreToolUse Bash -> hooks-global/bash-guard.sh, UserPromptSubmit -> hooks-global/prompt-reminder.sh.
 #    A backup of settings.json is written next to it before the first change.
-# 3. Links the owner-only commands approve-head and revoke-head into the first writable directory
+# 3. Links the owner-only commands guardrails, approve-head and revoke-head into the first writable directory
 #    on PATH among ~/.local/bin, /opt/homebrew/bin and /usr/local/bin.
 set -euo pipefail
 kit=$(cd "$(dirname "$0")" && pwd -P)
@@ -63,7 +63,7 @@ done
   printf 'error: none of ~/.local/bin, /opt/homebrew/bin, /usr/local/bin is a writable directory on PATH\n' >&2
   exit 1
 }
-for command in approve-head revoke-head; do
+for command in guardrails approve-head revoke-head; do
   link="$bin_dir/$command"
   if [[ -L $link && $(readlink "$link") == "$kit/bin/$command" ]]; then
     printf 'up to date: %s\n' "$link"

@@ -17,5 +17,6 @@ case $mode in
     ;;
   *) die "unknown phase '$mode' in .agent/active" ;;
 esac
-rm -f .agent/active .agent/blocked ".agent/created-$ticket"
+clear_block
+rm -f .agent/active ".agent/created-$ticket"
 printf 'finished %s phase for %s\n' "$mode" "$ticket"

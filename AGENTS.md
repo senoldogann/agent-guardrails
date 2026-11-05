@@ -10,20 +10,24 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `references/<lang>.md` per language.
 - `skills/ticket-implement/` implement phase against a locked spec.
 - `skills/process-fix/` turns a recurring agent mistake into a context or check change.
-- `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks;
-  `template/.github/workflows/agent-guard.yml` base-branch guard + per-HEAD `merge-approval` environment.
-- `bin/approve-head`, `bin/revoke-head`: owner-only merge approval of a PR's exact HEAD (commit status
-  `merge-approval`); kept outside projects so agents cannot edit the copy the owner runs.
+- `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks
+  (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too);
+  `template/.github/workflows/agent-guard.yml` base-branch guard.
+- `bin/guardrails`: the owner's command. Without arguments it lists what waits for the owner across enforced
+  repos; `on` checks a bootstrap PR's kit files against this install, merges it and applies the ruleset;
+  `off` deletes the ruleset and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
+  and `bin/revoke-head` (approval of a PR's exact HEAD as the commit status `merge-approval`). Enforced repos
+  are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
 - `hooks-global/` user-level hooks installed into `~/.claude/settings.json`. They act only in kit
-  repositories (`.agent/bin/ci-guard` exists): `bash-guard.sh` blocks owner-only GitHub actions and credential
-  reads, `prompt-reminder.sh` adds a one-line reminder per prompt. Elsewhere they only stop anything from
-  running the approval scripts or posting a `merge-approval` status.
+  repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
+  enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`
+  adds a one-line reminder per prompt. Everywhere they block the owner's commands and the enforced-repo list.
 
 ## Commands
 
-- Install: `./install.sh` (symlinks skills into `~/.claude/skills`, registers global hooks; idempotent,
-  backs up settings.json before changing it).
-- Check: `make check` (= shellcheck + `tests/hooks-global.sh` + `tests/smoke.sh`).
+- Install: `./install.sh` (symlinks skills into `~/.claude/skills`, registers global hooks, links the owner
+  commands onto PATH; idempotent, backs up settings.json before changing it).
+- Check: `make check` (= shellcheck + the offline tests in `tests/`).
 - Language adapters: `make test-lang` (slow; real mini projects per language).
 
 ## Gotchas
@@ -34,3 +38,5 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - Pattern files (`write-allow`) are bash globs where `*` also matches `/`.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority.
+- bash-guard reads every line of a command, heredoc bodies included: write text that names the owner's
+  commands with the Write tool, not a heredoc.

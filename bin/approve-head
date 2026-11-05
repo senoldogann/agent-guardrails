@@ -26,6 +26,15 @@ base=$(jq -r .baseRefName <<<"$pr_json")
 [[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
 [[ $(jq -r .isDraft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
 
+ruleset_id=$(gh api "repos/$repo/rulesets" --jq '.[] | select(.name == "agent-guardrails" and .enforcement == "active") | .id')
+required=""
+if [[ -n $ruleset_id ]]; then
+  required=$(gh api "repos/$repo/rulesets/$ruleset_id" \
+    --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context')
+fi
+grep -Fx merge-approval <<<"$required" >/dev/null ||
+  die "the agent-guardrails ruleset on $repo is not active or does not require merge-approval, so an approval would not protect anything. Check the audit log, then restore it with: guardrails on $repo"
+
 guard=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=guard" \
   --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.completed_at) | last | .conclusion // "missing"')
 [[ $guard == success ]] || die "guard check for $sha is '$guard'; wait for it or fix the PR"

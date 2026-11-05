@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Usage: block <question or reason>
 # Marks the active phase as waiting for the human. The Stop hook then lets the agent stop and shows
-# the reason instead of forcing more fixes. The next start-* or unblock clears it.
+# the reason instead of forcing more fixes. When the branch has a PR, the question is also posted
+# there and the PR gets the needs-decision label, which the owner's `guardrails` inbox lists.
+# The next start-implement, finish, abort or unblock clears it.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 [[ $# -ge 1 ]] || die "usage: block <question or reason>"
@@ -10,3 +12,12 @@ cd_project_root
 [[ -f .agent/active ]] || die "no active phase"
 printf '%s\n' "$*" >.agent/blocked
 printf 'blocked: %s\n' "$*"
+pr=$(current_pr)
+if [[ -z $pr ]]; then
+  printf 'note: no open PR for this branch, so the question is only in this session\n'
+  exit 0
+fi
+gh pr comment "$pr" --body "Waiting for the owner's decision: $*" >/dev/null
+gh pr edit "$pr" --add-label needs-decision >/dev/null ||
+  die "could not label PR #$pr needs-decision; the label is created when the owner turns the guardrails on for this repository"
+printf 'PR #%s labelled needs-decision\n' "$pr"

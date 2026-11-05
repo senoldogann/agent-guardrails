@@ -30,6 +30,7 @@ disable-model-invocation: true
    that exact HEAD. Do not push after asking for approval unless asked: a push invalidates it.
 5. Post a PR comment for the owner, in plain language, with the command to copy:
    `Ready for your approval. In your own terminal (not the agent's) run: approve-head <PR URL>`.
+   The owner's `guardrails` inbox lists the PR as well, so they can also pick it with `guardrails approve`.
 
 ## When the mutation gate fails
 

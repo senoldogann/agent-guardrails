@@ -117,6 +117,50 @@ block 'revoke-head 12'
 cwd="$kit_repo/src/deep"
 block 'gh pr review 12 --approve'
 
+echo "owner commands, everywhere"
+cwd=$plain_repo
+block 'guardrails on https://github.com/acme/shop/pull/3'
+block '/Users/x/kit/bin/guardrails off acme/shop'
+block 'guardrails approve'
+block 'printf abc1234 | script -q /dev/null approve-head https://github.com/acme/shop/pull/1'
+block 'echo 12 | xargs approve-head'
+block 'find . -name x -exec revoke-head 1 ;'
+block 'git -c alias.a=!approve-head a 1'
+block 'bash -c "cat notes; approve-head 1"'
+allow 'rg -n "setup-github|approve-head" skills'
+allow 'git log --oneline | grep -E "guardrails on|approve-head"'
+allow 'guardrails'
+allow 'guardrails inbox'
+allow 'guardrails status'
+allow 'shellcheck -x bin/guardrails bin/guardrails-lib.sh'
+allow 'chmod +x bin/guardrails'
+allow 'git commit -m "docs: run guardrails on <PR link> to turn it on"'
+allow 'gh pr create --title x --body "then run approve-head <link>"'
+allow 'cd ~/myprojects/agent-guardrails && make check'
+block 'cat ~/.config/agent-guardrails/repos'
+block 'printf "acme/x\n" >> ~/.config/agent-guardrails/repos'
+
+echo "enforced repositories (owner's list)"
+export HOME="$work/home"
+mkdir -p "$HOME/.config/agent-guardrails"
+printf 'acme/enforced\n' >"$HOME/.config/agent-guardrails/repos"
+cloned_repo="$work/cloned-enforced"
+mkdir -p "$cloned_repo"
+git -C "$cloned_repo" init -q
+git -C "$cloned_repo" remote add origin https://github.com/acme/enforced.git
+cwd=$cloned_repo
+block 'gh pr review 12 --approve'
+block 'gh api -X DELETE repos/acme/enforced/rulesets/1'
+cwd=$plain_repo
+block 'gh api -X DELETE repos/acme/enforced/rulesets/1'
+block 'gh pr merge 3 --admin -R acme/enforced'
+block 'gh repo delete acme/enforced --yes'
+allow 'gh api -X DELETE repos/acme/other/rulesets/1'
+allow 'gh pr review 12 --approve'
+git -C "$cloned_repo" remote set-url origin git@github.com:acme/enforced.git
+cwd=$cloned_repo
+block 'gh pr review 12 --approve'
+
 echo "prompt-reminder"
 reminder_out() { jq -n --arg d "$1" '{cwd: $d, prompt: "hi"}' | "$hooks/prompt-reminder.sh"; }
 if [[ -n $(reminder_out "$kit_repo") ]]; then passed=$((passed + 1)); else
