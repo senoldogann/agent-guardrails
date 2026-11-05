@@ -71,8 +71,9 @@ No open questions → the single line `No open questions.`
 - Commit, push, open a **draft** PR (`gh pr create --draft`) titled `spec(<ID>): ...`.
 - Open questions exist → run `.agent/bin/block "Please decide OPEN_QUESTIONS.md in PR #<n>"` and stop. After the
   owner answers (they edit the file or tell you), re-run `/ticket-spec <ID>` to fold decisions into contracts/tests.
-- All decided → `.agent/bin/spec-lock <ID>`, then `.agent/bin/finish` (runs `make check-spec`: locked tests must all
-  fail on NotImplemented), commit `spec(<ID>): lock`, push. CI runs the spec gate on that commit.
+- All decided → `.agent/bin/spec-lock <ID>`, commit `spec(<ID>): lock`, then `.agent/bin/finish` (runs
+  `make check-spec` on that commit: locked tests must all fail on NotImplemented), push. CI runs the spec gate on
+  that commit.
 - Tell the owner the spec is ready for review. Do not start implementing in the same session.
 
 Output: one section per file (path, purpose, summary), then the open questions.
