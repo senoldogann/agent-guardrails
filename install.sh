@@ -92,3 +92,7 @@ done
 for command in guardrails approve-head revoke-head; do
   link_into_kit "bin/$command" "$bin_dir/$command"
 done
+
+if [[ $(uname) == Darwin ]]; then
+  printf 'Optional menu bar app for approvals and turning repos on or off: make -C %s app\n' "$kit"
+fi

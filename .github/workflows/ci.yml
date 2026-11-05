@@ -1,5 +1,6 @@
 # Lints and tests the kit itself: shellcheck, global hook table tests, template smoke tests.
-# The slow per-language adapter suite (make test-lang) runs locally.
+# The slow per-language adapter suite (make test-lang) runs locally. app-check builds the macOS app and runs
+# its core tests (parsing, confirmation checks, the pseudo-terminal driver).
 name: ci
 on:
   pull_request:
@@ -17,3 +18,15 @@ jobs:
       - name: Tool versions
         run: shellcheck --version && jq --version && make --version | head -1
       - run: make check
+  app-check:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the newest Xcode
+        run: |
+          xcode=$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -n 1)
+          [[ -n $xcode ]] && sudo xcode-select -s "$xcode"
+          xcodebuild -version
+      - run: make app-test

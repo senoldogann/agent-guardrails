@@ -20,6 +20,12 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
   For the Guardrails app, `inbox --json` prints one item per line, and with `GUARDRAILS_EVENTS_FD=<3-9>` the
   commands also write their plan and each expected confirmation as JSON lines to that descriptor.
+- `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): lists what waits for the owner and
+  runs `guardrails approve|on|off` inside a pseudo-terminal (`script -q /dev/null`). It shows the CLI's plan
+  event, checks every confirmation against that plan and asks for Touch ID before typing it. The CLI stays
+  the authority. The app is a convenience, not a boundary against an agent running as the same user.
+  `GuardrailsCore` holds the testable parts; `app/build.sh` writes the kit path into Info.plist and installs
+  `~/Applications/Guardrails.app`.
 - `hooks-global/` user-level hooks installed into `~/.claude/settings.json`. They act only in kit
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`
@@ -33,6 +39,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   changes or not at its origin's main.
 - Check: `make check` (= shellcheck + the offline tests in `tests/`).
 - Language adapters: `make test-lang` (slow; real mini projects per language).
+- App: `make app-test` (core tests), `make app` (build and install from the kit install; needs Xcode 26+).
+  Rebuild the app after a kit change that touches `app/`.
 
 ## Gotchas
 
