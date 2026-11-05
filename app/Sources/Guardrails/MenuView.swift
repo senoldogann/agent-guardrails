@@ -68,7 +68,8 @@ struct MenuView: View {
                 }
                 .buttonStyle(SecondaryPillStyle())
                 Spacer()
-                Toggle("Open at login", isOn: Binding(get: { opensAtLogin }, set: setOpensAtLogin))
+                Toggle("Open at login", isOn: $opensAtLogin)
+                    .onChange(of: opensAtLogin) { _, enabled in applyOpensAtLogin(enabled) }
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .font(.caption)
@@ -83,17 +84,20 @@ struct MenuView: View {
         }
     }
 
-    private func setOpensAtLogin(_ enabled: Bool) {
+    /// Registers or removes the login item; on failure the switch goes back to what macOS reports.
+    private func applyOpensAtLogin(_ enabled: Bool) {
+        let registered = SMAppService.mainApp.status == .enabled
+        guard enabled != registered else { return }
         do {
             if enabled {
                 try SMAppService.mainApp.register()
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            opensAtLogin = enabled
             loginItemProblem = nil
         } catch {
             loginItemProblem = "Could not change the login item: \(error.localizedDescription)"
+            opensAtLogin = registered
         }
     }
 
@@ -103,8 +107,7 @@ struct MenuView: View {
     }
 }
 
-/// The inbox in the menu panel. Kept as small separate views: Swift 6.3's compiler crashes in IR generation
-/// on one large view body with many conditional sections.
+/// The inbox in the menu panel.
 struct InboxList: View {
     let model: AppModel
     let open: (ActionRequest) -> Void
