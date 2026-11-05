@@ -17,6 +17,7 @@ APP_DESTINATION := generic/platform=iOS Simulator
 
 RESULTS := .agent/reports/results
 EVENT_STREAM := --experimental-event-stream-version 0 --experimental-event-stream-output
+# Event stream paths are absolute: older swift test resolves a relative one against --package-path.
 PKG := --package-path $(SWIFT_PKG)
 
 .PHONY: typecheck lint fmt-check test-ids test test-prop test-mutation
@@ -42,7 +43,7 @@ test-ids:
 # exits with swift test's exit code (or the adapter's).
 define swift_results
 	@mkdir -p $(RESULTS) && rm -f $(RESULTS)/$(1).events.jsonl $(RESULTS)/$(1).tsv
-	@status=0; swift test $(PKG) --disable-xctest $(EVENT_STREAM) $(RESULTS)/$(1).events.jsonl $(2) || status=$$?; \
+	@status=0; swift test $(PKG) --disable-xctest $(EVENT_STREAM) $(CURDIR)/$(RESULTS)/$(1).events.jsonl $(2) || status=$$?; \
 	.agent/bin/results-swift $(RESULTS)/$(1).events.jsonl $(SWIFT_PKG) >$(RESULTS)/$(1).tsv.tmp && \
 	mv $(RESULTS)/$(1).tsv.tmp $(RESULTS)/$(1).tsv && exit $$status
 endef

@@ -195,6 +195,23 @@ git -C "$cloned_repo" remote set-url origin git@github.com:acme/enforced.git
 cwd=$cloned_repo
 block 'gh pr review 12 --approve'
 
+echo "quiet when allowed, closed on errors"
+for quiet_cwd in "$kit_repo" "$plain_repo" "$cloned_repo"; do
+  noise=$(jq -n --arg d "$quiet_cwd" '{cwd: $d, tool_input: {command: "make check"}}' | "$guard" 2>&1 >/dev/null || true)
+  if [[ -z $noise ]]; then passed=$((passed + 1)); else
+    failed=$((failed + 1))
+    printf '  FAIL allowed command printed to stderr in %s: %s\n' "$quiet_cwd" "$noise"
+  fi
+done
+set +e
+printf 'not json' | "$guard" >/dev/null 2>&1
+invalid_status=$?
+set -e
+if [[ $invalid_status -eq 2 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL invalid hook input must block (exit 2), got %s\n' "$invalid_status"
+fi
+
 echo "prompt-reminder"
 reminder_out() { jq -n --arg d "$1" '{cwd: $d, prompt: "hi"}' | "$hooks/prompt-reminder.sh"; }
 if [[ -n $(reminder_out "$kit_repo") ]]; then passed=$((passed + 1)); else
