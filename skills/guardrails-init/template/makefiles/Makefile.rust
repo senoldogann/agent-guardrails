@@ -7,6 +7,8 @@
 include .agent/common.mk
 
 RESULTS := .agent/reports/results
+# The results adapters parse libtest text, so cargo never colours it (CI toolchain actions set CARGO_TERM_COLOR=always).
+export CARGO_TERM_COLOR := never
 CLIPPY := CLIPPY_CONF_DIR=.agent/lint cargo clippy
 # MUTATION_RUN=1 (set by the mutation tools) fixes the proptest seed so mutants are judged the same way every run.
 PROPTEST_SEED := $(if $(MUTATION_RUN),PROPTEST_RNG_SEED=20261105,)
