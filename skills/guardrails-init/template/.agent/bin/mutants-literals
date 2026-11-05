@@ -61,6 +61,16 @@ locked_test_failed() {
       - .agent/reports/results/test.tsv
 }
 
+# Succeeds when locked tests failed and every locked failure is an "Invariant: " error: the
+# implementation noticed the mutation, the tests did not.
+locked_test_failed_by_invariant_only() {
+  local lock
+  for lock in specs/*/tests.lock; do [[ -f $lock ]] && awk 'NF' "$lock"; done |
+    awk -F'\t' 'NR == FNR { locked[$0] = 1; next }
+      ($1 in locked) && $2 == "failed" { failed++; if ($3 !~ /Invariant: /) other++ }
+      END { exit !(failed > 0 && other == 0) }' - .agent/reports/results/test.tsv
+}
+
 # Prints the outcome of the suite against the current working tree: killed|survived|timeout|invalid.
 judge() {
   local limit=$1 status=0
@@ -68,6 +78,8 @@ judge() {
   if [[ $status -eq 124 ]]; then
     echo timeout
   elif make --no-print-directory verify-green-all >"$work/verify.log" 2>&1; then
+    echo survived
+  elif locked_test_failed_by_invariant_only; then
     echo survived
   elif locked_test_failed; then
     echo killed

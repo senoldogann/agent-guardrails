@@ -106,3 +106,11 @@ above-100 criterion; `-Number.MIN_VALUE` in AC-2.
 One Vitest test per acceptance scenario in `src/**/*.acceptance.test.ts` (locked), titled
 `AC-<n>: <scenario>`, with Given/When/Then as comments. A `specs/<ID>/*.feature` file is optional
 documentation; the kit ships no Gherkin runner.
+
+## Invariants
+
+When a branded value must be built from a computation that the types cannot prove (for example a total that
+is non-negative because both inputs were validated), check it once and throw
+`new Error("Invariant: <what must hold>")`. That is the only other `throw` the restriction lint allows. Such a
+branch can never run, so its mutants cannot be caught by any test: list them in `specs/<ID>/mutants-accepted`
+with the reason "invariant, unreachable". A mutant caught only by an Invariant error counts as survived.

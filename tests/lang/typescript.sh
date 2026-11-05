@@ -149,6 +149,13 @@ export const makePercent = (input: number): unknown => {
 EOF
 expect_failure "self-check throw: restriction lint rejects it" restriction_lint
 expect_output "self-check throw: lint names the throw rule" "is banned in implementation code (contracts return typed results)"
+cat >src/domain/percent.ts <<'EOF'
+export const makePercent = (input: number): unknown => {
+	if (input > 1000) throw new Error("Invariant: input was validated by the caller");
+	return { ok: true, value: input };
+};
+EOF
+expect_success "invariant throw: restriction lint allows throw new Error(\"Invariant: ...\")" restriction_lint
 printf '// Stryker disable next-line all: equivalent\nexport const one = 1;\n' >src/domain/suppressed.ts
 git add src/domain/suppressed.ts
 expect_failure "Stryker suppression comment: escape-check rejects it" .agent/bin/escape-check ts
