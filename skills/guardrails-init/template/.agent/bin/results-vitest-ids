@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Usage: results-vitest-ids <vitest-list.json>
+# Prints normalized test IDs from `vitest list --json=<file>` output (see results-lib.sh).
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-vitest-ids <vitest-list.json>"
+cd_project_root
+require_report "$1"
+
+jq -r --argjson roots "$(project_roots_json)" "$RESULTS_JQ_LIB"'
+  .[] | (.file | relative($roots)) + "::" + .name
+' "$1" | print_unique_ids

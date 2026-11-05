@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Usage: ci-run <base-commit>
+# What CI runs for a PR (via `make ci`). Let S be the last commit in base..HEAD that changed a
+# specs/<TICKET>/spec.lock:
+#   - S exists: the spec gate runs on S's tree (locked tests must all fail on NotImplemented there),
+#     so a spec amended or re-locked later in the PR is re-proven red against the stubs.
+#   - HEAD is not S: the full gate runs on HEAD.
+# Tracked files are switched with `git read-tree -u --reset` and restored to HEAD afterwards; ignored
+# files (installed dependencies, reports) stay, so S is checked with HEAD's dependencies.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "ci-run <base-commit>"
+cd_project_root
+
+base=$1
+head=$(git rev-parse HEAD)
+[[ -z $(git status --porcelain) ]] || die "working tree must be clean before ci-run"
+
+spec_commit=$(git rev-list -n 1 "$base..$head" -- 'specs/*/spec.lock')
+status=0
+
+if [[ -n $spec_commit ]]; then
+  ticket=$(git diff-tree --no-commit-id --name-only -r "$spec_commit" -- 'specs/*/spec.lock' | awk -F/ 'NR == 1 { print $2 }')
+  printf '=== spec gate for %s at %s ===\n' "$ticket" "$spec_commit"
+  git read-tree -u --reset "$spec_commit"
+  make --no-print-directory check-spec SPEC_TICKET="$ticket" || status=1
+  git read-tree -u --reset "$head"
+  [[ -z $(git status --porcelain) ]] || die "could not restore HEAD after the spec gate"
+fi
+
+if [[ $spec_commit != "$head" ]]; then
+  printf '=== full gate at %s ===\n' "$head"
+  make --no-print-directory check || status=1
+else
+  printf 'HEAD is the spec commit: implementation missing, this PR is not mergeable yet (guard enforces it)\n'
+fi
+exit "$status"

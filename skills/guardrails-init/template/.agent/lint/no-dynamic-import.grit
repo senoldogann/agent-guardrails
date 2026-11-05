@@ -1,0 +1,8 @@
+// Biome plugin: bans dynamic import() with a computed specifier, which would bypass noRestrictedImports.
+
+language js
+
+`import($specifier)` as $node where {
+  not $specifier <: string(),
+  register_diagnostic(span=$node, message="Dynamic import with a computed specifier is banned in implementation code; use a static import.", severity="error")
+}

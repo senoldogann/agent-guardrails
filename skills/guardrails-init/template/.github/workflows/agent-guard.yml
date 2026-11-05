@@ -1,0 +1,58 @@
+# Judges every PR with the guard from the DEFAULT branch (pull_request_target), so a PR cannot weaken
+# it. PR code is fetched as a git ref and only read, never executed; no caches, no secrets.
+# Every PR merges only after the owner approves its exact HEAD in the `merge-approval` environment.
+# Repository setup (run .agent/bin/setup-github once): environment `merge-approval` with the owner as
+# required reviewer and admin bypass OFF; a ruleset requiring the check runs `guard`,
+# `merge-approval` and `checks-<lang>`. Job names must stay unique across all workflows.
+name: agent-guard
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: agent-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the PR head commit this run judges (as data)
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$HEAD_SHA"
+      - name: Guard
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          base=$(git merge-base "$GITHUB_SHA" "$HEAD_SHA")
+          token=$(openssl rand -hex 16)
+          echo "::stop-commands::${token}"
+          set +e
+          .agent/bin/ci-guard "$base" "$HEAD_SHA" "$HEAD_BRANCH" "$DEFAULT_BRANCH" "$PR_BASE" | tee guard.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "::${token}::"
+          { echo '### agent-guard'; echo '```text'; cat guard.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+  merge-approval:
+    needs: guard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    environment: merge-approval
+    steps:
+      - name: Require a passing guard
+        env:
+          GUARD_RESULT: ${{ needs.guard.result }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Approving merge of head ${HEAD_SHA}"
+          test "$GUARD_RESULT" = success

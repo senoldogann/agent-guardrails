@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Usage: start-spec <TICKET>
+# Enters the spec phase: the write-guard hook then allows new files, specs/<TICKET>/ and the
+# ticket's already locked files (amending an existing spec; the PR review shows the re-lock).
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "start-spec <TICKET>"
+cd_project_root
+
+ticket=$1
+[[ $ticket =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]] || die "ticket id must look like ABC-123: $ticket"
+[[ ! -f "specs/$ticket/spec.lock" ]] || printf 'note: %s is locked; this amends it and needs spec-lock again\n' "$ticket"
+
+mkdir -p "specs/$ticket"
+rm -f .agent/blocked
+printf 'spec %s\n' "$ticket" >.agent/active
+printf 'spec phase active for %s\n' "$ticket"

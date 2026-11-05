@@ -1,0 +1,42 @@
+# Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
+# Tests use swift-testing only (XCTest is disabled), one top-level @Suite per file named after it.
+include .agent/common.mk
+
+RESULTS := .agent/reports/results
+EVENT_STREAM := --experimental-event-stream-version 0 --experimental-event-stream-output
+
+.PHONY: typecheck lint fmt-check test-ids test test-prop
+
+typecheck:
+	swift build --build-tests -Xswiftc -warnings-as-errors
+
+lint:
+	swiftlint lint --strict --config .agent/lint/swiftlint.yml Sources Tests
+	.agent/bin/escape-check swift
+
+fmt-check:
+	swift format lint --strict --recursive Sources Tests
+
+## Every test ID without running tests; stdout carries only IDs.
+test-ids:
+	@mkdir -p $(RESULTS)
+	@swift test list --disable-xctest >$(RESULTS)/ids.swift.txt
+	@.agent/bin/results-swift-ids $(RESULTS)/ids.swift.txt
+
+# $(call swift_results,<name>,<swift test filters>): runs swift test, writes $(RESULTS)/<name>.tsv,
+# exits with swift test's exit code (or the adapter's).
+define swift_results
+	@mkdir -p $(RESULTS) && rm -f $(RESULTS)/$(1).events.jsonl $(RESULTS)/$(1).tsv
+	@status=0; swift test --disable-xctest $(EVENT_STREAM) $(RESULTS)/$(1).events.jsonl $(2) || status=$$?; \
+	.agent/bin/results-swift $(RESULTS)/$(1).events.jsonl >$(RESULTS)/$(1).tsv.tmp && \
+	mv $(RESULTS)/$(1).tsv.tmp $(RESULTS)/$(1).tsv && exit $$status
+endef
+
+## Full suite -> $(RESULTS)/test.tsv.
+test:
+	$(call swift_results,test,)
+
+## Property tests (suites named *PropertyTests) -> $(RESULTS)/test-prop.tsv.
+test-prop:
+	$(call swift_results,test-prop,--filter PropertyTests)

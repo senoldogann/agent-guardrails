@@ -1,0 +1,19 @@
+# Lints and tests the kit itself: shellcheck, global hook table tests, template smoke tests.
+# The slow per-language adapter suite (make test-lang) runs locally.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  kit-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tool versions
+        run: shellcheck --version && jq --version && make --version | head -1
+      - run: make check

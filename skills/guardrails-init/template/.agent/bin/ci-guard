@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Usage: ci-guard <base-commit> <head-ref> <head-branch-name> <default-branch> <pr-base-branch>
+# Runs from the DEFAULT branch checkout (pull_request_target) and only reads the PR through git,
+# so a PR cannot weaken the guard that judges it. Every PR is merged only after a human approves
+# its exact HEAD (merge-approval environment); this guard makes that review safe and focused:
+#   hard failures  - PR not targeting the default branch, merge commits, symlinks/submodules,
+#                    dependency/vendor directories, broken spec locks, ambiguous or invalid tickets,
+#                    write-allow patterns that reach guarded paths
+#   review summary - head SHA, ticket, and every human-owned path the PR changes
+# Pattern syntax in write-allow: bash glob, where "*" also matches "/".
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 5 $# "ci-guard <base-commit> <head-ref> <head-branch-name> <default-branch> <pr-base-branch>"
+cd_project_root
+
+base=$1
+head=$2
+branch=$3
+default_branch=$4
+pr_base=$5
+status=0
+
+fail() {
+  printf 'FAIL: %s\n' "$1"
+  status=1
+}
+
+[[ $pr_base == "$default_branch" ]] || fail "PR targets '$pr_base'; only the default branch '$default_branch' is supported"
+
+merges=$(git rev-list --merges "$base..$head")
+[[ -z $merges ]] || fail "merge commits in PR (rebase instead): $(tr '\n' ' ' <<<"$merges")"
+
+# Changed entries with modes: ":<old-mode> <new-mode> <old-sha> <new-sha> <status>\t<path>", NUL separated.
+changed=""
+while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+  new_mode=$(cut -d' ' -f2 <<<"$meta")
+  case $new_mode in
+    000000 | 100644 | 100755) ;;
+    120000) fail "symlink not allowed: $path" ;;
+    160000) fail "submodule not allowed: $path" ;;
+    *) fail "unsupported file mode $new_mode: $path" ;;
+  esac
+  case "/$path/" in
+    */node_modules/* | */__pycache__/* | */site-packages/* | */vendor/* | */.build/* | */target/*)
+      fail "dependency/build directory content not allowed: $path"
+      ;;
+  esac
+  changed+="$path"$'\n'
+done < <(git diff --raw -z --no-renames "$base" "$head")
+
+# Tickets touched by this PR.
+tickets=$(awk -F/ '$1 == "specs" && NF >= 3 { print $2 }' <<<"$changed" | sort -u)
+ticket_count=$(awk 'NF > 0' <<<"$tickets" | wc -l | tr -d ' ')
+if [[ $ticket_count -gt 1 ]]; then
+  fail "PR touches several tickets: $(tr '\n' ' ' <<<"$tickets")"
+elif [[ $ticket_count -eq 1 ]]; then
+  ticket=$tickets
+  [[ $ticket =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]] || fail "invalid ticket id '$ticket' (expected e.g. ABC-123)"
+  [[ $branch == *"/$ticket-"* || $branch == *"/$ticket" ]] || fail "branch '$branch' does not name ticket $ticket"
+
+  allow_file="specs/$ticket/write-allow"
+  if git cat-file -e "$head:$allow_file" 2>/dev/null; then
+    tracked=$(git ls-tree -r --name-only "$head")
+    while IFS= read -r pattern; do
+      [[ -n $pattern && $pattern != \#* ]] || continue
+      while IFS= read -r path; do
+        if is_human_owned "$path"; then
+          # shellcheck disable=SC2053 # glob match against a write-allow pattern is intended
+          [[ $path != $pattern ]] || fail "write-allow pattern '$pattern' reaches human-owned path '$path'"
+        fi
+      done <<<"$tracked"
+    done < <(git show "$head:$allow_file")
+  fi
+fi
+
+# Every lock on head must match head's files.
+while IFS= read -r lock; do
+  [[ -n $lock ]] || continue
+  while IFS= read -r line; do
+    expected=${line%% *}
+    path=${line#*  }
+    if ! actual=$(git show "$head:$path" 2>/dev/null | shasum -a 256 | cut -d' ' -f1) || [[ $actual != "$expected" ]]; then
+      fail "lock mismatch: $lock records $path, head has a different or missing file"
+    fi
+  done < <(git show "$head:$lock")
+done < <(git ls-tree -r --name-only "$head" -- specs | awk '/\/spec\.lock$/')
+
+# Spec commits: HEAD must not be one (tests are red there by design), and amendments are made visible.
+spec_commits=$(git rev-list "$base..$head" -- 'specs/*/spec.lock')
+if [[ -n $spec_commits && $(head -n 1 <<<"$spec_commits") == "$(git rev-parse "$head")" ]]; then
+  fail "HEAD is a spec commit (locked tests are red by design); implement the ticket before merging"
+fi
+spec_count=$(awk 'NF' <<<"$spec_commits" | wc -l | tr -d ' ')
+
+printf '\nhead: %s\n' "$(git rev-parse "$head")"
+printf 'ticket: %s\n' "${ticket:-none}"
+if [[ $spec_count -gt 1 ]]; then
+  first=$(tail -n 1 <<<"$spec_commits")
+  last=$(head -n 1 <<<"$spec_commits")
+  printf 'SPEC AMENDED: locked %s times in this PR; locked/spec files changed between first and last lock:\n' "$spec_count"
+  amended_paths=(specs)
+  while IFS= read -r path; do
+    amended_paths+=("$path")
+  done < <(git show "$last:specs/${ticket:-}/locked-files" | awk 'NF && $0 !~ /^#/')
+  git diff --stat "$first" "$last" -- "${amended_paths[@]}"
+fi
+workflows=$(grep -E '^\.github/(workflows|actions)/' <<<"$changed" || true)
+[[ -z $workflows ]] || printf 'WORKFLOW FILES CHANGED (could add fake required checks; review line by line):\n%s\n' "$workflows"
+owned=""
+while IFS= read -r path; do
+  if [[ -n $path ]] && is_human_owned "$path"; then
+    owned+="  $path"$'\n'
+  fi
+done <<<"$changed"
+if [[ -n $owned ]]; then
+  printf 'human-owned paths changed (review these closely):\n%s' "$owned"
+else
+  printf 'no human-owned paths changed\n'
+fi
+exit "$status"

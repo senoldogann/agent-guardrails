@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Usage: results-swift <event-stream.jsonl>
+# Converts a swift-testing event stream (`swift test --experimental-event-stream-output <file>
+# --experimental-event-stream-version 0`) to the normalized results TSV (see results-lib.sh) on
+# stdout, with IDs mapped exactly as results-swift-ids maps them. A planned test that never ended
+# (the process crashed or exited) is `error`; a known issue (withKnownIssue) does not fail a test.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-swift <event-stream.jsonl>"
+cd_project_root
+require_report "$1"
+
+jq -rn "$RESULTS_JQ_LIB"'
+  def test_id:
+    sub("/[^/]+\\.swift:[0-9]+:[0-9]+$"; "")
+    | (capture("^(?<module>[^./]+)\\.(?<rest>.+)$") // {module: "", rest: .}) as $m
+    | ($m.rest | split("/")) as $parts
+    | if ($m.module == "" or ($parts | length) < 2) then "(no suite)::" + .
+      else "Tests/" + $m.module + "/" + $parts[0] + ".swift::" + ($parts | join(" > ")) end;
+  def failing_issue:
+    .kind == "issueRecorded" and (.issue.isKnown != true) and ((.messages[0].symbol // "") != "warning");
+  [inputs] as $records
+  | ($records | map(select(.kind == "event") | .payload | select(.testID != null))
+      | reduce .[] as $event ({}; .[$event.testID] += [$event])) as $events_by_test
+  | $records[]
+  | select(.kind == "test" and .payload.kind == "function")
+  | .payload.id as $raw
+  | ($raw | test_id) as $id
+  | ($events_by_test[$raw] // []) as $events
+  | ($events | map(select(.kind == "testSkipped")) | first) as $skip
+  | ($events | map(select(failing_issue)) | first) as $issue
+  | ($events | map(select(.kind == "testEnded")) | first) as $end
+  | if $skip != null then tsv_line($id; "skipped"; ($skip.messages[0].text // ""))
+    elif $issue != null then tsv_line($id; "failed"; ($issue.messages[0].text // ""))
+    elif $end != null then tsv_line($id; "passed"; "")
+    else tsv_line($id; "error"; "test did not finish; the test process crashed or exited") end
+' "$1"

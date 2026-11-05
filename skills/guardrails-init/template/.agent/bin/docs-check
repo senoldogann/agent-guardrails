@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Usage: docs-check
+# Keeps agent context single-sourced, shared through version control, and current-state only:
+#   - AGENTS.md exists and is tracked; CLAUDE.md contains exactly "@AGENTS.md"
+#   - personal context stays local: CLAUDE.local.md and .claude/settings.local.json are git-ignored
+#   - AGENTS.md, README.md and docs/**/*.md have no history-style or dated headings
+#     (history and comparisons belong in commits, PRs and tickets)
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "docs-check"
+cd_project_root
+
+status=0
+problem() {
+  printf '%s\n' "$1" >&2
+  status=1
+}
+
+[[ -f AGENTS.md ]] || die "AGENTS.md is missing"
+git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 || problem "AGENTS.md is not tracked by git; shared context must be versioned"
+
+if [[ ! -f CLAUDE.md || $(tr -d '[:space:]' <CLAUDE.md) != "@AGENTS.md" ]]; then
+  problem 'CLAUDE.md must contain only "@AGENTS.md"'
+fi
+
+for personal in CLAUDE.local.md .claude/settings.local.json; do
+  git check-ignore -q "$personal" || problem "$personal must be git-ignored (personal preferences and secrets stay local)"
+done
+
+docs=$({ printf '%s\n' AGENTS.md; git ls-files -- README.md 'docs/*.md' 'docs/**/*.md'; } | sort -u)
+while IFS= read -r doc; do
+  [[ -f $doc ]] || continue
+  history=$(grep -niE '^#+ .*(changelog|history|release notes|previously|what changed)' "$doc" || true)
+  [[ -z $history ]] || problem "$doc has history-style headings (move them to commit/PR/ticket text):
+$history"
+  dates=$(grep -nE '^#+ .*\b(19|20)[0-9]{2}-[01][0-9]-[0-3][0-9]\b' "$doc" || true)
+  [[ -z $dates ]] || problem "$doc has dated headings (describe current state only):
+$dates"
+done <<<"$docs"
+
+exit "$status"

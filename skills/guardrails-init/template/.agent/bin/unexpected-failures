@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Usage: unexpected-failures <TICKET>
+# In the spec gate only the ticket's locked tests may fail. Fails when any other result in
+# .agent/reports/results/test.tsv is failed, error or skipped.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "unexpected-failures <TICKET>"
+cd_project_root
+
+lock="specs/$1/tests.lock"
+results=.agent/reports/results/test.tsv
+[[ -f $lock ]] || die "$lock is missing; run spec-lock first"
+[[ -f $results ]] || die "$results is missing; run 'make test' first"
+
+unexpected=$(awk -F'\t' 'NR == FNR { locked[$0] = 1; next } !($1 in locked) && $2 != "passed" { print "  " $2 ": " $1 }' "$lock" "$results")
+if [[ -n $unexpected ]]; then
+  printf 'results outside %s that are not passed (only its locked tests may fail in the spec gate):\n%s\n' "$lock" "$unexpected" >&2
+  exit 1
+fi

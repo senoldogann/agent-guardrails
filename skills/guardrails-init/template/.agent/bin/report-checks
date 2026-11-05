@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Usage: report-checks <TICKET>
+# Prints the "checks and results" report section verbatim from the last `make check` log, and refuses
+# when the working tree changed since that run. The PR's CI run remains the evidence of record.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "report-checks <TICKET>"
+cd_project_root
+
+log=".agent/reports/$1/checks.log"
+[[ -f $log ]] || die "$log is missing; run 'make check' while the ticket is active"
+
+logged_head=$(awk '/^head: / { print $2; exit }' "$log")
+logged_snapshot=$(awk '/^snapshot: / { print $2; exit }' "$log")
+[[ $logged_head == "$(git rev-parse HEAD)" ]] || die "checks ran at $logged_head, HEAD is now $(git rev-parse HEAD); run 'make check' again"
+[[ $logged_snapshot == "$(worktree_snapshot)" ]] || die "working tree changed since the checks ran; run 'make check' again"
+
+fence='```'
+printf '## Checks and results\n\nLocal run of make check at %s (CI on this PR is the evidence of record).\n\n%stext\n' "$logged_head" "$fence"
+cat "$log"
+printf '%s\n' "$fence"

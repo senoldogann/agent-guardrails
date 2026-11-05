@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Usage: escape-check <ts|js|py|rs|swift>
+# Fails on type-system escape hatches and lint suppressions in tracked source files.
+# Linters cover most of these; this catches suppression comments that would silence them.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "escape-check <ts|js|py|rs|swift>"
+cd_project_root
+
+case $1 in
+  ts | js)
+    globs=('*.ts' '*.tsx' '*.mts' '*.cts' '*.js' '*.jsx' '*.mjs' '*.cjs')
+    pattern='@ts-ignore|@ts-expect-error|@ts-nocheck|biome-ignore|eslint-disable|@type \{any\}|\{\*\}'
+    ;;
+  py)
+    globs=('*.py' '*.pyi')
+    pattern='type: *ignore|pyright: *(ignore|basic|standard|off)|noqa|ruff: *noqa|__import__'
+    ;;
+  rs)
+    globs=('*.rs')
+    pattern='#!?\[(allow|expect)\(|cfg_attr\(.*(allow|expect)\(|\bunsafe\b|\btransmute\b'
+    ;;
+  swift)
+    globs=('*.swift')
+    pattern='\bas!|\btry!|unsafeBitCast|swiftlint:disable|\bUnsafe(Mutable)?(Raw)?Pointer\b'
+    ;;
+  *) die "unknown language: $1" ;;
+esac
+
+hits=$(git ls-files -z -- "${globs[@]}" | xargs -0 grep -nE "$pattern" || true)
+if [[ -n $hits ]]; then
+  printf 'type/lint escape hatches found (fix the root cause; a human may change this rule):\n%s\n' "$hits" >&2
+  exit 1
+fi

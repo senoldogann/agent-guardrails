@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Usage: finish
+# Leaves the active phase after its gate passes: lock-verify (implement) and `make check-spec`
+# (spec) or `make check` (implement). Use `abort` to leave without a gate, `block` to stop and ask.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "finish"
+cd_project_root
+
+[[ -f .agent/active ]] || die "no active phase"
+read -r mode ticket <.agent/active
+case $mode in
+  spec) make --no-print-directory check-spec ;;
+  implement)
+    "$(dirname "$0")/lock-verify" "$ticket"
+    make --no-print-directory check
+    ;;
+  *) die "unknown phase '$mode' in .agent/active" ;;
+esac
+rm -f .agent/active .agent/blocked ".agent/created-$ticket"
+printf 'finished %s phase for %s\n' "$mode" "$ticket"

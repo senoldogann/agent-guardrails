@@ -1,0 +1,45 @@
+# Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
+# Tests run under plain libtest (one process per test binary), not nextest: a test that exits the
+# process then drops the remaining results instead of being reported as passed.
+include .agent/common.mk
+
+RESULTS := .agent/reports/results
+CLIPPY := CLIPPY_CONF_DIR=.agent/lint cargo clippy
+
+.PHONY: typecheck lint fmt-check test-ids test test-prop
+
+typecheck:
+	cargo check --locked --all-targets
+
+## Clippy with the kit's clippy.toml (disallowed process exit/abort, env and panic-hook mutation).
+lint:
+	$(CLIPPY) --locked --all-targets -- -D warnings
+	.agent/bin/escape-check rs
+
+fmt-check:
+	cargo fmt --check
+
+## Every test ID (unit and integration test targets) without running tests; stdout carries only IDs.
+test-ids:
+	@mkdir -p $(RESULTS)
+	@cargo test --locked --tests -- --list >$(RESULTS)/ids.libtest.txt 2>&1 || { cat $(RESULTS)/ids.libtest.txt >&2; exit 1; }
+	@.agent/bin/results-libtest-ids $(RESULTS)/ids.libtest.txt
+
+# $(call libtest_results,<name>,<cargo test target selection>): runs cargo test, writes
+# $(RESULTS)/<name>.tsv, exits with cargo's exit code (or the adapter's).
+define libtest_results
+	@mkdir -p $(RESULTS) && rm -f $(RESULTS)/$(1).libtest.txt $(RESULTS)/$(1).tsv
+	@status=0; cargo test --locked --no-fail-fast $(2) >$(RESULTS)/$(1).libtest.txt 2>&1 || status=$$?; \
+	cat $(RESULTS)/$(1).libtest.txt; \
+	.agent/bin/results-libtest $(RESULTS)/$(1).libtest.txt >$(RESULTS)/$(1).tsv.tmp && \
+	mv $(RESULTS)/$(1).tsv.tmp $(RESULTS)/$(1).tsv && exit $$status
+endef
+
+## Full suite (unit and integration test targets) -> $(RESULTS)/test.tsv.
+test:
+	$(call libtest_results,test,--tests)
+
+## Property tests (proptest, tests/property.rs) -> $(RESULTS)/test-prop.tsv.
+test-prop:
+	$(call libtest_results,test-prop,--test property)

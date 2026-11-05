@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Usage: tests-lock-check
+# Re-collects test IDs with `make test-ids` and fails unless, for every ticket, the tests found in its
+# locked files are exactly specs/<TICKET>/tests.lock (no locked test dropped, renamed or smuggled in).
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "tests-lock-check"
+cd_project_root
+
+[[ -d specs ]] || exit 0
+locks=$(find specs -mindepth 2 -maxdepth 2 -name tests.lock | sort)
+[[ -n $locks ]] || exit 0
+
+ids=$(make --no-print-directory -s test-ids) || die "'make test-ids' failed"
+status=0
+while IFS= read -r tests_lock; do
+  dir=$(dirname "$tests_lock")
+  expected=$(awk -F'::' 'NR == FNR { locked[$0] = 1; next } ($1 in locked)' \
+    <(list_entries "$dir/locked-files") <(printf '%s\n' "$ids") | sort)
+  if ! diff_out=$(diff <(sort "$tests_lock") <(printf '%s\n' "$expected" | awk 'NF')); then
+    printf '%s does not match the collected tests (< locked, > collected):\n%s\n' "$tests_lock" "$diff_out" >&2
+    status=1
+  fi
+done <<<"$locks"
+exit "$status"

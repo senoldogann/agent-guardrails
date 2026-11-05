@@ -1,0 +1,24 @@
+# Re-runs every deterministic check in CI; the agent saying "done" is not evidence.
+# `make ci` runs the spec gate (locked tests red on NotImplemented) when HEAD is the commit that
+# locked a spec, and the full gate (locked tests green, judged from results files) otherwise.
+# Runs on the PR head commit with read-only permissions, no secrets and no caches.
+name: checks-swift
+on: pull_request
+permissions:
+  contents: read
+concurrency:
+  group: checks-swift-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  checks-swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: brew install swiftlint
+      - run: make ci BASE_SHA="$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}

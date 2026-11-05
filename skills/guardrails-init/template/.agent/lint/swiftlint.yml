@@ -1,0 +1,42 @@
+# SwiftLint configuration (Makefile `lint`:
+#   swiftlint lint --strict --config .agent/lint/swiftlint.yml Sources Tests). Human-owned.
+# Top-level `included` paths would resolve relative to this file, so the Makefile passes the paths.
+# Implementation code runs inside the test process: the custom rules keep it from exiting the
+# process, importing test frameworks, or patching the runtime.
+opt_in_rules:
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+
+force_cast: error
+force_try: error
+force_unwrapping: error
+
+custom_rules:
+  no_process_exit:
+    name: "No process exit"
+    included: "(^|/)Sources/.*\\.swift$"
+    regex: "\\b(exit|_exit|abort)\\s*\\("
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Exiting or signalling the process hides test results; throw a specific error instead."
+    severity: error
+  no_fatal_stub:
+    name: "No crashing stubs"
+    included: "(^|/)Sources/.*\\.swift$"
+    regex: "\\b(fatalError|preconditionFailure)\\s*\\("
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "A crash kills every remaining test; stubs throw NotImplemented and code throws specific errors."
+    severity: error
+  no_test_imports:
+    name: "No test frameworks in implementation code"
+    included: "(^|/)Sources/.*\\.swift$"
+    regex: "^\\s*(@testable\\s+)?import\\s+(Testing|XCTest)\\b"
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Implementation code must not import test frameworks."
+    severity: error
+  no_runtime_patching:
+    name: "No runtime patching"
+    included: "(^|/)Sources/.*\\.swift$"
+    regex: "\\b(method_exchangeImplementations|class_replaceMethod|method_setImplementation|dlsym|dlopen|unsafeBitCast)\\b|@_silgen_name|@_cdecl|^\\s*import\\s+(ObjectiveC|Darwin|Glibc|Musl)\\b"
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Implementation code must not patch the runtime or load symbols dynamically."
+    severity: error
