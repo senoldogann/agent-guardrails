@@ -221,6 +221,7 @@ project_states() {
     | (if $registered and $ruleset == "active" then ["on", "ruleset active"]
        elif $registered then ["alarm", "ruleset \($ruleset): restore it or check the audit log"]
        elif $tagged then ["alarm", "tagged agent-guardrails but not in this Mac'"'"'s list"]
+       elif $ruleset == "active" then ["alarm", "agent-guardrails ruleset active but not in this Mac'"'"'s list"]
        elif .viewerPermission != "ADMIN" then ["no-admin", "you cannot apply rulesets here"]
        elif $bootstrap != null then ["ready", "set-up PR open"]
        else ["off", ""] end) as $state

@@ -140,13 +140,14 @@ nodes=$(
   node acme/on ADMIN "$active" '["agent-guardrails"]' '[]'
   node Acme/Disabled ADMIN '[{"name":"agent-guardrails","enforcement":"DISABLED"}]' '[]' '[]'
   node acme/tagged ADMIN '[]' '["agent-guardrails"]' '[]'
+  node acme/unlisted ADMIN "$active" '[]' '[]'
   node acme/ready ADMIN '[]' '[]' "$own_setup"
   node acme/fork-pr ADMIN '[]' '[]' "$fork_setup"
   node acme/stranger ADMIN '[]' '[]' "$stranger_setup"
   node acme/readonly WRITE '[]' '[]' '[]'
 )
 expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
-  "acme/on on Acme/Disabled alarm acme/tagged alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
+  "acme/on on Acme/Disabled alarm acme/tagged alarm acme/unlisted alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
 expect_eq "a ready project carries its set-up PR" \
   "$(project_states owner '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
 
