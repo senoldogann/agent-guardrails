@@ -1,4 +1,7 @@
 # Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Prerequisites: bash, GNU-compatible make, jq, uv.
+# Dev dependencies: uv add --dev basedpyright ruff pytest hypothesis pytest-reportlog
+# pyproject.toml: [tool.pytest.ini_options] testpaths = ["tests"], pythonpath = ["src"] for a src layout.
 # Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
 # Dev dependencies: pytest, hypothesis, pytest-reportlog, ruff, basedpyright.
 include .agent/common.mk

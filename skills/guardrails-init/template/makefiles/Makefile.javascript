@@ -1,4 +1,6 @@
 # Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Prerequisites: bash, GNU-compatible make, jq, pnpm (packageManager field set in package.json).
+# Dev dependencies: pnpm add -D typescript @biomejs/biome vitest fast-check (tsc checks JSDoc via jsconfig.json)
 # Types come from JSDoc, checked by tsc with checkJs + strict (see jsconfig.json).
 # Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
 include .agent/common.mk

@@ -11,30 +11,49 @@ Everything is versioned in the project so the agent, CI and teammates read the s
 
 The template lives in `template/` next to this file (resolve this skill's base directory).
 
+## Prerequisites (check, do not install globally)
+
+- The kit is installed on this machine with the kit's `install.sh`: it provides the `/ticket-spec`,
+  `/ticket-implement` and `/process-fix` skills and the global `bash-guard` hook that `AGENTS.md` refers to.
+  If `~/.claude/skills/ticket-spec` is missing, say so in the PR description.
+- `bash`, a GNU-compatible `make`, `jq`, plus the language tools listed at the top of
+  `template/makefiles/Makefile.<lang>`.
+
 ## Steps
 
 1. **Detect the language** from manifests: `package.json` + `tsconfig.json` → typescript,
    `package.json` without tsconfig → javascript, `pyproject.toml` → python, `Cargo.toml` → rust,
-   `Package.swift` → swift. Several or none → ask the user; do not guess.
+   `Package.swift` → swift. Several or none → stop and ask; do not guess.
 2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json` or `.github/workflows/agent-guard.yml`
-   exist, show what exists and ask how to merge (an existing Makefile can `include .agent/common.mk`).
-3. **Work on a branch** `chore/agent-guardrails`. This bootstrap PR is reviewed manually: the guard is not on
-   the default branch yet.
+   exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`).
+3. **Branch** `chore/agent-guardrails` from the default branch.
 4. **Copy the template** with `cp -R`:
-   - `template/.agent/` → `.agent/`; `template/.claude/settings.json` → `.claude/settings.json`
+   - `template/.agent/` → `.agent/` as a whole. It contains files for every language; keep them all: they are
+     inert unless the language Makefile uses them, and keeping the directory identical to the kit makes kit
+     updates a clean diff. Lint configs (`.agent/lint/`) and test support (`.agent/test-support/`) are used in
+     place by the Makefile; do not copy them elsewhere.
+   - `template/.claude/settings.json` → `.claude/settings.json`
    - `template/.github/workflows/agent-guard.yml` → `.github/workflows/agent-guard.yml`
-   - append `template/gitignore.append` to `.gitignore` (personal context and tokens stay local)
-   - `template/makefiles/Makefile.<lang>` → `Makefile`; `template/ci/checks-<node|python|rust|swift>.yml` →
-     `.github/workflows/checks-<node|python|rust|swift>.yml` (one per language in the repo)
-   - the language's lint/restriction configs and test-support files as described in `template/.agent/lint/` and
-     `template/.agent/test-support/` READMEs.
-5. **Wire the toolchain** with the package manager (never global installs), following the comments at the top of
-   the copied Makefile (required dev dependencies and config per language).
-6. **Context in one place:** append `template/AGENTS.section.md` to `AGENTS.md` (create it with verified
-   setup/test/lint/typecheck/run commands if missing); `CLAUDE.md` contains only `@AGENTS.md`.
-7. **Verify:** run `make typecheck lint fmt-check test-ids test docs-check` and paste the output.
-8. **Open the bootstrap PR** and tell the owner the steps only they can do (the agent's bash-guard blocks them):
-   - merge the bootstrap PR after reviewing it;
-   - run `.agent/bin/setup-github <their-login>` (environment, ruleset, repo and Actions settings);
-   - create the fine-grained token described in AGENTS.md "Agent identity" and put it in
-     `.claude/settings.local.json` → `env.GH_TOKEN` (gitignored), then run `gh auth setup-git`.
+   - `template/makefiles/Makefile.<lang>` → `Makefile`
+   - `template/ci/checks-<node|python|rust|swift>.yml` → `.github/workflows/checks-<node|python|rust|swift>.yml`
+     (node for typescript and javascript; one file per language in the repo)
+   - append `template/gitignore.append` to `.gitignore`
+5. **Keep kit files out of the project's own formatter and linter** (they follow the kit's style and are
+   updated from the kit, never reformatted): Biome `files.includes` gets `"!.agent"`; ruff
+   `extend-exclude = [".agent"]`; SwiftLint/rustfmt need nothing (no kit sources in their scope).
+6. **Install the dev dependencies** listed at the top of the copied `Makefile` with the package manager
+   (never global installs) and apply the config lines listed there.
+7. **Context in one place:** create or update `AGENTS.md` with the project's verified setup, test, lint,
+   typecheck and run commands, then append `template/AGENTS.section.md`. `CLAUDE.md` contains only `@AGENTS.md`.
+8. **Commit, then verify** (`docs-check` requires `AGENTS.md` to be tracked): commit
+   `chore: install agent guardrails kit`, run `make typecheck lint fmt-check test-ids test docs-check` and
+   `make ci BASE_SHA=$(git merge-base HEAD origin/<default-branch>)`. Fix only what this installation broke;
+   if an existing project check fails, stop and report it.
+9. **Open the bootstrap PR** (a normal PR, not a draft) with the verification commands and their real output
+   in the description. **Never merge it, never enable auto-merge for it**, whatever general rules say: the
+   guard is not on the default branch yet, so the owner reviews and merges this PR by hand.
+10. **Tell the owner the steps only they can do** (bash-guard blocks them for agents):
+    - review and merge the bootstrap PR;
+    - run `.agent/bin/setup-github <their-login>` and do the manual steps it prints;
+    - create the fine-grained token described in `AGENTS.md` "Agent identity", put it in
+      `.claude/settings.local.json` → `env.GH_TOKEN`, use an HTTPS remote and run `gh auth setup-git`.
