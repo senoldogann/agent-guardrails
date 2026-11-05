@@ -40,20 +40,60 @@ kit_drift() {
   [[ $found -eq 1 ]] || printf 'missing: .github/workflows/checks-<lang>.yml\n'
 }
 
+# Git on the kit install without the repository settings that run programs (fsmonitor, hooks, pager), so
+# checking the install cannot itself execute code someone left in its .git/config.
+kit_git() {
+  git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -C "$kit" "$@"
+}
+
+# Prints the kit install's local changes, one per line: edits and untracked files (whatever the repository
+# config says about showing them) and files git was told to stop looking at (assume-unchanged, skip-worktree).
+kit_local_changes() {
+  kit_git status --porcelain --untracked-files=all
+  kit_git ls-files -v | awk '$1 != "H" { sub(/^[^ ]+ /, ""); print "not watched by git: " $0 }'
+}
+
 # Dies unless the kit install is exactly the reviewed main of its origin: no local changes, HEAD equal to
 # origin's main. The owner's commands and the template they compare against come from this checkout, so
 # a change an agent made there must not silently become the reference.
 require_reviewed_kit() {
   local local_sha remote_sha origin
-  origin=$(git -C "$kit" remote get-url origin)
-  [[ -z $(git -C "$kit" status --porcelain) ]] ||
-    die "the kit install at $kit has uncommitted changes, so this command may not be the reviewed one. Inspect them with: git -C $kit status"
-  local_sha=$(git -C "$kit" rev-parse HEAD)
-  remote_sha=$(git -C "$kit" ls-remote origin refs/heads/main | cut -f1) ||
+  origin=$(kit_git remote get-url origin)
+  [[ -z $(kit_local_changes) ]] ||
+    die "the kit install at $kit has local changes, so this command may not be the reviewed one. Inspect them with: git -C $kit status"
+  local_sha=$(kit_git rev-parse HEAD)
+  remote_sha=$(kit_git ls-remote origin refs/heads/main | cut -f1) ||
     die "could not reach $origin to confirm the kit install is its reviewed main"
   [[ -n $remote_sha ]] || die "$origin has no main branch"
   [[ $local_sha == "$remote_sha" ]] ||
     die "the kit install at $kit is at ${local_sha:0:7}, not at main of $origin (${remote_sha:0:7}). Update it with: git -C $kit switch main && git -C $kit pull --ff-only"
+}
+
+# Prints the files a PR changes, one per line; dies when GitHub cannot list them or when a file name holds a
+# control character. Names are written by the agent, and a newline or escape sequence in one could forge
+# lines of the review the owner reads (or a confirmation prompt the app answers).
+pr_files() {
+  local files unsafe
+  files=$(gh api --paginate "repos/$1/pulls/$2/files?per_page=100" \
+    --jq '.[].filename | if test("[[:cntrl:]]") then "control-character " + gsub("[[:cntrl:]]"; "?") else . end')
+  [[ -n $files ]] || die "could not list the files of PR #$2 in $1"
+  unsafe=$(grep '^control-character ' <<<"$files" || true)
+  [[ -z $unsafe ]] || die "PR #$2 in $1 has file names with control characters; refuse to show or approve it:
+${unsafe//control-character /  }"
+  printf '%s\n' "$files"
+}
+
+# Writes one JSON event line for the Guardrails app when it asked for them (GUARDRAILS_EVENTS_FD names an
+# open file descriptor). The terminal output stays the same; the app builds its review screen and its
+# answers from these events, never from text it scraped off the terminal.
+emit_event() {
+  [[ ${GUARDRAILS_EVENTS_FD:-} =~ ^[3-9]$ ]] || return 0
+  printf '%s\n' "$1" >&"$GUARDRAILS_EVENTS_FD"
+}
+
+# Reads "<marker>\t<path>" lines on stdin and prints them as a JSON array of {path, marker} objects.
+files_json() {
+  jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {marker: .[0], path: .[1]})'
 }
 
 # Prints the checks-<lang> job names a checkout's workflows define (the ruleset requires each one).

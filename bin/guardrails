@@ -2,7 +2,7 @@
 # Owner's command for the agent-guardrails kit. Run it in your own terminal, never through an agent
 # (the agent's bash-guard blocks on, off, approve and revoke).
 #
-#   guardrails                         what waits for you (same as `guardrails inbox`)
+#   guardrails                         what waits for you (same as `guardrails inbox`; --json for the app)
 #   guardrails on <bootstrap PR link>  check, merge and enforce a /guardrails-init PR
 #   guardrails on <owner/repo>         enforce a repo whose default branch already carries the kit
 #   guardrails off <owner/repo>        stop enforcing and remove the kit: the agent works there as before
@@ -44,7 +44,8 @@ require_owner_terminal() {
 }
 
 confirm() {
-  local expected=$1 prompt=$2 typed
+  local step=$1 expected=$2 prompt=$3 typed
+  emit_event "$(jq -n -c --arg step "$step" --arg expect "$expected" '{event: "confirm", step: $step, expect: $expect}')"
   read -r -p "$prompt" typed </dev/tty
   [[ $typed == "$expected" ]] || die "confirmation did not match; nothing changed"
 }
@@ -108,14 +109,6 @@ require_no_status_rights() {
   done
 }
 
-# Prints the files a PR changes; dies when GitHub cannot list them.
-pr_files() {
-  local files
-  files=$(gh api --paginate "repos/$1/pulls/$2/files?per_page=100" --jq '.[].filename')
-  [[ -n $files ]] || die "could not list the files of PR #$2 in $1"
-  printf '%s\n' "$files"
-}
-
 # Applies the ruleset and repository settings the kit relies on. Required checks come from the
 # checkout's own checks-<lang> workflows.
 enforce() {
@@ -157,7 +150,7 @@ enforce() {
 }
 
 on_pr() {
-  local repo pr pr_json sha base default_branch dir files file marker extra_workflows=""
+  local repo pr pr_json sha base default_branch dir files file marker title url marked="" extra_workflows=""
   read -r repo pr < <(pr_target "$1")
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft,state)
@@ -183,7 +176,9 @@ on_pr() {
     die "the bootstrap PR changes workflows besides the kit's own; take them out of this PR:
 $extra_workflows"
 
-  printf '\nPR #%s %s\n%s\nhead: %s\n\n' "$pr" "$(clean "$(jq -r .title <<<"$pr_json")")" "$(jq -r .url <<<"$pr_json")" "$sha"
+  title=$(clean "$(jq -r .title <<<"$pr_json")")
+  url=$(jq -r .url <<<"$pr_json")
+  printf '\nPR #%s %s\n%s\nhead: %s\n\n' "$pr" "$title" "$url" "$sha"
   printf 'Kit files (.agent/, .claude/settings.json, guard and checks workflows) match your installed kit.\n'
   printf 'The agent wrote the rest; review it (! = human-owned from now on):\n'
   while IFS= read -r file; do
@@ -191,9 +186,13 @@ $extra_workflows"
     marker="  "
     if is_human_owned "$file"; then marker="! "; fi
     printf '%s %s\n' "$marker" "$file"
+    marked+="${marker// /}"$'\t'"$file"$'\n'
   done <<<"$files"
   printf '\n'
-  confirm "${sha:0:7}" "Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
+  emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
+    --argjson files "$(files_json <<<"$marked")" \
+    '{event: "plan", action: "on", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files}')"
+  confirm commit "${sha:0:7}" "Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
 
   # Listed before the merge, so a failure in between still shows up as an alarm in the inbox.
   register "$repo"
@@ -213,7 +212,8 @@ on_repo() {
   tmp_dirs+=" $dir"
   require_no_drift "$dir"
   require_no_status_rights "$dir"
-  confirm "$repo" "Kit files on $default_branch match your installed kit. Type $repo to turn the guardrails on: "
+  emit_event "$(jq -n -c --arg repo "$repo" --arg branch "$default_branch" '{event: "plan", action: "on-repo", repo: $repo, branch: $branch}')"
+  confirm repo "$repo" "Kit files on $default_branch match your installed kit. Type $repo to turn the guardrails on: "
   register "$repo"
   enforce "$repo" "$dir"
 }
@@ -247,7 +247,11 @@ off_repo() {
   fi
   [[ -z $notes ]] || printf '%s\n' "$notes" | sed 's/^/    note: /'
   printf '\n'
-  confirm "$repo" "Type $repo to turn the guardrails off: "
+  emit_event "$(jq -n -c --arg repo "$repo" --arg branch "$default_branch" \
+    --arg removed "$(git -C "$dir" diff --cached --name-status)" --arg notes "$notes" \
+    '{event: "plan", action: "off", repo: $repo, branch: $branch,
+      removed: ($removed | split("\n") | map(select(length > 0))), notes: ($notes | split("\n") | map(select(length > 0)))}')"
+  confirm repo "$repo" "Type $repo to turn the guardrails off: "
 
   if ! git -C "$dir" diff --cached --quiet; then
     git -C "$dir" commit --quiet -m "chore: remove agent guardrails kit" \
@@ -280,69 +284,94 @@ login() {
   gh api user --jq .login
 }
 
+# Repos tagged on GitHub as enforced but missing from this machine's list (the list lost an entry).
+topic_alarms() {
+  gh search repos --owner "$(login)" --topic "$topic" --limit 100 --json fullName --jq '.[].fullName' |
+    while IFS= read -r repo; do
+      registered_repos | grep -Fxi -- "$repo" >/dev/null ||
+        printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
+          "$repo" "$repo" "$topic" "$registry" "$repo"
+    done
+}
+
+kit_install_alarm() {
+  local local_sha remote_sha
+  [[ -z $(kit_local_changes) ]] ||
+    printf 'alarm\037\037\037\037the kit install at %s has local changes: on, off and approve refuse until it is clean\n' "$kit"
+  local_sha=$(kit_git rev-parse HEAD)
+  if ! remote_sha=$(kit_git ls-remote origin refs/heads/main 2>/dev/null | cut -f1) || [[ -z $remote_sha ]]; then
+    printf 'note\037\037\037\037could not reach the kit origin to compare the install with its main\n'
+  elif [[ $local_sha != "$remote_sha" ]]; then
+    printf 'alarm\037\037\037\037the kit install is not at its origin main: on, off and approve refuse until it is (git -C %s pull --ff-only)\n' "$kit"
+  fi
+}
+
 # Prints "turn-on" items: open /guardrails-init PRs in repos that are not enforced yet.
 bootstrap_items() {
   gh search prs --owner "$(login)" --head chore/agent-guardrails --state open --limit 50 \
     --json url,title,repository --jq '.[] | [.repository.nameWithOwner, .url, .title] | @tsv' |
     while IFS=$'\t' read -r repo url title; do
       registered_repos | grep -Fxi -- "$repo" >/dev/null ||
-        printf 'turn-on\t%s\t%s\t%s\n' "$url" "$(clean "$title")" "guardrails on $url"
+        printf 'turn-on\037%s\037%s\037%s\037\n' "$repo" "$url" "$(clean "$title")"
     done
 }
 
-# Repos tagged on GitHub as enforced but missing from this machine's list (the list lost an entry).
-topic_alarms() {
-  gh search repos --owner "$(login)" --topic "$topic" --limit 100 --json fullName --jq '.[].fullName' |
-    while IFS= read -r repo; do
-      registered_repos | grep -Fxi -- "$repo" >/dev/null ||
-        printf 'ALARM  %s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
-          "$repo" "$topic" "$registry" "$repo"
-    done
-}
-
-kit_install_alarm() {
-  local local_sha remote_sha
-  [[ -z $(git -C "$kit" status --porcelain) ]] ||
-    printf 'ALARM  the kit install at %s has uncommitted changes: on, off and approve refuse until it is clean\n' "$kit"
-  local_sha=$(git -C "$kit" rev-parse HEAD)
-  if ! remote_sha=$(git -C "$kit" ls-remote origin refs/heads/main 2>/dev/null | cut -f1) || [[ -z $remote_sha ]]; then
-    printf 'note   could not reach the kit origin to compare the install with its main\n'
-  elif [[ $local_sha != "$remote_sha" ]]; then
-    printf 'ALARM  the kit install is not at its origin main: on, off and approve refuse until it is (git -C %s pull --ff-only)\n' "$kit"
-  fi
-}
-
-inbox() {
-  local repo state items any=0 kind url title note
+# Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
+# by the ASCII unit separator (\037), so empty fields survive `read`.
+# Kinds: alarm, note, repo (an enforced repo; note = its ruleset state), answer, approve, wait, blocked
+# (see classify_prs) and turn-on (a /guardrails-init PR in a repo that is not enforced yet).
+inbox_items() {
+  local repo state kind url title note
   kit_install_alarm
   topic_alarms
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     state=$(ruleset_state "$repo")
-    if [[ $state != active ]]; then
-      printf 'ALARM  %s: ruleset %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' "$repo" "$state" "$repo"
-      any=1
-    fi
-    items=$(repo_items "$repo")
-    [[ -n $items ]] || continue
-    any=1
-    printf '\n%s\n' "$repo"
-    while IFS=$'\t' read -r kind url title note; do
-      case $kind in
-        answer) printf '  answer   %s\n           %s (%s)\n' "$title" "$url" "$note" ;;
-        approve) printf '  approve  %s (%s)\n           approve-head %s\n' "$title" "$note" "$url" ;;
-        wait) printf '  wait     %s (%s)\n' "$title" "$note" ;;
-        blocked) printf '  blocked  %s (%s)\n' "$title" "$note" ;;
-      esac
-    done <<<"$items"
+    printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
+    [[ $state == active ]] ||
+      printf 'alarm\037%s\037\037\037%s: ruleset %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
+        "$repo" "$repo" "$state" "$repo"
+    repo_items "$repo" | while IFS=$'\t' read -r kind url title note; do
+      printf '%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note"
+    done
   done < <(registered_repos)
-  items=$(bootstrap_items)
-  if [[ -n $items ]]; then
+  bootstrap_items
+}
+
+# One JSON object per line with the fields of inbox_items, for the Guardrails app.
+inbox_json() {
+  inbox_items | jq -R -c 'split("\u001f") | {kind: .[0], repo: .[1], url: .[2], title: .[3], note: .[4]}'
+}
+
+inbox() {
+  local items kind repo url title note current="" any=0 turn_on=""
+  items=$(inbox_items)
+  while IFS=$'\037' read -r kind repo url title note; do
+    case $kind in
+      alarm) printf 'ALARM  %s\n' "$note" ;;
+      note) printf 'note   %s\n' "$note" ;;
+    esac
+  done <<<"$items"
+  while IFS=$'\037' read -r kind repo url title note; do
+    case $kind in
+      answer | approve | wait | blocked)
+        any=1
+        [[ $repo == "$current" ]] || printf '\n%s\n' "$repo"
+        current=$repo
+        ;;
+    esac
+    case $kind in
+      answer) printf '  answer   %s\n           %s (%s)\n' "$title" "$url" "$note" ;;
+      approve) printf '  approve  %s (%s)\n           approve-head %s\n' "$title" "$note" "$url" ;;
+      wait) printf '  wait     %s (%s)\n' "$title" "$note" ;;
+      blocked) printf '  blocked  %s (%s)\n' "$title" "$note" ;;
+      turn-on) turn_on+="  turn on  $title"$'\n'"           guardrails on $url"$'\n' ;;
+      alarm) any=1 ;;
+    esac
+  done <<<"$items"
+  if [[ -n $turn_on ]]; then
     any=1
-    printf '\nNot enforced yet\n'
-    while IFS=$'\t' read -r kind url title note; do
-      printf '  turn on  %s\n           %s\n' "$title" "$note"
-    done <<<"$items"
+    printf '\nNot enforced yet\n%s' "$turn_on"
   fi
   [[ $any -eq 1 ]] || printf 'Nothing waits for you.\n'
   [[ -s $registry ]] || printf '(no enforced repos yet: ask the agent for /guardrails-init in a project, then run guardrails on <PR link>)\n'
@@ -369,7 +398,7 @@ approve_pick() {
 status() {
   local repo default_branch dir drift
   kit_install_alarm
-  printf 'kit install: %s at %s\n' "$kit" "$(git -C "$kit" rev-parse --short HEAD)"
+  printf 'kit install: %s at %s\n' "$kit" "$(kit_git rev-parse --short HEAD)"
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
@@ -386,9 +415,18 @@ status() {
 command=$1
 shift
 case $command in
-  inbox | status)
-    require_args 0 $# "guardrails $command"
-    "$command"
+  inbox)
+    if [[ ${1:-} == --json ]]; then
+      require_args 1 $# "guardrails inbox --json"
+      inbox_json
+    else
+      require_args 0 $# "guardrails inbox [--json]"
+      inbox
+    fi
+    ;;
+  status)
+    require_args 0 $# "guardrails status"
+    status
     ;;
   on)
     [[ $# -ge 1 ]] || usage

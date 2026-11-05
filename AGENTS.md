@@ -18,6 +18,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `off` deletes the ruleset and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
   and `bin/revoke-head` (approval of a PR's exact HEAD as the commit status `merge-approval`). Enforced repos
   are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
+  For the Guardrails app, `inbox --json` prints one item per line, and with `GUARDRAILS_EVENTS_FD=<3-9>` the
+  commands also write their plan and each expected confirmation as JSON lines to that descriptor.
 - `hooks-global/` user-level hooks installed into `~/.claude/settings.json`. They act only in kit
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`

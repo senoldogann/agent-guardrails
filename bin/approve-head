@@ -51,12 +51,13 @@ while IFS= read -r workflow; do
   fi
 done < <(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path')
 
-files=$(gh api --paginate "repos/$repo/pulls/$pr/files?per_page=100" --jq '.[].filename')
-[[ -n $files ]] || die "could not list the files of PR #$pr"
+files=$(pr_files "$repo" "$pr")
 # Titles are written by the agent: drop control characters so they cannot redraw the lines below.
-printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$(jq -r '.title | gsub("[[:cntrl:]]"; "?")' <<<"$pr_json")" \
-  "$(jq -r .url <<<"$pr_json")" "$sha"
+title=$(jq -r '.title | gsub("[[:cntrl:]]"; "?")' <<<"$pr_json")
+url=$(jq -r .url <<<"$pr_json")
+printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$title" "$url" "$sha"
 workflow_changes=""
+marked=""
 while IFS= read -r file; do
   [[ -n $file ]] || continue
   marker="  "
@@ -67,13 +68,19 @@ while IFS= read -r file; do
     ;;
   esac
   printf '%s %s\n' "$marker" "$file"
+  marked+="${marker// /}"$'\t'"$file"$'\n'
 done <<<"$files"
 printf '\n(! human-owned, !! workflow: can change what CI enforces)\n'
 
 short=${sha:0:7}
+emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
+  --argjson files "$(files_json <<<"$marked")" \
+  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files}')"
+emit_event "$(jq -n -c --arg expect "$short" '{event: "confirm", step: "commit", expect: $expect}')"
 read -r -p "Type $short to approve merging exactly this commit: " typed </dev/tty
 [[ $typed == "$short" ]] || die "confirmation did not match; nothing approved"
 if [[ -n $workflow_changes ]]; then
+  emit_event '{"event":"confirm","step":"workflows","expect":"workflows"}'
   read -r -p "Workflow files change ($workflow_changes). Type 'workflows' to confirm you reviewed them: " typed </dev/tty
   [[ $typed == workflows ]] || die "workflow confirmation missing; nothing approved"
 fi
