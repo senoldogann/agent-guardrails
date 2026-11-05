@@ -9,6 +9,7 @@ lint:
 test:
 	tests/hooks-global.sh
 	tests/pr-target.sh
+	tests/human-owned.sh
 	tests/smoke.sh
 
 ## Slow: real TS/Python/Rust/Swift mini projects (needs pnpm, uv, cargo, swift).
