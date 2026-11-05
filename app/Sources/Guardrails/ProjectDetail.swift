@@ -31,7 +31,7 @@ struct ProjectDetail: View {
             }
             .padding(Metrics.windowPadding)
             .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .background(Palette.canvas)
         .navigationTitle(project.name)
