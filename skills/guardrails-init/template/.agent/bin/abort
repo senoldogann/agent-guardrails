@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Usage: abort <reason>
+# Leaves the active phase without running its gate (ticket dropped or restarted). The reason is
+# printed so it ends up in the transcript; the work is NOT done.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+[[ $# -ge 1 ]] || die "usage: abort <reason>"
+cd_project_root
+
+[[ -f .agent/active ]] || die "no active phase"
+read -r mode ticket <.agent/active
+rm -f .agent/active .agent/blocked ".agent/created-$ticket"
+printf 'ABORTED %s phase for %s: %s\n' "$mode" "$ticket" "$*"

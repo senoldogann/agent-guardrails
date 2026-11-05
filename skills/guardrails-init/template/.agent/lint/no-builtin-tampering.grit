@@ -1,0 +1,42 @@
+// Biome plugin: implementation code must not reach the Function constructor or patch built-ins.
+// `x.constructor("return this")()` yields the global object without naming it, and patching a
+// built-in (`Object.is = ...`) changes how the test runner and the integrity guard behave.
+
+language js
+
+or {
+  `$object.constructor` as $node where {
+    register_diagnostic(span=$node, message="`.constructor` access is banned in implementation code (it reaches the Function constructor).", severity="error")
+  },
+  `$object.__proto__` as $node where {
+    register_diagnostic(span=$node, message="`__proto__` access is banned in implementation code.", severity="error")
+  },
+  `$object[$key]` as $node where {
+    $key <: or { `"constructor"`, `'constructor'`, `"__proto__"`, `'__proto__'` },
+    register_diagnostic(span=$node, message="Computed access to `constructor`/`__proto__` is banned in implementation code.", severity="error")
+  },
+  or {
+    `$target.$property = $value`,
+    `$target[$property] = $value`,
+    `delete $target.$property`,
+    `delete $target[$property]`
+  } as $node where {
+    $target <: or {
+      `Object`, `Reflect`, `Function`, `Array`, `Map`, `Set`, `JSON`, `Math`, `Promise`, `Symbol`,
+      `String`, `Number`, `Boolean`, `Error`, `globalThis`, `$anything.prototype`,
+      `$owner.Object`, `$owner.Reflect`, `$owner.Function`, `$owner.Array`, `$owner.Map`, `$owner.JSON`
+    },
+    register_diagnostic(span=$node, message="Implementation code must not modify built-ins or prototypes; they are shared with the test runner.", severity="error")
+  },
+  or {
+    `Object.defineProperty($...)`,
+    `Object.defineProperties($...)`,
+    `Object.setPrototypeOf($...)`,
+    `Reflect.defineProperty($...)`,
+    `Reflect.set($...)`,
+    `Reflect.setPrototypeOf($...)`,
+    `Reflect.deleteProperty($...)`
+  } as $node where {
+    register_diagnostic(span=$node, message="Reflective property definition is banned in implementation code; build new values instead.", severity="error")
+  }
+}

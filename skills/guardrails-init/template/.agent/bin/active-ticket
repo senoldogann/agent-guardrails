@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Usage: active-ticket
+# Prints the active ticket id, or nothing when no phase is active.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "active-ticket"
+cd_project_root
+
+if [[ -f .agent/active ]]; then
+  read -r _mode ticket <.agent/active
+  printf '%s\n' "$ticket"
+fi

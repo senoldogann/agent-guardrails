@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Usage: unblock
+# Clears a block after the human answered; the Stop hook enforces the gate again.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "unblock"
+cd_project_root
+
+[[ -f .agent/blocked ]] || die "not blocked"
+rm -f .agent/blocked
+printf 'unblocked\n'

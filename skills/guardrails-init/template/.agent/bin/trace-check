@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Usage: trace-check
+# For every locked ticket (specs/<TICKET>/tests.lock exists):
+#   - every "- AC-<n>: ..." item in acceptance-criteria.md is referenced by >= 1 locked test name
+#   - every locked test name references at most one AC, and only existing ones
+# AC references in test names: AC-1, AC_1, ac_1, ac1 (case-insensitive) at the start of the name or
+# after "_", " " or ">". Optional .feature files: no Outline/Examples/Scenarios, no skip-like tags.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "trace-check"
+cd_project_root
+
+status=0
+report() {
+  printf '%s\n' "$1" >&2
+  status=1
+}
+
+for tests_lock in specs/*/tests.lock; do
+  [[ -f $tests_lock ]] || continue
+  dir=$(dirname "$tests_lock")
+  criteria="$dir/acceptance-criteria.md"
+  [[ -f $criteria ]] || {
+    report "$criteria is missing"
+    continue
+  }
+
+  acs=$(awk 'match($0, /^- AC-[0-9]+/) { print substr($0, 6, RLENGTH - 5) + 0 }' "$criteria" | sort -u)
+  [[ -n $acs ]] || {
+    report "$criteria: no '- AC-<n>: ...' items"
+    continue
+  }
+
+  # "<ac-number>\t<test id>" for every AC reference in a locked test name.
+  refs=$(awk -F'::' '{
+    name = tolower(substr($0, index($0, "::") + 2)); id = $0; n = 0
+    while (match(name, /(^|[_ >])ac[-_]?[0-9]+/)) {
+      token = substr(name, RSTART, RLENGTH); gsub(/[^0-9]/, "", token)
+      print (token + 0) "\t" id; n++
+      name = substr(name, RSTART + RLENGTH)
+    }
+  }' "$tests_lock")
+
+  multi=$(cut -f2 <<<"$refs" | awk 'NF' | sort | uniq -d)
+  [[ -z $multi ]] || report "$dir: tests referencing more than one AC (one AC per test): $(tr '\n' ' ' <<<"$multi")"
+
+  referenced=$(cut -f1 <<<"$refs" | awk 'NF' | sort -u)
+  missing=$(comm -23 <(printf '%s\n' "$acs") <(printf '%s\n' "$referenced"))
+  unknown=$(comm -13 <(printf '%s\n' "$acs") <(printf '%s\n' "$referenced") | awk 'NF')
+  [[ -z $missing ]] || report "$dir: acceptance criteria without a locked test: $(awk '{ printf "AC-%s ", $0 }' <<<"$missing")"
+  [[ -z $unknown ]] || report "$dir: tests reference unknown criteria: $(awk '{ printf "AC-%s ", $0 }' <<<"$unknown")"
+
+  while IFS= read -r feature; do
+    [[ -n $feature ]] || continue
+    if grep -nE '^[[:space:]]*(Scenario Outline|Scenario Template|Scenarios|Examples):' "$feature" >/dev/null; then
+      report "$feature: Scenario Outline/Examples/Scenarios are not allowed; one Scenario per concrete example"
+    fi
+    if grep -niE '@(skip|wip|ignore|todo|pending|only)\b' "$feature" >/dev/null; then
+      report "$feature: skip-like tags are not allowed"
+    fi
+  done < <(find "$dir" -maxdepth 1 -name '*.feature' | sort)
+done
+
+exit "$status"

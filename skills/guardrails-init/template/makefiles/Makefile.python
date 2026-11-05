@@ -1,0 +1,45 @@
+# Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
+# Dev dependencies: pytest, hypothesis, pytest-reportlog, ruff, basedpyright.
+include .agent/common.mk
+
+RESULTS := .agent/reports/results
+PYTEST := uv run pytest -p no:cacheprovider
+
+.PHONY: typecheck lint fmt-check test-ids test test-prop
+
+typecheck:
+	uv run basedpyright
+
+## Project lint, then the restriction pass for implementation code (src/, tests excluded).
+lint:
+	uv run ruff check .
+	uv run ruff check --no-cache --config .agent/lint/ruff-restrictions.toml src
+	.agent/bin/escape-check py
+
+fmt-check:
+	uv run ruff format --check .
+
+## Every test ID (unit, property, acceptance) without running tests; stdout carries only IDs.
+test-ids:
+	@mkdir -p $(RESULTS)
+	@$(PYTEST) --collect-only -q >$(RESULTS)/ids.pytest.txt || { cat $(RESULTS)/ids.pytest.txt >&2; exit 1; }
+	@.agent/bin/results-pytest-ids $(RESULTS)/ids.pytest.txt
+
+# $(call pytest_results,<name>,<pytest paths>): runs pytest with the locked integrity guard,
+# writes $(RESULTS)/<name>.tsv, exits with pytest's exit code (or the adapter's).
+define pytest_results
+	@mkdir -p $(RESULTS) && rm -f $(RESULTS)/$(1).reportlog.jsonl $(RESULTS)/$(1).tsv
+	@status=0; PYTHONPATH=.agent/test-support$${PYTHONPATH:+:$$PYTHONPATH} $(PYTEST) -p pytest_integrity \
+		--report-log=$(RESULTS)/$(1).reportlog.jsonl $(2) || status=$$?; \
+	.agent/bin/results-pytest $(RESULTS)/$(1).reportlog.jsonl >$(RESULTS)/$(1).tsv.tmp && \
+	mv $(RESULTS)/$(1).tsv.tmp $(RESULTS)/$(1).tsv && exit $$status
+endef
+
+## Full suite (unit, property, acceptance) -> $(RESULTS)/test.tsv.
+test:
+	$(call pytest_results,test,)
+
+## Property tests (Hypothesis, tests/property/) -> $(RESULTS)/test-prop.tsv.
+test-prop:
+	$(call pytest_results,test-prop,tests/property)

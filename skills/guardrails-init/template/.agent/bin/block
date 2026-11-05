@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Usage: block <question or reason>
+# Marks the active phase as waiting for the human. The Stop hook then lets the agent stop and shows
+# the reason instead of forcing more fixes. The next start-* or unblock clears it.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+[[ $# -ge 1 ]] || die "usage: block <question or reason>"
+cd_project_root
+
+[[ -f .agent/active ]] || die "no active phase"
+printf '%s\n' "$*" >.agent/blocked
+printf 'blocked: %s\n' "$*"

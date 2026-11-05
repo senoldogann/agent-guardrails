@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Usage: spec-lock <TICKET>
+# Requires every open question to be decided, then writes:
+#   specs/<TICKET>/tests.lock  test IDs (from `make test-ids`) that live in the locked files
+#   specs/<TICKET>/spec.lock   sha256 of every locked file plus the ticket's spec metadata
+# Locked files are immutable for the implement phase (write-guard hook locally, human review in CI).
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "spec-lock <TICKET>"
+cd_project_root
+
+ticket=$1
+dir="specs/$ticket"
+"$(dirname "$0")/questions-check" "$ticket"
+
+for meta in locked-files write-allow acceptance-criteria.md OPEN_QUESTIONS.md; do
+  [[ -f "$dir/$meta" ]] || die "$dir/$meta is missing"
+done
+[[ -n $(list_entries "$dir/write-allow") ]] || die "$dir/write-allow has no patterns"
+
+locked=$(list_entries "$dir/locked-files")
+[[ -n $locked ]] || die "$dir/locked-files lists no files"
+
+# write-allow must not reach any human-owned path (tracked or locked) nor a bare wildcard.
+candidates=$({ git ls-files; printf '%s\n' "$locked"; } | sort -u)
+while IFS= read -r pattern; do
+  case $pattern in
+    '*' | '**' | '*/*' | '/*') die "write-allow pattern '$pattern' is a wildcard; list implementation paths" ;;
+  esac
+  while IFS= read -r path; do
+    [[ -n $path ]] || continue
+    if is_human_owned "$path" || grep -xF -- "$path" <<<"$locked" >/dev/null; then
+      # shellcheck disable=SC2053 # glob match against a write-allow pattern is intended
+      [[ $path != $pattern ]] || die "write-allow pattern '$pattern' matches human-owned or locked path '$path'"
+    fi
+  done <<<"$candidates"
+done < <(list_entries "$dir/write-allow")
+
+# Locked test IDs: every collected test whose file is a locked file.
+ids=$(make --no-print-directory -s test-ids) || die "'make test-ids' failed"
+awk -F'::' 'NR == FNR { locked[$0] = 1; next } ($1 in locked)' <(printf '%s\n' "$locked") <(printf '%s\n' "$ids") >"$dir/tests.lock"
+[[ -s "$dir/tests.lock" ]] || die "no collected test IDs belong to the locked files; check locked-files and 'make test-ids'"
+
+paths=$(
+  printf '%s\n' "$dir/locked-files" "$dir/write-allow" "$dir/acceptance-criteria.md" "$dir/OPEN_QUESTIONS.md" "$dir/tests.lock"
+  printf '%s\n' "$locked"
+)
+tmp="$dir/spec.lock.tmp"
+: >"$tmp"
+while IFS= read -r path; do
+  [[ -f $path ]] || die "locked path does not exist: $path"
+  shasum -a 256 "$path" >>"$tmp"
+done <<<"$paths"
+mv "$tmp" "$dir/spec.lock"
+printf 'locked %s files and %s tests in %s\n' "$(wc -l <"$dir/spec.lock" | tr -d ' ')" "$(wc -l <"$dir/tests.lock" | tr -d ' ')" "$dir"

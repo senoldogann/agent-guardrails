@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Usage: results-vitest <vitest-report.json>
+# Converts a Vitest JSON reporter file to the normalized results TSV (see results-lib.sh) on stdout.
+# A test file that failed outside any test (import error, afterAll/integrity failure) becomes an
+# `error` line with the ID "<file>::<file>".
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-vitest <vitest-report.json>"
+cd_project_root
+require_report "$1"
+
+jq -r --argjson roots "$(project_roots_json)" "$RESULTS_JQ_LIB"'
+  def status_of:
+    if . == "passed" then "passed"
+    elif . == "failed" then "failed"
+    else "skipped" end;
+  .testResults[]
+  | (.name | relative($roots)) as $file
+  | (
+      (.assertionResults[]
+        | tsv_line($file + "::" + ((.ancestorTitles + [.title]) | join(" > ")); (.status | status_of); (.failureMessages[0] // ""))),
+      (select(.status == "failed" and ((.message // "") | length) > 0)
+        | tsv_line($file + "::" + $file; "error"; .message))
+    )
+' "$1"

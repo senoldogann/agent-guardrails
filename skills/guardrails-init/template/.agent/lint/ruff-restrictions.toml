@@ -1,0 +1,45 @@
+# Restriction pass for domain code under src/ (Makefile `lint`:
+#   ruff check --config .agent/lint/ruff-restrictions.toml src). Human-owned.
+# Domain code runs inside the test process: it must not import test machinery, control the process,
+# read argv/environment, touch files, or load code at runtime. Banned modules and names are resolved
+# through aliases (TID251); banning a module also bans its submodules and members.
+# Not resolvable by ruff: builtins `__import__`, `open`, `globals`, `setattr` on modules; the pytest
+# integrity guard (.agent/test-support/pytest_integrity.py) and mutation testing cover those.
+
+[lint]
+select = ["TID251", "S102", "S307"]
+
+[lint.flake8-tidy-imports.banned-api]
+"pytest".msg = "Implementation code must not import test frameworks."
+"_pytest".msg = "Implementation code must not import test frameworks."
+"pluggy".msg = "Implementation code must not import test frameworks."
+"hypothesis".msg = "Implementation code must not import property-test runners."
+"pytest_reportlog".msg = "Implementation code must not import test reporters."
+"pytest_integrity".msg = "Implementation code must not touch the test-integrity guard."
+"unittest".msg = "Implementation code must not import test frameworks."
+"atexit".msg = "Exit hooks can rewrite test reports; not allowed in implementation code."
+"importlib".msg = "Runtime imports bypass this check; use static imports."
+"builtins".msg = "Patching builtins affects the test process."
+"ctypes".msg = "Native calls are not allowed in implementation code."
+"gc".msg = "Object-graph access can patch test machinery."
+"inspect".msg = "Frame/stack inspection can patch test machinery."
+"faulthandler".msg = "Not allowed in implementation code."
+# Whole modules: process control, argv/environment and file-system access let implementation code
+# forge the report log (read --report-log from sys.argv, write it, exec away). Adapters that need
+# I/O live outside src/, in a separate write-allowed package the owner reviews.
+"os".msg = "Domain code under src/ must not use os (process, environment, files); put I/O in an adapter package outside src/."
+"sys".msg = "Domain code under src/ must not use sys (argv, exit, modules); put I/O in an adapter package outside src/."
+"subprocess".msg = "Domain code under src/ must not spawn processes."
+"multiprocessing".msg = "Domain code under src/ must not spawn processes."
+"signal".msg = "Domain code under src/ must not send or handle signals."
+"pty".msg = "Domain code under src/ must not spawn processes."
+"pathlib".msg = "Domain code under src/ must not touch files; put I/O in an adapter package outside src/."
+"io".msg = "Domain code under src/ must not touch files; put I/O in an adapter package outside src/."
+"shutil".msg = "Domain code under src/ must not touch files; put I/O in an adapter package outside src/."
+"tempfile".msg = "Domain code under src/ must not touch files; put I/O in an adapter package outside src/."
+"socket".msg = "Domain code under src/ must not do network I/O; put I/O in an adapter package outside src/."
+
+[lint.per-file-ignores]
+"**/test_*.py" = ["TID251"]
+"**/*_test.py" = ["TID251"]
+"**/conftest.py" = ["TID251"]

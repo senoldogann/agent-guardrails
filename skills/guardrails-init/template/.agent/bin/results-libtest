@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Usage: results-libtest <cargo-test-output.txt>
+# Converts plain libtest output (`cargo test --tests --no-fail-fast` with stderr merged in) to the
+# normalized results TSV (see results-lib.sh) on stdout. The message of a failed test is the first
+# line of its panic message. A test binary that never printed its "test result:" line (it exited
+# or crashed mid-run) adds an `error` line with the ID "<file>::<file>"; no test binary at all (a
+# build failure) adds "(cargo)::(cargo)".
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-libtest <cargo-test-output.txt>"
+cd_project_root
+require_report "$1"
+
+awk '
+  function clean(text) { gsub(/\t/, " ", text); gsub(/\r/, "", text); return text }
+  function id(name) { gsub(/::/, " > ", name); return file "::" name }
+  /^[[:space:]]+Running / {
+    file = $0
+    sub(/^[[:space:]]+Running (unittests )?/, "", file)
+    sub(/ \(.*$/, "", file)
+    files[++file_count] = file
+    finished[file] = 0
+    section = ""
+    next
+  }
+  file == "" { next }
+  /^test result: / { finished[file] = 1; section = ""; next }
+  /^---- .* stdout ----$/ {
+    section = $0
+    sub(/^---- /, "", section)
+    sub(/ stdout ----$/, "", section)
+    want_message = 0
+    next
+  }
+  /^failures:$/ { section = ""; next }
+  section != "" {
+    key = id(section)
+    if (key in message) next
+    if ($0 ~ /^thread .* panicked at /) { want_message = 1; next }
+    if (NF > 0 && (want_message || !(key in fallback))) {
+      if (want_message) message[key] = clean($0)
+      else fallback[key] = clean($0)
+    }
+    next
+  }
+  /^test .* \.\.\. / {
+    line = substr($0, 6)
+    split_at = index(line, " ... ")
+    name = substr(line, 1, split_at - 1)
+    outcome = substr(line, split_at + 5)
+    key = id(name)
+    keys[++key_count] = key
+    if (outcome == "ok") status[key] = "passed"
+    else if (outcome == "FAILED") status[key] = "failed"
+    else if (outcome ~ /^ignored/) status[key] = "skipped"
+    else status[key] = "error"
+  }
+  END {
+    if (file_count == 0) printf "(cargo)::(cargo)\terror\tno test binary ran; the build failed or no test targets exist\n"
+    for (i = 1; i <= key_count; i++) {
+      key = keys[i]
+      text = ""
+      if (status[key] != "passed") text = (key in message) ? message[key] : fallback[key]
+      printf "%s\t%s\t%s\n", key, status[key], text
+    }
+    for (i = 1; i <= file_count; i++) {
+      if (!finished[files[i]]) printf "%s::%s\terror\ttest binary exited before printing its result summary\n", files[i], files[i]
+    }
+  }
+' "$1"

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Usage: spec-commit-ticket
+# Prints the ticket id when HEAD itself changed specs/<TICKET>/spec.lock (the spec commit, where the
+# locked tests must be red); prints nothing otherwise. Fails if HEAD touches several tickets' locks.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "spec-commit-ticket"
+cd_project_root
+
+tickets=$(git diff-tree --no-commit-id --name-only -r --root HEAD -- 'specs/*/spec.lock' | awk -F/ '{ print $2 }' | sort -u)
+count=$(awk 'NF' <<<"$tickets" | wc -l | tr -d ' ')
+[[ $count -le 1 ]] || die "HEAD changes several spec locks: $(tr '\n' ' ' <<<"$tickets")"
+[[ -z $tickets ]] || printf '%s\n' "$tickets"

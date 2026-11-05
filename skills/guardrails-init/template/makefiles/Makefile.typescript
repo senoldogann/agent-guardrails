@@ -1,0 +1,44 @@
+# Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
+# Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
+include .agent/common.mk
+
+RESULTS := .agent/reports/results
+VITEST_CONFIG := --config .agent/test-support/vitest.config.ts
+
+.PHONY: typecheck lint fmt-check test-ids test test-prop
+
+typecheck:
+	pnpm exec tsc --noEmit
+
+## Project lint, then the restriction pass for implementation code (src/, tests excluded).
+lint:
+	pnpm exec biome lint --error-on-warnings .
+	pnpm exec biome lint --error-on-warnings --config-path .agent/lint/biome-restrictions.json .
+	.agent/bin/escape-check ts
+
+fmt-check:
+	pnpm exec biome format .
+
+## Every test ID (unit, property, acceptance) without running tests; stdout carries only IDs.
+test-ids:
+	@mkdir -p $(RESULTS)
+	@pnpm exec vitest list $(VITEST_CONFIG) --json=$(RESULTS)/ids.vitest.json >/dev/null
+	@.agent/bin/results-vitest-ids $(RESULTS)/ids.vitest.json
+
+# $(call vitest_results,<name>,<vitest filters>): runs Vitest, writes $(RESULTS)/<name>.tsv,
+# exits with Vitest's exit code (or the adapter's, when the report is unusable).
+define vitest_results
+	@mkdir -p $(RESULTS) && rm -f $(RESULTS)/$(1).vitest.json $(RESULTS)/$(1).tsv
+	@status=0; pnpm exec vitest run $(VITEST_CONFIG) --reporter=default --reporter=json \
+		--outputFile.json=$(RESULTS)/$(1).vitest.json $(2) || status=$$?; \
+	.agent/bin/results-vitest $(RESULTS)/$(1).vitest.json >$(RESULTS)/$(1).tsv.tmp && \
+	mv $(RESULTS)/$(1).tsv.tmp $(RESULTS)/$(1).tsv && exit $$status
+endef
+
+## Full suite (unit, property, acceptance) -> $(RESULTS)/test.tsv.
+test:
+	$(call vitest_results,test,)
+
+## Property tests (*.prop.test.ts, fast-check) -> $(RESULTS)/test-prop.tsv.
+test-prop:
+	$(call vitest_results,test-prop,.prop.test.)

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Usage: results-swift-ids <swift-test-list-output.txt>
+# Prints normalized test IDs from `swift test list --disable-xctest` output (see results-lib.sh).
+# swift-testing reports no source file before running, so the kit requires one top-level @Suite
+# per file, named after it: "<Module>.<Suite>/<Nested>/<fn(args:)>" maps to
+# "Tests/<Module>/<Suite>.swift::<Suite> > <Nested> > <fn(args:)>". The file must exist.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-swift-ids <swift-test-list-output.txt>"
+cd_project_root
+require_report "$1"
+
+mapped=$(awk '
+  NF == 0 { next }
+  {
+    dot = index($0, ".")
+    if (dot == 0) { print "!" $0; next }
+    module = substr($0, 1, dot - 1)
+    count = split(substr($0, dot + 1), parts, "/")
+    if (count < 2) { print "!" $0; next }
+    name = parts[1]
+    for (i = 2; i <= count; i++) name = name " > " parts[i]
+    printf "Tests/%s/%s.swift\t%s\n", module, parts[1], name
+  }
+' "$1")
+
+bad=$(grep '^!' <<<"$mapped" || true)
+[[ -z $bad ]] || die "tests outside a @Suite are not supported; put each test in a top-level @Suite named after its file:"$'\n'"${bad//!/}"
+
+while IFS=$'\t' read -r file name; do
+  [[ -f $file ]] || die "suite of test '$name' must live in $file (one top-level @Suite per file, named after it)"
+  printf '%s::%s\n' "$file" "$name"
+done <<<"$mapped" | print_unique_ids

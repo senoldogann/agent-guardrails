@@ -1,0 +1,15 @@
+# Clippy configuration (Makefile `lint` sets CLIPPY_CONF_DIR=.agent/lint). Human-owned.
+# Implementation code runs inside the test process: exiting or aborting it drops every remaining
+# test result, and environment mutation can change property-test configuration.
+# Also required in Cargo.toml (human-owned):  [lints.rust] unsafe_code = "forbid"
+disallowed-methods = [
+  { path = "std::process::exit", reason = "exiting the process hides test results; return an error instead" },
+  { path = "std::process::abort", reason = "aborting the process hides test results; return an error instead" },
+  { path = "std::process::Command::new", reason = "implementation code must not spawn processes" },
+  { path = "std::env::set_var", reason = "environment mutation can change test and property-runner configuration" },
+  { path = "std::env::remove_var", reason = "environment mutation can change test and property-runner configuration" },
+  { path = "std::panic::set_hook", reason = "panic hooks can hide test failures" },
+  { path = "std::panic::take_hook", reason = "panic hooks can hide test failures" },
+  { path = "std::panic::catch_unwind", reason = "catching panics can hide NotImplemented stubs and test failures" },
+  { path = "std::mem::forget", reason = "not needed in safe domain code" },
+]

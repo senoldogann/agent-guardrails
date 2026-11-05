@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Usage: results-pytest <report-log.jsonl>
+# Converts a pytest-reportlog file (`pytest --report-log=<file>`) to the normalized results TSV
+# (see results-lib.sh) on stdout. Per test: a failed setup/teardown is `error`, a failed call is
+# `failed`, any skip or xfail is `skipped`, a clean call is `passed`. Collection errors become
+# `error` lines with the ID "<file>::<file>". A test with more than one report for the same phase
+# (a forged or doubled report log) is `error`.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-pytest <report-log.jsonl>"
+cd_project_root
+require_report "$1"
+
+jq -rn "$RESULTS_JQ_LIB"'
+  def message:
+    .longrepr as $r
+    | if ($r | type) == "object" then ($r.reprcrash.message // $r.longrepr // ($r | tostring))
+      elif ($r | type) == "array" then ($r[2] // "")
+      elif $r == null then ""
+      else ($r | tostring) end;
+  def test_id:
+    (.nodeid | split("::")) as $parts
+    | $parts[0] + "::" + ($parts[1:] | join(" > "));
+  [inputs] as $records
+  | (
+      ($records[]
+        | select(."$report_type" == "CollectReport" and .outcome == "failed")
+        | (if .nodeid == "" then "(session)" else .nodeid end) as $where
+        | tsv_line($where + "::" + $where; "error"; message)),
+      ($records
+        | map(select(."$report_type" == "TestReport"))
+        | group_by(.nodeid)[]
+        | ((group_by(.when) | map(length) | max) > 1) as $doubled
+        | (map(select(.when != "call" and .outcome == "failed")) | first) as $broken
+        | (map(select(.when == "call")) | first) as $call
+        | (map(select(.outcome == "skipped")) | first) as $skip
+        | (.[0] | test_id) as $id
+        | if $doubled then tsv_line($id; "error"; "more than one report for one test phase; the report log was written twice or forged")
+          elif $broken != null then tsv_line($id; "error"; ($broken | message))
+          elif $call != null and $call.outcome == "failed" then tsv_line($id; "failed"; ($call | message))
+          elif $skip != null then tsv_line($id; "skipped"; ($skip | if .wasxfail != null then "xfail: " + .wasxfail else message end))
+          elif $call != null and $call.wasxfail != null then tsv_line($id; "skipped"; "xpassed: " + $call.wasxfail)
+          elif $call != null and $call.outcome == "passed" then tsv_line($id; "passed"; "")
+          else tsv_line($id; "error"; "no call phase was reported") end)
+    )
+' "$1"

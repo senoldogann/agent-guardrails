@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Usage: start-implement <TICKET>
+# Enters the implement phase after verifying decisions and the spec lock.
+# The write-guard hook then allows only specs/<TICKET>/write-allow paths that are not locked.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "start-implement <TICKET>"
+cd_project_root
+
+ticket=$1
+bin=$(dirname "$0")
+"$bin/questions-check" "$ticket"
+"$bin/lock-verify" "$ticket"
+
+rm -f .agent/blocked
+printf 'implement %s\n' "$ticket" >.agent/active
+printf 'implement phase active for %s\n' "$ticket"

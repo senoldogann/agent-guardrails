@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Usage: results-pytest-ids <collect-only-output.txt>
+# Prints normalized test IDs from `pytest --collect-only -q` output (see results-lib.sh):
+# pytest node IDs "<file>::<Class>::<test[param]>" become "<file>::<Class> > <test[param]>".
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/results-lib.sh"
+require_args 1 $# "results-pytest-ids <collect-only-output.txt>"
+cd_project_root
+require_report "$1"
+
+# -q prints one node ID per line, then a blank line and the summary.
+awk 'NF == 0 { exit } index($0, "::") > 0 {
+  file = substr($0, 1, index($0, "::") - 1)
+  rest = substr($0, index($0, "::") + 2)
+  gsub(/::/, " > ", rest)
+  print file "::" rest
+}' "$1" | print_unique_ids

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Usage: questions-check <TICKET>
+# Fails unless every "## Q<n>" / "### Q <n>" section of specs/<TICKET>/OPEN_QUESTIONS.md has a
+# "Decision:" line with a real answer (not empty, TBD, TODO or "?", case-insensitive).
+# Decisions are the human's: the agent leaves them empty; the human's merge approval attests them.
+# A file without any Q<n> heading means "no open questions" and passes.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "questions-check <TICKET>"
+cd_project_root
+
+file="specs/$1/OPEN_QUESTIONS.md"
+[[ -f $file ]] || die "$file is missing; the spec phase must create it"
+
+undecided=$(awk '
+  function flush() { if (q != "" && !decided) print q }
+  /^#+[[:space:]]*[Qq][[:space:]]*[0-9]+/ { flush(); q = $0; decided = 0; next }
+  tolower($0) ~ /^decision:/ {
+    answer = tolower($0)
+    sub(/^decision:[[:space:]]*/, "", answer)
+    if (answer != "" && answer !~ /^(tbd|todo|\?|-|n\/a)[[:space:]]*$/) decided = 1
+  }
+  END { flush() }
+' "$file")
+
+if [[ -n $undecided ]]; then
+  printf 'undecided questions in %s:\n%s\n' "$file" "$undecided" >&2
+  exit 1
+fi
