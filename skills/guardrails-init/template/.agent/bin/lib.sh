@@ -32,8 +32,11 @@ list_entries() {
 is_human_owned() {
   local path=$1 base
   base=${path##*/}
+  case "/$path" in
+    */.*) return 0 ;; # any dot directory or dotfile (.cargo/config.toml, .stryker-tmp/, .github/)
+  esac
   case $path in
-    .agent/* | .claude/* | .github/* | specs/* | docs/CODEOWNERS | CODEOWNERS) return 0 ;;
+    specs/* | docs/CODEOWNERS | CODEOWNERS) return 0 ;;
     tests/* | */tests/* | test/* | */test/* | Tests/* | */Tests/* | */__tests__/* | __tests__/*) return 0 ;;
   esac
   case $base in
@@ -45,6 +48,7 @@ is_human_owned() {
     package.json | pnpm-lock.yaml | package-lock.json | yarn.lock | pnpm-workspace.yaml) return 0 ;;
     tsconfig*.json | jsconfig*.json | biome.json | biome.jsonc | *.grit) return 0 ;;
     vite.config.* | vitest.config.* | vitest.workspace.* | vitest.setup.* | *.setup.ts | *.setup.js) return 0 ;;
+    stryker.config.* | stryker.conf.* | mutants.toml | setup.cfg.mutmut | mutmut_config.py) return 0 ;;
     Cargo.toml | Cargo.lock | build.rs | clippy.toml | rustfmt.toml | rust-toolchain | rust-toolchain.toml | nextest.toml) return 0 ;;
     Package.swift | Package.resolved | *.xcconfig | *.pbxproj | *.xcscheme | *.entitlements | Info.plist) return 0 ;;
     Dockerfile | *.dockerfile | docker-compose*.yml | compose*.yml) return 0 ;;

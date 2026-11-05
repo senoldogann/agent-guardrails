@@ -69,7 +69,7 @@ while IFS= read -r call; do
       # only an admin merge could bypass it.
       [[ " $rest " != *" --admin "* ]] || deny "admin merge bypasses protection"
       ;;
-    "issue view" | "issue list" | "issue comment" | "issue create" | "issue edit" | "issue status") ;;
+    "issue view" | "issue list" | "issue comment" | "issue create" | "issue edit" | "issue status" | "issue close" | "issue reopen") ;;
     "run view" | "run list" | "run watch" | "run download") ;;
     "repo view" | "repo clone" | "release view" | "release list" | "workflow view" | "workflow list") ;;
     "label list" | "search "* | "status "* | "browse "*) ;;

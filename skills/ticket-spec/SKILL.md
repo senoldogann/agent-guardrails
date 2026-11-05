@@ -39,8 +39,12 @@ Copy the ticket's criteria verbatim as `- AC-<n>: <text>`. Do not invent criteri
   invalid class with its specific error).
 - Acceptance: one test per concrete example, its name starting with exactly one AC reference
   (`AC-1: ...` / `test_ac_1_...` / `ac_1_...` / `ac1...`). `.feature` files are optional documentation.
-- Pin runner configuration inside each test (runs, seed handling, phases) as the reference shows; no
+- Pin runner configuration inside each test (number of runs, phases) as the reference shows; no
   parametrized/each tests without explicit IDs.
+- Seeds stay random so property tests explore new inputs on every run; the runner prints the seed when a
+  property fails. Every rule a single input decides (a boundary, a tie, a rounding remainder, an error order)
+  also gets a deterministic example or an exhaustive table over a small range, so it is checked on every run,
+  not by chance. An input that ever exposed a bug is added as a permanent example.
 
 ## 4. `specs/<ID>/OPEN_QUESTIONS.md`
 
