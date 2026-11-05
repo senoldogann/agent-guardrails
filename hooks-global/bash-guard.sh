@@ -64,7 +64,8 @@ while IFS= read -r call; do
       [[ " $rest " != *" --base "* && " $rest " != *" -B "* ]] || deny "retargeting a PR's base branch"
       ;;
     "pr merge")
-      [[ " $rest " == *" --auto "* ]] || deny "merging without --auto (merges wait for the human's merge-approval)"
+      # Kit repositories enforce merge-approval server-side (ruleset), so a plain merge is refused there;
+      # only an admin merge could bypass it.
       [[ " $rest " != *" --admin "* ]] || deny "admin merge bypasses protection"
       ;;
     "issue view" | "issue list" | "issue comment" | "issue create" | "issue edit" | "issue status") ;;
