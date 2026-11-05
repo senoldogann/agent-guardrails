@@ -26,7 +26,7 @@ raw=$(jq -r '.tool_input.command // empty' <<<"$input")
 [[ -n $raw ]] || exit 0
 # Normalize common spellings so quoting or path tricks do not hide a gh call:
 # drop quotes and backslashes, and turn $(which gh)/$(command -v gh)/`which gh` into gh.
-quote_chars=$'"\'\\'
+quote_chars=$'\\\\"\''
 # shellcheck disable=SC2016 # $( and backticks are literal text to rewrite, not expansions
 gh_lookup='s/\$\((which|command -v|type -p) gh\)/gh/g; s/`(which|command -v|type -p) gh`/gh/g'
 cmd=$(tr -d "$quote_chars" <<<"$raw" | sed -E "$gh_lookup")
