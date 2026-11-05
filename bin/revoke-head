@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Usage: revoke-head <pr-number>        (run by the HUMAN owner)
+# Withdraws the owner's merge approval for the PR's current HEAD by posting the commit status
+# `merge-approval` = failure (the newest status of a context wins), which blocks the merge again.
+set -euo pipefail
+kit=$(cd "$(dirname "$0")/.." && pwd -P)
+source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
+require_args 1 $# "revoke-head <pr-number>"
+
+[[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
+  die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run revoke-head in your own shell."
+
+pr=$1
+[[ $pr =~ ^[0-9]+$ ]] || die "PR number must be numeric: $pr"
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+gh api -X POST "repos/$repo/statuses/$sha" -f state=failure -f context=merge-approval \
+  -f description="Approval revoked by owner for PR #$pr" >/dev/null
+printf 'merge-approval: failure on %s (PR #%s)\n' "$sha" "$pr"

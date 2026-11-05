@@ -35,6 +35,7 @@ matches 'git[[:space:]]+credential' && deny "git credential helper access"
 matches '\.config/gh|hosts\.yml|\.git-credentials|\.netrc|settings\.local\.json' && deny "reading stored GitHub credentials"
 matches '(GH|GITHUB)_(ENTERPRISE_)?TOKEN' && deny "referencing the GitHub token (read, override or unset)"
 matches 'pending_deployments|deployment_protection|/environments/' && deny "deployment approval or environment access"
+matches '(^|/|[[:space:]])(approve|revoke)-head([[:space:]]|$)|/statuses/' && deny "merge approval (owner-only commit status)"
 # shellcheck disable=SC2016 # backticks are literal regex characters
 matches '(^|[;&|(`"'"'"'[:space:]])(printenv|export[[:space:]]+-p|set)([[:space:]]*($|[;&|)`"'"'"']))|(^|[;&|(`[:space:]])env[[:space:]]*($|[;&|)`])' &&
   deny "dumping the environment (may expose tokens)"

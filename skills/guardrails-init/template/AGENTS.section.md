@@ -9,7 +9,8 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   1. `/ticket-spec <ID>` → draft PR with contracts, stubs, locked tests (`AC-<n>` in test names), spec files.
   2. The owner answers `specs/<ID>/OPEN_QUESTIONS.md` and reviews the spec; the agent locks it (`spec-lock`).
   3. `/ticket-implement <ID>` → implementation in `specs/<ID>/write-allow` paths only.
-  4. The owner approves the exact HEAD in the `merge-approval` environment; nothing merges without it.
+  4. The owner approves the exact HEAD with the kit's `bin/approve-head <pr>` (commit status
+     `merge-approval`); nothing merges without it, and every new push needs a new approval.
 - Locked files (`specs/<ID>/spec.lock`, test IDs in `tests.lock`) change only by re-locking in a reviewed PR.
 - Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.github/`, `specs/`, tests,
   configs, manifests, lockfiles, dotfiles, `AGENTS.md`, `CLAUDE.md`, `Makefile`.
@@ -21,7 +22,8 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   ask the agent why it happened first.
 - Agent identity: the agent uses the owner's GitHub account through a fine-grained token with access to this
   repository only: Contents, Pull requests, Issues read/write; Actions, Commit statuses read (Metadata is
-  automatic); never Administration, Workflows, Deployments, Environments, Secrets, Variables or Webhooks.
+  automatic); never Commit statuses write, Administration, Workflows, Deployments, Environments, Secrets,
+  Variables or Webhooks. Without Commit statuses write the agent cannot forge `merge-approval`.
   It is set as `GH_TOKEN` in `.claude/settings.local.json` `env` (git-ignored). The remote is HTTPS and
   `gh auth setup-git` makes git push with that token, so the owner's SSH key is never used by the agent.
   The global bash-guard hook blocks approvals, admin merges, settings changes and credential reads.

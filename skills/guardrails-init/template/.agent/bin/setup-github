@@ -1,41 +1,28 @@
 #!/usr/bin/env bash
-# Usage: setup-github <owner-login>
+# Usage: setup-github
 # Run by the HUMAN owner (the agent's bash-guard blocks these API calls). Applies, via gh api:
-#   - environment "merge-approval": <owner-login> as required reviewer, deployments only from the
-#     default branch (admin bypass cannot be set via the API: the script prints the manual step)
-#   - ruleset "agent-guardrails" on the default branch: required check runs `guard`,
-#     `merge-approval` and every `checks-<lang>` job in .github/workflows/checks-*.yml, squash only,
+#   - ruleset "agent-guardrails" on the default branch: required `guard` and every `checks-<lang>` job
+#     (GitHub Actions only) plus the owner's `merge-approval` commit status, squash only,
 #     linear history, no force-push/deletion, no bypass actors
 #   - repo settings: squash merge only, auto-merge on, delete branch on merge
 #   - Actions: default token read-only, Actions may not create or approve PRs, actions pinned to SHAs
 # Idempotent for the environment and settings; the ruleset is created or updated by name.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
-require_args 1 $# "setup-github <owner-login>"
+require_args 0 $# "setup-github"
 cd_project_root
 
-owner_login=$1
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
-owner_id=$(gh api "users/$owner_login" --jq .id)
-printf 'repo %s, default branch %s, approver %s (%s)\n' "$repo" "$default_branch" "$owner_login" "$owner_id"
+printf 'repo %s, default branch %s\n' "$repo" "$default_branch"
 
-jq -n --argjson id "$owner_id" '{
-  reviewers: [{type: "User", id: $id}],
-  prevent_self_review: false,
-  deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}
-}' | gh api -X PUT "repos/$repo/environments/merge-approval" --input - >/dev/null
-existing_policies=$(gh api "repos/$repo/environments/merge-approval/deployment-branch-policies" --jq '.branch_policies[].name')
-if ! grep -xF -- "$default_branch" <<<"$existing_policies" >/dev/null; then
-  gh api -X POST "repos/$repo/environments/merge-approval/deployment-branch-policies" \
-    -f name="$default_branch" -f type=branch >/dev/null
-fi
-printf 'environment merge-approval: ok\n'
 
 check_jobs=$(sed -nE 's/^  (checks-[a-z]+):$/\1/p' .github/workflows/checks-*.yml | sort -u)
 [[ -n $check_jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
-required=$(jq -n --arg jobs "$check_jobs" '["guard", "merge-approval"] + ($jobs | split("\n") | map(select(length > 0)))
-  | map({context: ., integration_id: 15368})')
+# Actions-produced checks are pinned to GitHub Actions (15368); merge-approval is the owner's commit
+# status, which has no app to pin to.
+required=$(jq -n --arg jobs "$check_jobs" '(["guard"] + ($jobs | split("\n") | map(select(length > 0)))
+  | map({context: ., integration_id: 15368})) + [{context: "merge-approval"}]')
 
 ruleset=$(jq -n --argjson required "$required" '{
   name: "agent-guardrails", target: "branch", enforcement: "active", bypass_actors: [],
@@ -66,9 +53,7 @@ gh api -X PUT "repos/$repo/actions/permissions" \
   -F enabled=true -f allowed_actions=all -F sha_pinning_required=true >/dev/null
 printf 'repository and Actions settings: ok\n'
 cat <<EOF_MANUAL
-Manual steps (not settable through the API):
-  1. Settings → Environments → merge-approval → untick "Allow administrators to bypass configured
-     protection rules".
-  2. Create the agent's fine-grained token (see AGENTS.md "Agent identity"), use an HTTPS remote and
-     run 'gh auth setup-git' so git pushes with that token instead of your SSH key.
+Manual step: create the agent's fine-grained token (see AGENTS.md "Agent identity"), use an HTTPS
+remote and run 'gh auth setup-git' so git pushes with that token instead of your SSH key.
+Approve a PR's HEAD with the kit's bin/approve-head <pr> from your own shell.
 EOF_MANUAL

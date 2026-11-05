@@ -24,7 +24,8 @@ disable-model-invocation: true
 3. Implement in write-allowed files only. Run `make check` and iterate on the implementation until it passes.
    The Stop hook re-runs it and will not let you finish while it fails.
 4. `.agent/bin/finish`, commit (Conventional Commits), push, mark the PR ready (`gh pr ready`), enable auto-merge
-   (`gh pr merge --auto --squash`). It merges only after CI is green and the owner approves `merge-approval`.
+   (`gh pr merge --auto --squash`). It merges only after CI is green and the owner runs `approve-head` for
+   that exact HEAD. Do not push after asking for approval unless asked: a push invalidates it.
 
 ## Report (PR comment and final message)
 

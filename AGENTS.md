@@ -12,6 +12,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - `skills/process-fix/` turns a recurring agent mistake into a context or check change.
 - `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks;
   `template/.github/workflows/agent-guard.yml` base-branch guard + per-HEAD `merge-approval` environment.
+- `bin/approve-head`, `bin/revoke-head`: owner-only merge approval of a PR's exact HEAD (commit status
+  `merge-approval`); kept outside projects so agents cannot edit the copy the owner runs.
 - `hooks-global/` user-level hooks installed into `~/.claude/settings.json`: `bash-guard.sh` blocks
   owner-only GitHub actions and credential reads; `prompt-reminder.sh` adds a one-line reminder per prompt.
 
