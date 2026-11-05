@@ -80,7 +80,12 @@ struct PullRequestRow: View {
                 .buttonStyle(PrimaryPillStyle())
                 .disabled(approvalsLocked)
             } else {
-                Button("Open") { openInBrowser(item.url) }.buttonStyle(SecondaryPillStyle())
+                Button {
+                    openInBrowser(item.url)
+                } label: {
+                    GitHubLabel(title: "Open")
+                }
+                .buttonStyle(SecondaryPillStyle())
             }
         }
         .padding(12)

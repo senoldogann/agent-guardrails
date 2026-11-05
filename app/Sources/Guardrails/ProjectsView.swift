@@ -26,6 +26,8 @@ struct ProjectsView: View {
                 .disabled(projects.isLoading)
             }
         }
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .frame(minWidth: 820, minHeight: 540)
         .onAppear { bringWindowsForward() }
         .task { await refreshWhileOpen() }
@@ -105,23 +107,54 @@ struct ProjectRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            StateDot(state: project.state)
+            ProjectMonogram(project: project)
             VStack(alignment: .leading, spacing: 1) {
                 Text(project.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(project.repo).font(.system(size: 11)).foregroundStyle(Palette.textSecondary).lineLimit(1)
+                Text(projectSubtitle(project, now: Date()))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 4)
             if project.openPRs > 0 {
-                Text("\(project.openPRs)")
-                    .font(.system(size: 11, weight: .medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Palette.surfaceMuted))
-                    .help("Open pull requests")
+                HStack(spacing: 4) {
+                    OcticonImage(icon: .pullRequest, size: 11)
+                    Text("\(project.openPRs)").font(.system(size: 11).monospacedDigit())
+                }
+                .foregroundStyle(.secondary)
+                .help("\(project.openPRs) open pull requests")
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
+}
+
+/// The repository's initial in a rounded square, with a colored badge when guardrails are on, ready or alarmed.
+struct ProjectMonogram: View {
+    let project: Project
+
+    var body: some View {
+        Text(project.name.prefix(1).uppercased())
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Palette.textSecondary)
+            .frame(width: 26, height: 26)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Palette.surfaceMuted))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.hairline))
+            .overlay(alignment: .bottomTrailing) {
+                if project.state != .off {
+                    StateDot(state: project.state)
+                        .padding(2)
+                        .background(Circle().fill(Palette.canvas))
+                        .offset(x: 3, y: 3)
+                }
+            }
+    }
+}
+
+/// "Private · 2 hr. ago": visibility and fork only when they say something, then the last push.
+func projectSubtitle(_ project: Project, now: Date) -> String {
+    let flags = [project.private ? "Private" : nil, project.fork ? "Fork" : nil].compactMap { $0 }
+    return (flags + [shortRelativeTime(project.pushed, now: now)]).joined(separator: " · ")
 }
 
 struct StateDot: View {

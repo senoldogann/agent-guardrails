@@ -37,7 +37,6 @@ public struct EnforcedRepo: Sendable, Hashable, Identifiable {
     public let rulesetState: String
 
     public var id: String { name }
-    public var isActive: Bool { rulesetState == "active" }
 }
 
 /// The inbox grouped the way the app shows it.

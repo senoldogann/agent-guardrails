@@ -31,7 +31,7 @@ struct ProjectDetail: View {
             }
             .padding(Metrics.windowPadding)
             .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .background(Palette.canvas)
         .navigationTitle(project.name)
@@ -81,23 +81,33 @@ struct HeaderActions: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Button("GitHub") { openInBrowser("https://github.com/\(project.repo)") }
-                .buttonStyle(.glass)
+            Button {
+                openInBrowser("https://github.com/\(project.repo)")
+            } label: {
+                GitHubLabel(title: "GitHub")
+            }
+            .buttonStyle(.glass)
             switch project.state {
             case .ready:
-                Button("Turn on") {
+                Button {
                     open(ActionRequest(kind: .turnOn, target: project.setupURL, label: project.repo))
+                } label: {
+                    Label("Turn on", systemImage: "power").labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.glassProminent)
                 .tint(Palette.textPrimary)
                 .disabled(actionsLocked)
             case .off:
-                Button("Set up…", action: startSetup)
-                    .buttonStyle(.glassProminent)
+                Button(action: startSetup) {
+                    Label("Set up…", systemImage: "terminal").labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.glassProminent)
                     .tint(Palette.textPrimary)
             case .alarm:
-                Button("Restore") {
+                Button {
                     open(ActionRequest(kind: .turnOnRepo, target: project.repo, label: project.repo))
+                } label: {
+                    Label("Restore", systemImage: "arrow.counterclockwise").labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.glassProminent)
                 .tint(Palette.dangerFill)
@@ -152,7 +162,12 @@ struct ProjectStateCard: View {
                     HStack {
                         Text(displaySafe(project.setupTitle)).font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Button("Open PR") { openInBrowser(project.setupURL) }.buttonStyle(SecondaryPillStyle())
+                        Button {
+                            openInBrowser(project.setupURL)
+                        } label: {
+                            GitHubLabel(title: "Open PR")
+                        }
+                        .buttonStyle(SecondaryPillStyle())
                     }
                 }
             }
@@ -180,12 +195,9 @@ struct OffCard: View {
                     symbol: "hourglass", color: Palette.warning, title: "Setting up…",
                     text: "Started \(setupStarted.formatted(date: .omitted, time: .shortened)) in Terminal. When Claude opens the set-up PR, this project moves to Ready to turn on. Refresh to check; if Terminal closed early, set it up again.")
             } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Explainer(
-                        symbol: "shield.slash", color: Palette.textSecondary, title: "Guardrails are off",
-                        text: "Agents work here as they normally do. Set up adds the kit with Claude in Terminal: it opens a set-up PR, and you turn it on from here once you have looked at it.")
-                    Button("Set up…", action: startSetup).buttonStyle(PrimaryPillStyle())
-                }
+                Explainer(
+                    symbol: "shield.slash", color: Palette.textSecondary, title: "Guardrails are off",
+                    text: "Agents work here as they normally do. Set up adds the kit with Claude in Terminal: it opens a set-up PR, and you turn it on from here once you have looked at it.")
             }
         }
     }
@@ -251,6 +263,19 @@ struct StateChip: View {
 
 /// "3 hours ago" for an ISO 8601 time from GitHub.
 func relativeTime(_ iso: String) -> String {
+    formatRelative(iso, style: .full, now: Date())
+}
+
+/// "3 hr. ago", for tight spaces like the sidebar.
+func shortRelativeTime(_ iso: String, now: Date) -> String {
+    formatRelative(iso, style: .abbreviated, now: now)
+}
+
+/// English, like the rest of the app; the raw value when GitHub sends something that is not ISO 8601.
+private func formatRelative(_ iso: String, style: RelativeDateTimeFormatter.UnitsStyle, now: Date) -> String {
     guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
-    return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+    let formatter = RelativeDateTimeFormatter()
+    formatter.locale = Locale(identifier: "en_US")
+    formatter.unitsStyle = style
+    return formatter.localizedString(for: date, relativeTo: now)
 }

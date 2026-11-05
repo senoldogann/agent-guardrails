@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests install.sh in a throwaway HOME: fresh install, moving links and hooks over from another kit
-# checkout, keeping unrelated hooks, refusing foreign files, and a second run changing nothing.
+# checkout, keeping unrelated hooks, refusing foreign files, a second run changing nothing, and stopping
+# before any change when required tools are missing.
 # shellcheck disable=SC2016,SC2034 # check() evaluates its condition string, which uses these variables
 set -euo pipefail
 kit=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -42,6 +43,15 @@ check "second run changes nothing" '! grep -E "^(linked|moved|registered)" <<<"$
 rm "$home/.local/bin/revoke-head"
 printf 'mine\n' >"$home/.local/bin/revoke-head"
 check "a foreign file is not replaced" '! run_install >/dev/null 2>&1'
+
+# Without jq and gh on PATH the install stops before touching anything.
+bare_home="$work/bare-home"
+bare_bin="$work/bare-bin"
+mkdir -p "$bare_home" "$bare_bin"
+for tool in bash dirname git; do ln -s "$(command -v "$tool")" "$bare_bin/$tool"; done
+bare_out=$(HOME="$bare_home" PATH="$bare_bin" "$kit/install.sh" 2>&1) && bare_status=0 || bare_status=$?
+check "missing tools stop the install" '[[ $bare_status -ne 0 ]] && grep -F "missing required tools: gh jq" <<<"$bare_out" >/dev/null'
+check "a stopped install changes nothing" '[[ ! -e $bare_home/.claude ]]'
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]
