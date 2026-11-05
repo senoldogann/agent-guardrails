@@ -32,13 +32,15 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`
   adds a one-line reminder per prompt. Everywhere they block the owner's commands and the enforced-repo list.
+  `kit-project.sh` (sourced by both hooks and `bin/guardrails`) decides what counts as a kit repository.
+- `README.md` is for people installing and using the kit; this file is for working on it.
 
 ## Commands
 
 - Install: `./install.sh` from a clone nobody develops in (symlinks skills into `~/.claude/skills`, registers
   global hooks, links the owner commands onto PATH; idempotent, moves links over from another kit clone,
-  backs up settings.json before changing it). The owner's commands refuse to run from a clone with local
-  changes or not at its origin's main.
+  backs up settings.json before changing it). The state-changing owner commands (`on`, `off`, `approve`,
+  `approve-head`) refuse to run from a clone with local changes or not at its origin's main.
 - Check: `make check` (= shellcheck + the offline tests in `tests/`).
 - Language adapters: `make test-lang` (slow; real mini projects per language).
 - App: `make app-test` (core tests), `make app` (build and install from the kit install; needs Xcode 26+).

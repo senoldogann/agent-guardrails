@@ -15,6 +15,34 @@
 set -euo pipefail
 kit=$(cd "$(dirname "$0")" && pwd -P)
 
+# Everything the install needs is checked before anything changes, so a failed run leaves no half install.
+missing=""
+for tool in git gh jq; do
+  command -v "$tool" >/dev/null || missing="$missing $tool"
+done
+[[ -z $missing ]] || {
+  printf 'error: missing required tools:%s (on macOS: brew install%s)\n' "$missing" "$missing" >&2
+  exit 1
+}
+bin_dir=""
+for candidate in "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin; do
+  if [[ ":$PATH:" == *":$candidate:"* && -d $candidate && -w $candidate ]]; then
+    bin_dir=$candidate
+    break
+  fi
+done
+[[ -n $bin_dir ]] || {
+  printf 'error: none of ~/.local/bin, /opt/homebrew/bin, /usr/local/bin is a writable directory on PATH\n' >&2
+  exit 1
+}
+mkdir -p "$HOME/.claude"
+settings="$HOME/.claude/settings.json"
+[[ -f $settings ]] || printf '{}\n' >"$settings"
+jq empty "$settings" || {
+  printf 'error: %s is not valid JSON\n' "$settings" >&2
+  exit 1
+}
+
 # Links <link> to $kit/<relative>, replacing a link into another kit checkout (one that has
 # hooks-global/bash-guard.sh) and refusing anything else.
 link_into_kit() {
@@ -49,13 +77,6 @@ for skill in "$kit"/skills/*/; do
   link_into_kit "skills/$name" "$skills_dir/$name"
 done
 
-settings="$HOME/.claude/settings.json"
-[[ -f $settings ]] || printf '{}\n' >"$settings"
-jq empty "$settings" || {
-  printf 'error: %s is not valid JSON\n' "$settings" >&2
-  exit 1
-}
-
 guard="$kit/hooks-global/bash-guard.sh"
 reminder="$kit/hooks-global/prompt-reminder.sh"
 updated=$(jq --arg guard "$guard" --arg reminder "$reminder" '
@@ -78,17 +99,6 @@ else
   printf 'registered hooks in %s (backup: %s)\n' "$settings" "$backup"
 fi
 
-bin_dir=""
-for candidate in "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin; do
-  if [[ ":$PATH:" == *":$candidate:"* && -d $candidate && -w $candidate ]]; then
-    bin_dir=$candidate
-    break
-  fi
-done
-[[ -n $bin_dir ]] || {
-  printf 'error: none of ~/.local/bin, /opt/homebrew/bin, /usr/local/bin is a writable directory on PATH\n' >&2
-  exit 1
-}
 for command in guardrails approve-head revoke-head; do
   link_into_kit "bin/$command" "$bin_dir/$command"
 done

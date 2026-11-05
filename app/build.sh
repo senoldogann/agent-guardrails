@@ -16,6 +16,10 @@ rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$bin/Guardrails" "$bundle/Contents/MacOS/Guardrails"
 cp "$app_dir/Resources/AppIcon.icns" "$bundle/Contents/Resources/AppIcon.icns"
+# The asset catalog holds the app's accent color: a neutral gray for selections instead of the system blue.
+xcrun actool "$app_dir/Resources/Assets.xcassets" --compile "$bundle/Contents/Resources" \
+  --platform macosx --minimum-deployment-target 26.0 --output-format human-readable-text \
+  --output-partial-info-plist "$app_dir/.build/assets-info.plist" >/dev/null
 
 xml_escape() {
   local text=$1
@@ -40,6 +44,7 @@ cat >"$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$(xml_escape "$version")</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSAccentColorName</key><string>AccentColor</string>
   <key>NSHumanReadableCopyright</key><string>agent-guardrails</string>
   <key>GuardrailsKitPath</key><string>$(xml_escape "$kit")</string>
 </dict>
