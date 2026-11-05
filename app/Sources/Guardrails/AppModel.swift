@@ -13,6 +13,8 @@ final class AppModel {
     }
 
     let configuration: Result<AppConfiguration, AppConfiguration.LoadError>
+    /// The Projects window's data; nil when the app does not know where the kit is.
+    let projects: ProjectsModel?
     private(set) var snapshot = InboxSnapshot.empty
     private(set) var loadState = LoadState.idle
     private(set) var lastError: String?
@@ -21,6 +23,10 @@ final class AppModel {
 
     init(configuration: Result<AppConfiguration, AppConfiguration.LoadError>) {
         self.configuration = configuration
+        switch configuration {
+        case .success(let found): projects = ProjectsModel(configuration: found)
+        case .failure: projects = nil
+        }
         Task { await self.runRefreshLoop() }
         Task { await requestNotificationPermission() }
     }
@@ -57,8 +63,8 @@ final class AppModel {
         }
     }
 
-    /// Refreshes shortly after an action, once GitHub reflects it.
-    func refreshSoon() {
+    /// Refreshes the inbox and the projects shortly after an action, once GitHub reflects it.
+    func refreshSoon(repo: String) {
         Task {
             do {
                 try await Task.sleep(for: .seconds(3))
@@ -66,6 +72,8 @@ final class AppModel {
                 return
             }
             await refresh()
+            await projects?.loadProjects()
+            await projects?.reloadPullRequests(of: repo)
         }
     }
 

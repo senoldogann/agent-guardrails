@@ -162,15 +162,15 @@ remove_agents_section() {
   rm -f "$file.tmp"
 }
 
-# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup` on stdin and
-# prints one tab-separated line per PR that needs the owner: "<kind>\t<url>\t<title>\t<note>".
-# Kinds: answer (the agent asked a question: label needs-decision), approve (guard passed, HEAD not
-# approved yet). Drafts without a question are the agent's work in progress and are skipped, as are
-# PRs whose HEAD is already approved. Any failed run named guard wins over a later success, because a
-# workflow added by the PR could report a run of that name (approve-head checks the real guard run).
-# Titles are written by the agent, so control characters are replaced before they reach the terminal.
-classify_prs() {
-  jq -r '
+# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup[,author,updatedAt]` on
+# stdin and prints one compact JSON object per PR: {number, url, title, kind, note, sha, draft, author, updated}.
+# Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's work in progress),
+# approved (HEAD already approved), wait (guard running), blocked (guard failed), approve (guard passed,
+# HEAD not approved yet). Any failed run named guard wins over a later success, because a workflow added by
+# the PR could report a run of that name (approve-head checks the real guard run). Titles are written by
+# the agent, so control characters are replaced before they reach a terminal or the app.
+pr_states() {
+  jq -c '
     def latest(f): [.statusCheckRollup[]? | select(f)] | sort_by(.startedAt // .createdAt // "") | last;
     def clean: gsub("[[:cntrl:]]"; "?");
     .[]
@@ -185,11 +185,46 @@ classify_prs() {
        elif any($checks[]; .status != "COMPLETED") then "checks running"
        elif all($checks[]; .conclusion == "SUCCESS") then "checks green"
        else "checks failing" end) as $checks_note
-    | if any(.labels[]?; .name == "needs-decision") then ["answer", .url, .title, "the agent is waiting for your decision"]
-      elif .isDraft then empty
-      elif ($approval.state // "") == "SUCCESS" then empty
-      elif $guard == null or $guard.status != "COMPLETED" then ["wait", .url, .title, "guard is running"]
-      elif $guard.conclusion != "SUCCESS" then ["blocked", .url, .title, "guard failed: the agent has to fix the PR"]
-      else ["approve", .url, .title, $checks_note] end
-    | @tsv'
+    | (if any(.labels[]?; .name == "needs-decision") then ["answer", "the agent is waiting for your decision"]
+       elif .isDraft then ["draft", "the agent is working on it"]
+       elif ($approval.state // "") == "SUCCESS" then ["approved", "approved; merges when checks pass"]
+       elif $guard == null or $guard.status != "COMPLETED" then ["wait", "guard is running"]
+       elif $guard.conclusion != "SUCCESS" then ["blocked", "guard failed: the agent has to fix the PR"]
+       else ["approve", $checks_note] end) as $state
+    | {number, url, title, kind: $state[0], note: $state[1], sha: (.headRefOid // ""), draft: .isDraft,
+       author: ((.author.login // "") | clean), updated: (.updatedAt // "")}'
+}
+
+# Reads the same input as pr_states and prints one tab-separated line per PR that needs the owner:
+# "<kind>\t<url>\t<title>\t<note>" for answer, approve, wait and blocked. Drafts and approved PRs are left out.
+classify_prs() {
+  pr_states | jq -r 'select(.kind | IN("answer", "approve", "wait", "blocked")) | [.kind, .url, .title, .note] | @tsv'
+}
+
+# Reads the nodes of the owner's repositories (GraphQL, see `guardrails projects`) and prints one compact
+# JSON object per repo with its state for the app:
+#   on        listed on this Mac and its agent-guardrails ruleset is active
+#   alarm     listed but the ruleset is not active, or tagged with the topic but not listed
+#   ready     an open /guardrails-init PR from this repo (not a fork), authored by the owner
+#   no-admin  the owner cannot apply rulesets here
+#   off       none of the above
+# Arguments: the owner's login and the enforced-repo list (one owner/repo per line).
+project_states() {
+  jq -c --arg login "$1" --arg listed "$2" '
+    def clean: gsub("[[:cntrl:]]"; "?");
+    ($listed | ascii_downcase | split("\n") | map(select(length > 0))) as $registry
+    | (.nameWithOwner | ascii_downcase) as $key
+    | ($registry | index($key) != null) as $registered
+    | ([.rulesets.nodes[]? | select(.name == "agent-guardrails") | .enforcement | ascii_downcase] | first // "missing") as $ruleset
+    | any(.repositoryTopics.nodes[]?; .topic.name == "agent-guardrails") as $tagged
+    | ([.bootstrap.nodes[]? | select((.isCrossRepository | not) and .author.login == $login)] | first) as $bootstrap
+    | (if $registered and $ruleset == "active" then ["on", "ruleset active"]
+       elif $registered then ["alarm", "ruleset \($ruleset): restore it or check the audit log"]
+       elif $tagged then ["alarm", "tagged agent-guardrails but not in this Mac'"'"'s list"]
+       elif .viewerPermission != "ADMIN" then ["no-admin", "you cannot apply rulesets here"]
+       elif $bootstrap != null then ["ready", "set-up PR open"]
+       else ["off", ""] end) as $state
+    | {repo: .nameWithOwner, state: $state[0], note: $state[1], private: .isPrivate, fork: .isFork,
+       branch: (.defaultBranchRef.name // ""), pushed: (.pushedAt // ""), openPRs: .pullRequests.totalCount,
+       setupURL: ($bootstrap.url // ""), setupTitle: (($bootstrap.title // "") | clean)}'
 }
