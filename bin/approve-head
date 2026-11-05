@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Usage: approve-head <pr-number>        (run by the HUMAN owner, from inside the project checkout)
+# Gives the owner's merge approval for the exact current HEAD of a PR by posting the commit status
+# `merge-approval` = success. The ruleset requires that context, so a new push needs a new approval.
+# Lives in the kit install directory, outside every project, so an agent cannot edit the copy you run.
+# Refuses when GH_TOKEN/GITHUB_TOKEN is set (that is the agent's environment, whose token must not
+# be able to write commit statuses) and when the PR is not ready: base must be the default branch,
+# the `guard` check run for that SHA must have succeeded, no workflow may grant `statuses: write`.
+set -euo pipefail
+kit=$(cd "$(dirname "$0")/.." && pwd -P)
+source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
+require_args 1 $# "approve-head <pr-number>"
+
+[[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
+  die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run approve-head in your own shell."
+[[ -t 0 ]] || die "approve-head needs an interactive terminal (typed confirmation)"
+
+pr=$1
+[[ $pr =~ ^[0-9]+$ ]] || die "PR number must be numeric: $pr"
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+pr_json=$(gh pr view "$pr" --json headRefOid,baseRefName,title,url,isDraft)
+sha=$(jq -r .headRefOid <<<"$pr_json")
+base=$(jq -r .baseRefName <<<"$pr_json")
+
+[[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
+[[ $(jq -r .isDraft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
+
+guard=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=guard" \
+  --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.completed_at) | last | .conclusion // "missing"')
+[[ $guard == success ]] || die "guard check for $sha is '$guard'; wait for it or fix the PR"
+
+while IFS= read -r workflow; do
+  [[ -n $workflow ]] || continue
+  if gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content | base64 --decode |
+    grep -Ei 'statuses:[[:space:]]*write|write-all' >/dev/null; then
+    die "$workflow grants statuses: write (could forge merge-approval); refuse to approve"
+  fi
+done < <(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path')
+
+files=$(gh pr diff "$pr" --name-only)
+printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$(jq -r .title <<<"$pr_json")" "$(jq -r .url <<<"$pr_json")" "$sha"
+workflow_changes=""
+while IFS= read -r file; do
+  [[ -n $file ]] || continue
+  marker="  "
+  if is_human_owned "$file"; then marker="! "; fi
+  case $file in .github/workflows/* | .github/actions/*)
+    marker="!!"
+    workflow_changes+="$file "
+    ;;
+  esac
+  printf '%s %s\n' "$marker" "$file"
+done <<<"$files"
+printf '\n(! human-owned, !! workflow: can change what CI enforces)\n'
+
+short=${sha:0:7}
+read -r -p "Type $short to approve merging exactly this commit: " typed </dev/tty
+[[ $typed == "$short" ]] || die "confirmation did not match; nothing approved"
+if [[ -n $workflow_changes ]]; then
+  read -r -p "Workflow files change ($workflow_changes). Type 'workflows' to confirm you reviewed them: " typed </dev/tty
+  [[ $typed == workflows ]] || die "workflow confirmation missing; nothing approved"
+fi
+
+gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=merge-approval \
+  -f description="Approved by owner for PR #$pr" >/dev/null
+printf 'merge-approval: success on %s (PR #%s)\n' "$sha" "$pr"

@@ -3,7 +3,7 @@
 check: lint test
 
 lint:
-	shellcheck -x install.sh tests/*.sh tests/lang/*.sh hooks-global/*.sh skills/guardrails-init/template/.agent/hooks/*.sh \
+	shellcheck -x install.sh bin/* tests/*.sh tests/lang/*.sh hooks-global/*.sh skills/guardrails-init/template/.agent/hooks/*.sh \
 		$$(find skills/guardrails-init/template/.agent/bin -type f)
 
 test:

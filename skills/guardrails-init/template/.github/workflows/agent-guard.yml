@@ -1,9 +1,9 @@
 # Judges every PR with the guard from the DEFAULT branch (pull_request_target), so a PR cannot weaken
 # it. PR code is fetched as a git ref and only read, never executed; no caches, no secrets.
-# Every PR merges only after the owner approves its exact HEAD in the `merge-approval` environment.
-# Repository setup (run .agent/bin/setup-github once): environment `merge-approval` with the owner as
-# required reviewer and admin bypass OFF; a ruleset requiring the check runs `guard`,
-# `merge-approval` and `checks-<lang>`. Job names must stay unique across all workflows.
+# Every PR merges only after the owner approves its exact HEAD: the owner runs the kit's
+# `bin/approve-head <pr>`, which posts the commit status `merge-approval` (agents cannot: their token
+# has no Commit statuses write). Repository setup (run .agent/bin/setup-github once): a ruleset
+# requiring `guard`, `checks-<lang>` (GitHub Actions) and `merge-approval`. Job names must stay unique.
 name: agent-guard
 on:
   pull_request_target:
@@ -43,16 +43,3 @@ jobs:
           echo "::${token}::"
           { echo '### agent-guard'; echo '```text'; cat guard.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
-  merge-approval:
-    needs: guard
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    environment: merge-approval
-    steps:
-      - name: Require a passing guard
-        env:
-          GUARD_RESULT: ${{ needs.guard.result }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          echo "Approving merge of head ${HEAD_SHA}"
-          test "$GUARD_RESULT" = success
