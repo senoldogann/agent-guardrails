@@ -15,7 +15,29 @@ logged_snapshot=$(awk '/^snapshot: / { print $2; exit }' "$log")
 [[ $logged_head == "$(git rev-parse HEAD)" ]] || die "checks ran at $logged_head, HEAD is now $(git rev-parse HEAD); run 'make check' again"
 [[ $logged_snapshot == "$(worktree_snapshot)" ]] || die "working tree changed since the checks ran; run 'make check' again"
 
+# A PR comment holds at most 65536 characters. A longer log keeps its frame (head, every command, every
+# exit code, the summary) and the last lines of each command's output, and says what it left out.
+max_bytes=50000
+tail_lines=20
+max_line=400
+
 fence='```'
 printf '## Checks and results\n\nLocal run of make check at %s (CI on this PR is the evidence of record).\n\n%stext\n' "$logged_head" "$fence"
-cat "$log"
+if [[ $(wc -c <"$log") -le $max_bytes ]]; then
+  cat "$log"
+else
+  awk -v keep="$tail_lines" -v width="$max_line" -v path="$log" '
+    function clip(line) { return length(line) > width ? substr(line, 1, width) " [line cut]" : line }
+    function flush(   first, i) {
+      first = n > keep ? n - keep + 1 : 1
+      if (first > 1) printf "[... %d lines left out; full log in %s]\n", first - 1, path
+      for (i = first; i <= n; i++) print clip(buf[i])
+      n = 0
+    }
+    /^\$ make / { flush(); print; next }
+    /^\[exit [0-9]+\]$/ { flush(); print; next }
+    { buf[++n] = $0 }
+    END { flush() }
+  ' "$log"
+fi
 printf '%s\n' "$fence"
