@@ -4,7 +4,8 @@
 # specs/<TICKET>/spec.lock:
 #   - S exists: the spec gate runs on S's tree (locked tests must all fail on NotImplemented there),
 #     so a spec amended or re-locked later in the PR is re-proven red against the stubs.
-#   - HEAD is not S: the full gate runs on HEAD.
+#   - HEAD is not S: the full gate runs on HEAD, then the mutation gate on the PR's changed source files
+#     (every mutant must be killed by a locked test unless the owner accepted it as equivalent).
 #   - no S, but the PR adds an unlocked specs/<TICKET>/: only the draft gate runs (compile, lint,
 #     questions); the guard fails such a PR so it cannot merge before the spec is locked.
 # Tracked files are switched with `git read-tree -u --reset` and restored to HEAD afterwards; ignored
@@ -41,7 +42,15 @@ fi
 
 if [[ $spec_commit != "$head" ]]; then
   printf '=== full gate at %s ===\n' "$head"
-  make --no-print-directory check || status=1
+  if make --no-print-directory check; then
+    printf '=== mutation gate for changes since %s ===\n' "$base"
+    "$(dirname "$0")/mutation-scope" "$base"
+    if [[ -s .agent/reports/mutation/scope.txt ]]; then
+      { make --no-print-directory test-mutation && "$(dirname "$0")/mutation-gate"; } || status=1
+    fi
+  else
+    status=1
+  fi
 else
   printf 'HEAD is the spec commit: implementation missing, this PR is not mergeable yet (guard enforces it)\n'
 fi

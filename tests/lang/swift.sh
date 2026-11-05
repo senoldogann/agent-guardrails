@@ -113,4 +113,6 @@ if command -v swiftlint >/dev/null; then
   expect_failure "exit(0) in implementation: swiftlint rejects it" swiftlint lint --strict --quiet --config .agent/lint/swiftlint.yml Sources Tests
 fi
 
+expect_success "make test-mutation: no mutation gate for Swift" make --no-print-directory test-mutation
+expect_output "make test-mutation says so" "no mutation gate for Swift"
 finish swift

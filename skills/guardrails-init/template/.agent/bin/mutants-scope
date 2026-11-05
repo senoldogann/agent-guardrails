@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Usage: mutants-scope <extended-regex>
+# Prints the files of .agent/reports/mutation/scope.txt (the kit-computed mutation scope, one
+# repo-relative path per line) whose names match <extended-regex>, e.g. '\.(ts|tsx)$'.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 1 $# "mutants-scope <extended-regex>"
+cd_project_root
+
+scope_files "$1"

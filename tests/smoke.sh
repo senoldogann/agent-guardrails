@@ -92,6 +92,9 @@ test:
 	  printf '%s\t%s\t%s\n' 'src/other.test.ts::unit' passed ''; } >.agent/reports/results/test.tsv; \
 	[ "$$s" = passed ]
 test-prop: test
+test-mutation:
+	@mkdir -p .agent/reports/results
+	@while IFS= read -r f; do printf 'fp%s\t%s:1\t%s\tfake mutant\n' "$$(printf '%s' "$$f" | shasum | cut -c1-6)" "$$f" "$$(cat mutants-fixture 2>/dev/null || echo killed)"; done <.agent/reports/mutation/scope.txt >.agent/reports/results/mutants.tsv
 EOF
 printf '%s\n' 'src/domain/percent.prop.test.ts::AC-1: zero discount keeps price' \
   'src/domain/percent.prop.test.ts::AC-2: full discount gives zero' 'src/other.test.ts::unit' >fixture-ids
@@ -282,6 +285,26 @@ git checkout -q feat/ABC-1-relock
 expect_failure "test weakened and re-locked mid-PR fails ci-run (spec gate at the last lock)" .agent/bin/ci-run main
 expect_out "spec gate ran at the re-lock commit" "=== spec gate for ABC-1"
 if [[ -z $(git status --porcelain) ]]; then ok "ci-run restored HEAD"; else fail "ci-run restored HEAD"; fi
+
+echo "mutation gate"
+git checkout -q feat/ABC-1-impl
+expect_success "scope lists the changed implementation file only" .agent/bin/mutation-scope main
+expect_out "implementation file in scope" "src/domain/percent.ts"
+expect_success "all mutants killed passes" bash -c 'make --no-print-directory -s test-mutation && .agent/bin/mutation-gate'
+printf 'survived\n' >mutants-fixture
+expect_failure "a surviving mutant fails" bash -c 'make --no-print-directory -s test-mutation && .agent/bin/mutation-gate'
+fp=$(cut -f1 .agent/reports/results/mutants.tsv)
+printf '%s  src/domain/percent.ts  proven equivalent: rewrites x*1\n' "$fp" >specs/ABC-1/mutants-accepted
+expect_success "an owner-accepted survivor passes" .agent/bin/mutation-gate
+printf 'killed\n' >mutants-fixture
+make --no-print-directory -s test-mutation
+expect_failure "a stale accepted entry fails" .agent/bin/mutation-gate
+expect_out "stale entry is named" "stale accepted entry"
+printf 'Ignored\n' >mutants-fixture
+make --no-print-directory -s test-mutation
+rm specs/ABC-1/mutants-accepted
+expect_failure "an unknown status fails" .agent/bin/mutation-gate
+rm mutants-fixture
 
 git checkout -q feat/ABC-1-impl
 git checkout -q -b feat/ABC-1-symlink

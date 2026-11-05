@@ -12,6 +12,9 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   4. The owner approves the exact HEAD with `approve-head <PR link>` in their own terminal (commit status
      `merge-approval`); nothing merges without it, and every new push needs a new approval.
 - Locked files (`specs/<ID>/spec.lock`, test IDs in `tests.lock`) change only by re-locking in a reviewed PR.
+- CI also mutates the changed source (`make mutation BASE_SHA=...` locally): every mutant must be killed by a
+  locked test; proven-equivalent mutants are accepted only by the owner in `specs/<ID>/mutants-accepted`.
+  Swift has no mutation gate; its rules rely on fixed examples and exhaustive tables.
 - Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.github/`, `specs/`, tests,
   configs, manifests, lockfiles, dotfiles, `AGENTS.md`, `CLAUDE.md`, `Makefile`.
 - A check that looks wrong is reported (`.agent/bin/block "<question>"`), never changed, loosened or skipped.

@@ -121,4 +121,48 @@ expect_failure "process::exit(0) in implementation: verify-green fails" .agent/b
 expect_output "process::exit(0) in implementation: locked tests reported missing" "missing"
 expect_failure "process::exit(0) in implementation: clippy rejects it" make --no-print-directory lint
 
+# Mutation gate inputs: cargo-mutants + the numeric-literal mutator over a scoped file.
+mutants_root="${XDG_CACHE_HOME:-$HOME/.cache}/agent-guardrails/cargo-mutants-27.1.0"
+if ! command -v cargo-mutants >/dev/null; then
+  if [[ ! -x $mutants_root/bin/cargo-mutants ]]; then
+    echo "  (installing cargo-mutants 27.1.0 into $mutants_root once)"
+    cargo install --locked cargo-mutants --version 27.1.0 --root "$mutants_root" >"$project/.setup.log" 2>&1 || {
+      cat "$project/.setup.log"
+      exit 1
+    }
+  fi
+  PATH="$mutants_root/bin:$PATH"
+fi
+write_correct
+cat >src/discount.rs <<'EOF'
+/// Rounded discount in minor units: round_half_up(subtotal * percent / 100).
+pub fn discount_minor(subtotal: u64, percent: u64) -> u64 {
+    (subtotal * percent + 50) / 100
+}
+EOF
+printf 'pub mod discount;\n' >>src/lib.rs
+write_discount_tests() {
+  cat >tests/discount.rs <<EOF
+use lang_rs::discount::discount_minor;
+
+#[test]
+fn ac1_rounds_half_up_at_the_boundaries() {
+    $1
+}
+EOF
+}
+write_discount_tests 'for (subtotal, percent, expected) in [(1234, 15, 185), (49, 1, 0), (50, 1, 1), (0, 100, 0)] {
+        assert_eq!(discount_minor(subtotal, percent), expected);
+    }'
+lock_file_tests M-1 tests/discount.rs
+run_mutation "strong suite" src/discount.rs
+expect_all_killed "strong suite: zero non-killed mutants"
+expect_mutant "strong suite: the literal mutator kills 50 -> 51" killed "NumericLiteral: 50 -> 51"
+expect_mutant "strong suite: cargo-mutants mutants are in the results" killed "BinaryOperator"
+
+write_discount_tests 'assert!(discount_minor(1234, 15) > 0);'
+run_mutation "weak locked suite" src/discount.rs
+expect_mutant "weak locked suite: 50 -> 51 survives" survived "NumericLiteral: 50 -> 51"
+expect_mutant "weak locked suite: cargo-mutants reports survivors" survived "BinaryOperator"
+
 finish rust

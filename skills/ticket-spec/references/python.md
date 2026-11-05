@@ -10,6 +10,11 @@ frameworks, `atexit`, `importlib`, `eval`/`exec`, `builtins`, `ctypes`, and none
 `socket`. With them, code under test can read the report-log path from `sys.argv`, write a passing
 log and `exec` away before pytest reports.
 
+Mutation gate (`make test-mutation`): mutmut (it also mutates numbers) on the changed source files,
+running only the locked test files with a fixed Hypothesis seed. Every boundary constant needs a
+deterministic `@example` or table case on each side of it, not only random inputs. `raise` stays
+allowed: Python contracts signal invalid input with typed exceptions.
+
 Adapters that need I/O (files, environment, processes, network) live outside the restricted path,
 in a separate adapter package (for example `adapters/<pkg>_io/`). Writing one is a separate
 write-allow entry that the owner reviews explicitly; the domain package never imports it, the

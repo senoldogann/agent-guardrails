@@ -3,6 +3,7 @@
 Same layout, tools, test rules and integrity guard as `typescript.md`, with types in JSDoc checked by
 `tsc -p jsconfig.json` (`checkJs`, `strict`). Guarantees are compile-time only where tsc runs;
 callers outside the checked project get none, so constructors also validate at runtime.
+The `throw` ban and the mutation gate of `typescript.md` apply unchanged.
 
 ## Contract (locked): `src/domain/percent.contract.js`
 

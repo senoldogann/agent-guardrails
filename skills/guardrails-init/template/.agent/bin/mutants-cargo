@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Usage: mutants-cargo <outcomes.json>
+# Converts cargo-mutants' outcomes.json (written by mutants-cargo-run) to the normalized mutants TSV
+# (see mutants-lib.sh) on stdout. The mutator is cargo-mutants' genre (FnValue, BinaryOperator, ...);
+# the original text is cut from the source file at the mutant's span. Statuses: CaughtMutant killed,
+# MissedMutant survived, Timeout timeout, Unviable invalid; a failed baseline or anything unknown is
+# error. Only locked test targets ran (mutants-cargo-run), so every kill comes from a locked test.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 1 $# "mutants-cargo <outcomes.json>"
+cd_project_root
+
+outcomes=$1
+[[ -s $outcomes ]] || die "cargo-mutants report $outcomes is missing or empty; cargo mutants did not finish"
+
+{
+  jq -r "$MUTANTS_JQ_LIB"'
+    .outcomes[] | select(.scenario == "Baseline" and .summary != "Success")
+    | [key("(baseline)"; "Baseline"; .summary; ""; ""), "(baseline):0", "error",
+       "cargo-mutants baseline: " + .summary + " (the unmutated locked tests do not pass)"] | join("\t")
+  ' "$outcomes"
+  jq -r '[.outcomes[].scenario | objects | .Mutant.file] | unique[]' "$outcomes" | while IFS= read -r file; do
+    [[ -f $file ]] || die "mutated file $file does not exist"
+    jq -r --arg file "$file" --rawfile source "$file" "$MUTANTS_JQ_LIB"'
+      ($source | split("\n")) as $lines
+      | .outcomes[] | select((.scenario | type) == "object" and .scenario.Mutant.file == $file)
+      | .scenario.Mutant as $mutant | .summary as $summary
+      | slice_text($lines; $mutant.span) as $original
+      | (if $summary == "CaughtMutant" then "killed"
+         elif $summary == "MissedMutant" then "survived"
+         elif $summary == "Timeout" then "timeout"
+         elif $summary == "Unviable" then "invalid"
+         else "error" end) as $status
+      | [key($file; $mutant.genre; $original; $mutant.replacement; $lines[$mutant.span.start.line - 1]),
+         ($file + ":" + ($mutant.span.start.line | tostring)),
+         $status,
+         (describe($mutant.genre; $original; $mutant.replacement)
+           + (if $status == "error" then " (cargo-mutants summary " + $summary + ")" else "" end))]
+      | join("\t")
+    ' "$outcomes"
+  done
+} | fingerprint_rows

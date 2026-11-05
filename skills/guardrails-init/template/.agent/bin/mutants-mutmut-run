@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Usage: mutants-mutmut-run
+# Runs mutmut 3 on the Python files of the mutation scope (see mutants-scope) in a scratch copy of the
+# project (.agent/reports/mutation/mutmut), so mutmut's `mutants/` tree never lands in the repository.
+# The configuration is the kit's: the copy's pyproject.toml gets the kit's [tool.mutmut] table in place
+# of the project's (mutmut reads no other source once that table exists), checked with tomllib before
+# the run. Only the locked test files run (a kill must come from a locked test), with the integrity
+# guard and a fixed Hypothesis seed.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 0 $# "mutants-mutmut-run"
+cd_project_root
+
+root=$(pwd -P)
+work="$MUTATION_DIR/mutmut"
+files=$(scope_files '\.py$')
+[[ -n $files ]] || die "no Python files in $MUTATION_SCOPE"
+tests=$(for lock in specs/*/tests.lock; do [[ -f $lock ]] && awk -F'::' 'NF { print $1 }' "$lock"; done | sort -u)
+[[ -n $tests ]] || die "no locked tests (specs/*/tests.lock); mutants can only be killed by locked tests"
+
+rm -rf "$work"
+mkdir -p "$work"
+git ls-files -co --exclude-standard | grep -v '^\.agent/' | while IFS= read -r path; do
+  [[ -f $path ]] || continue
+  mkdir -p "$work/$(dirname "$path")"
+  cp "$path" "$work/$path"
+done
+
+config=$(jq -cn --argjson only "$(jq -R . <<<"$files" | jq -cs .)" --argjson tests "$(jq -R . <<<"$tests" | jq -cs .)" \
+  --argjson sources "$(cut -d/ -f1 <<<"$files" | sort -u | jq -R . | jq -cs .)" '{
+    source_paths: $sources,
+    only_mutate: $only,
+    pytest_add_cli_args_test_selection: $tests,
+    pytest_add_cli_args: ["-p", "no:cacheprovider", "-p", "pytest_integrity", "--hypothesis-seed=20261105"],
+    use_git_change_detection: false,
+    timeout_multiplier: 10.0
+  }')
+
+# Replace any [tool.mutmut] table (and its subtables) of the copy with the kit's.
+[[ -f "$work/pyproject.toml" ]] || die "pyproject.toml is missing; mutmut needs the project's pytest configuration"
+awk '
+  /^[[:space:]]*\[/ { skipping = ($0 ~ /^[[:space:]]*\[[[:space:]]*tool\.mutmut[[:space:]]*(\]|\.)/) }
+  !skipping { print }
+' "$work/pyproject.toml" >"$work/pyproject.toml.tmp"
+{
+  cat "$work/pyproject.toml.tmp"
+  printf '\n[tool.mutmut]\n'
+  jq -r 'to_entries[] | "\(.key) = \(.value | tojson)"' <<<"$config"
+} >"$work/pyproject.toml"
+rm "$work/pyproject.toml.tmp"
+
+cd "$work"
+uv run -q --project "$root" python -c '
+import json, sys, tomllib
+with open("pyproject.toml", "rb") as handle:
+    actual = tomllib.load(handle).get("tool", {}).get("mutmut")
+if actual != json.loads(sys.argv[1]):
+    raise SystemExit(f"mutmut configuration of the scratch copy is not the kit configuration: {actual!r}")
+' "$config"
+PYTHONPATH="$root/.agent/test-support" uv run -q --project "$root" mutmut run --max-children 4

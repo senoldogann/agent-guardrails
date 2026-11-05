@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Usage: mutants-stryker <stryker-report.json>
+# Converts a StrykerJS JSON report (mutation-testing-report schema 1.0) to the normalized mutants TSV
+# (see mutants-lib.sh) on stdout. A Killed mutant counts as killed only when one of its killedBy
+# tests is a locked test (any specs/*/tests.lock); a kill by unlocked tests alone counts as survived.
+# Stryker statuses: Killed, Timeout, Survived, NoCoverage; CompileError and RuntimeError are invalid;
+# Ignored, Pending and anything unknown are error.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mutants-lib.sh"
+require_args 1 $# "mutants-stryker <stryker-report.json>"
+cd_project_root
+[[ -s $1 ]] || die "Stryker report $1 is missing or empty; Stryker did not finish"
+
+jq -r --argjson locked "$(locked_test_ids_json)" "$MUTANTS_JQ_LIB"'
+  ([.testFiles // {} | to_entries[] | .key as $file | .value.tests[] | {key: .id, value: ($file + "::" + .name)}]
+    | from_entries) as $test_ids
+  | ($locked | map({key: ., value: true}) | from_entries) as $is_locked
+  | .files | to_entries[] | .key as $file | (.value.source | split("\n")) as $lines
+  | .value.mutants[]
+  | slice_text($lines; .location) as $original
+  | ([(.killedBy // [])[] | $test_ids[.] // "" | select($is_locked[.] == true)] | length > 0) as $locked_kill
+  | (if .status == "Killed" then (if $locked_kill then "killed" else "survived" end)
+     elif .status == "Timeout" then "timeout"
+     elif .status == "Survived" then "survived"
+     elif .status == "NoCoverage" then "no-coverage"
+     elif .status == "CompileError" or .status == "RuntimeError" then "invalid"
+     else "error" end) as $status
+  | [ key($file; .mutatorName; $original; .replacement; $lines[.location.start.line - 1]),
+      ($file + ":" + (.location.start.line | tostring)),
+      $status,
+      (describe(.mutatorName; $original; .replacement)
+        + (if .status == "Killed" and ($locked_kill | not) then " (killed only by unlocked tests)"
+           elif $status == "error" then " (Stryker status " + .status + ")" else "" end))
+    ] | join("\t")
+' "$1" | fingerprint_rows

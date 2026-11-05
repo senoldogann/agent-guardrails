@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib.sh"
 new_project typescript
 cd "$project"
 printf '{ "name": "lang-ts", "private": true, "type": "module" }\n' >package.json
-pnpm add -D vitest fast-check @biomejs/biome >"$project/.setup.log" 2>&1 || {
+pnpm add -D vitest fast-check @biomejs/biome @stryker-mutator/core @stryker-mutator/vitest-runner >"$project/.setup.log" 2>&1 || {
   cat "$project/.setup.log"
   exit 1
 }
@@ -139,5 +139,70 @@ expect_output "Object.is blinding: lint names the .constructor access" "reaches 
 
 write_correct
 expect_success "correct: restriction lint passes" restriction_lint
+write_stub
+expect_success "stub: restriction lint allows throw new Error(\"NotImplemented: ...\")" restriction_lint
+cat >src/domain/percent.ts <<'EOF'
+export const makePercent = (input: number): unknown => {
+	if (input > 1000) throw new RangeError("invariant violated");
+	return { ok: true, value: input };
+};
+EOF
+expect_failure "self-check throw: restriction lint rejects it" restriction_lint
+expect_output "self-check throw: lint names the throw rule" "is banned in implementation code (contracts return typed results)"
+printf '// Stryker disable next-line all: equivalent\nexport const one = 1;\n' >src/domain/suppressed.ts
+git add src/domain/suppressed.ts
+expect_failure "Stryker suppression comment: escape-check rejects it" .agent/bin/escape-check ts
+git rm -q -f src/domain/suppressed.ts
+write_correct
+
+# Mutation gate inputs: StrykerJS + the numeric-literal mutator over a scoped file.
+cat >src/domain/discount.ts <<'EOF'
+/** Rounded discount in minor units: round_half_up(subtotal * percent / 100). */
+export const discountMinor = (subtotal: bigint, percent: bigint): bigint =>
+	(subtotal * percent + 50n) / 100n;
+EOF
+write_discount_tests() {
+  cat >"src/domain/$1" <<EOF
+import { describe, expect, it } from "vitest";
+import { discountMinor } from "./discount.ts";
+
+describe("discountMinor", () => {
+	it("$2", () => {
+		const table: ReadonlyArray<readonly [bigint, bigint, bigint]> = [
+			[1234n, 15n, 185n],
+			[49n, 1n, 0n],
+			[50n, 1n, 1n],
+			[0n, 100n, 0n],
+		];
+		for (const [subtotal, percent, expected] of table) {
+			expect(discountMinor(subtotal, percent)).toBe(expected);
+		}
+	});
+});
+EOF
+}
+write_discount_tests discount.test.ts "AC-1: rounds half up at the boundaries"
+lock_file_tests M-1 src/domain/discount.test.ts
+run_mutation "strong suite" src/domain/discount.ts
+expect_all_killed "strong suite: zero non-killed mutants"
+expect_mutant "strong suite: the literal mutator kills 50n -> 51n" killed "NumericLiteral: 50n -> 51n"
+expect_mutant "strong suite: Stryker mutants are in the results" killed "ArithmeticOperator"
+
+cat >src/domain/discount.test.ts <<'EOF'
+import { describe, expect, it } from "vitest";
+import { discountMinor } from "./discount.ts";
+
+describe("discountMinor", () => {
+	it("AC-1: returns a bigint", () => {
+		expect(typeof discountMinor(1234n, 15n)).toBe("bigint");
+	});
+});
+EOF
+write_discount_tests discount-extra.test.ts "unit: rounds half up (not locked)"
+lock_file_tests M-1 src/domain/discount.test.ts
+run_mutation "weak locked suite" src/domain/discount.ts
+expect_mutant "weak locked suite: a kill by unlocked tests only counts as survived" survived "(killed only by unlocked tests)"
+expect_mutant "weak locked suite: 50n -> 51n survives" survived "NumericLiteral: 50n -> 51n"
+rm src/domain/discount-extra.test.ts
 
 finish typescript

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Usage: mutation-gate
+# Judges .agent/reports/results/mutants.tsv (<fingerprint>\t<file:line>\t<status>\t<description>):
+#   - killed and timeout pass; invalid is listed but not counted;
+#   - survived, no-coverage and error fail unless accepted in a specs/<TICKET>/mutants-accepted file
+#     (lines "<fingerprint>  <file>  <reason>", human-owned, so the owner reviews every entry);
+#   - an unknown status fails; an accepted entry for a file in the current mutation scope that matches no
+#     current non-killed mutant is stale and fails, so it can never silently cover a different mutant.
+# A surviving mutant is a spec defect: strengthen the locked tests through a spec amendment.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 0 $# "mutation-gate"
+cd_project_root
+
+results=.agent/reports/results/mutants.tsv
+scope=.agent/reports/mutation/scope.txt
+[[ -f $results ]] || die "$results is missing; run 'make test-mutation' first"
+[[ -f $scope ]] || die "$scope is missing; run '.agent/bin/mutation-scope <base>' first"
+
+accepted_file=$(mktemp)
+trap 'rm -f "$accepted_file"' EXIT
+if [[ -d specs ]]; then
+  find specs -mindepth 2 -maxdepth 2 -name mutants-accepted -print0 | while IFS= read -r -d '' list; do
+    awk 'NF >= 3 && $0 !~ /^#/ { print $1 "\t" $2 }' "$list"
+  done >"$accepted_file"
+fi
+
+if awk -F'\t' '
+  FILENAME == ARGV[1] { ok[$1] = $2; next }
+  FILENAME == ARGV[2] { inscope[$0] = 1; next }
+  {
+    s = $3
+    if (s == "killed" || s == "timeout") { killed++; next }
+    if (s == "invalid") { invalid++; next }
+    if (s == "survived" || s == "no-coverage" || s == "error") {
+      if ($1 in ok) { acc++; used[$1] = 1; next }
+      bad++; print "  " s ": " $2 "  " $4 "  [" $1 "]" > "/dev/stderr"; next
+    }
+    bad++; print "  unknown status " s ": " $2 "  [" $1 "]" > "/dev/stderr"
+  }
+  END {
+    for (f in ok) if ((ok[f] in inscope) && !(f in used)) {
+      bad++; print "  stale accepted entry for " ok[f] " (matches no surviving mutant): " f > "/dev/stderr"
+    }
+    printf "mutants: %d killed, %d accepted, %d invalid, %d failing\n", killed, acc, invalid, bad
+    exit (bad > 0)
+  }' "$accepted_file" "$scope" "$results"; then
+  exit 0
+fi
+printf 'mutation gate failed: strengthen the locked tests (spec amendment) or ask the owner to accept a proven-equivalent mutant\n' >&2
+exit 1

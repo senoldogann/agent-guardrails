@@ -31,6 +31,13 @@ disable-model-invocation: true
 5. Post a PR comment for the owner, in plain language, with the command to copy:
    `Ready for your approval. In your own terminal (not the agent's) run: approve-head <PR URL>`.
 
+## When the mutation gate fails
+
+CI mutates the changed source and requires every mutant to be killed by a locked test. A survivor means the
+locked tests miss a behaviour: do not change the implementation to dodge it. Run `.agent/bin/block` with the
+surviving mutants and ask the owner for a spec amendment, or, if a mutant is provably equivalent, for an entry in
+`specs/<ID>/mutants-accepted` (`<fingerprint>  <file>  <reason>`; the owner writes or approves it).
+
 ## Report (PR comment and final message)
 
 ```

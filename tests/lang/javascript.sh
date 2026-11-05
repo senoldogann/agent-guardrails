@@ -7,7 +7,7 @@ source "$(dirname "$0")/lib.sh"
 new_project javascript
 cd "$project"
 printf '{ "name": "lang-js", "private": true, "type": "module" }\n' >package.json
-pnpm add -D vitest fast-check >"$project/.setup.log" 2>&1 || {
+pnpm add -D vitest fast-check @stryker-mutator/core @stryker-mutator/vitest-runner >"$project/.setup.log" 2>&1 || {
   cat "$project/.setup.log"
   exit 1
 }
@@ -48,5 +48,40 @@ lock_tests src/domain/percent.prop.test.js <<'EOF'
 src/domain/percent.prop.test.js::makePercent > AC-1: accepts [0, 100] and preserves the value
 EOF
 run_red_green write_stub write_correct write_wrong
+
+# Mutation gate inputs: StrykerJS + the numeric-literal mutator over a scoped file.
+write_correct
+cat >src/domain/discount.js <<'EOF'
+// @ts-check
+/**
+ * Rounded discount in minor units: round_half_up(subtotal * percent / 100).
+ * @param {bigint} subtotal
+ * @param {bigint} percent
+ */
+export const discountMinor = (subtotal, percent) => (subtotal * percent + 50n) / 100n;
+EOF
+write_discount_tests() {
+  cat >src/domain/discount.test.js <<EOF
+import { describe, expect, it } from "vitest";
+import { discountMinor } from "./discount.js";
+
+describe("discountMinor", () => {
+  it("AC-1: rounds half up", () => {
+    $1
+  });
+});
+EOF
+}
+write_discount_tests 'for (const [subtotal, percent, expected] of [[1234n, 15n, 185n], [49n, 1n, 0n], [50n, 1n, 1n], [0n, 100n, 0n]]) {
+      expect(discountMinor(subtotal, percent)).toBe(expected);
+    }'
+lock_file_tests M-1 src/domain/discount.test.js
+run_mutation "strong suite" src/domain/discount.js
+expect_all_killed "strong suite: zero non-killed mutants"
+expect_mutant "strong suite: the literal mutator kills 50n -> 51n" killed "NumericLiteral: 50n -> 51n"
+
+write_discount_tests 'expect(discountMinor(1234n, 15n)).toBe(185n);'
+run_mutation "weak locked suite" src/domain/discount.js
+expect_mutant "weak locked suite: 50n -> 51n survives" survived "NumericLiteral: 50n -> 51n"
 
 finish javascript

@@ -1,6 +1,6 @@
 # Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
 # Prerequisites: bash, GNU-compatible make, jq, uv.
-# Dev dependencies: uv add --dev basedpyright ruff pytest hypothesis pytest-reportlog
+# Dev dependencies: uv add --dev basedpyright ruff pytest hypothesis pytest-reportlog mutmut
 # pyproject.toml: [tool.pytest.ini_options] testpaths = ["tests"], pythonpath = ["src"] for a src layout.
 # Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
 # Dev dependencies: pytest, hypothesis, pytest-reportlog, ruff, basedpyright.
@@ -9,7 +9,7 @@ include .agent/common.mk
 RESULTS := .agent/reports/results
 PYTEST := uv run pytest -p no:cacheprovider
 
-.PHONY: typecheck lint fmt-check test-ids test test-prop
+.PHONY: typecheck lint fmt-check test-ids test test-prop test-mutation
 
 typecheck:
 	uv run basedpyright
@@ -46,3 +46,14 @@ test:
 ## Property tests (Hypothesis, tests/property/) -> $(RESULTS)/test-prop.tsv.
 test-prop:
 	$(call pytest_results,test-prop,tests/property)
+
+## Mutation gate inputs over the kit-computed scope (.agent/reports/mutation/scope.txt): mutmut with the
+## trusted configuration, killing only with locked tests and a fixed Hypothesis seed (mutmut mutates
+## numbers itself) -> $(RESULTS)/mutants.tsv. The gate judges it against specs/*/mutants-accepted.
+test-mutation:
+	@mkdir -p $(RESULTS) && rm -f $(RESULTS)/mutants.tsv
+	@files=$$(.agent/bin/mutants-scope '\.py$$'); \
+	if [ -z "$$files" ]; then : >$(RESULTS)/mutants.tsv; echo "test-mutation: no files in scope"; exit 0; fi; \
+	.agent/bin/mutants-mutmut-run && \
+	.agent/bin/mutants-mutmut .agent/reports/mutation/mutmut >$(RESULTS)/mutants.tsv.tmp && \
+	mv $(RESULTS)/mutants.tsv.tmp $(RESULTS)/mutants.tsv

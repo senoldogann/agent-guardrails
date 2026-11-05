@@ -1,14 +1,16 @@
 # Command contract for agents and CI. Language targets here; shared gates in .agent/common.mk.
 # Prerequisites: bash, GNU-compatible make, jq, pnpm (packageManager field set in package.json).
-# Dev dependencies: pnpm add -D typescript @biomejs/biome vitest fast-check (tsc checks JSDoc via jsconfig.json)
+# Dev dependencies: pnpm add -D typescript @biomejs/biome vitest fast-check @stryker-mutator/core @stryker-mutator/vitest-runner (tsc checks JSDoc via jsconfig.json)
 # Types come from JSDoc, checked by tsc with checkJs + strict (see jsconfig.json).
 # Test results are judged from the normalized files in $(RESULTS), never from exit codes alone.
 include .agent/common.mk
 
 RESULTS := .agent/reports/results
-VITEST_CONFIG := --config .agent/test-support/vitest.config.ts
+# MUTATION_RUN=1 (set by the mutation tools) switches to the trusted config with fixed seeds.
+VITEST_CONFIG := --config $(if $(MUTATION_RUN),.agent/mutation/vitest.config.ts,.agent/test-support/vitest.config.ts)
+MUTATION_FILES := '\.(js|jsx|mjs|cjs)$$'
 
-.PHONY: typecheck lint fmt-check test-ids test test-prop
+.PHONY: typecheck lint fmt-check test-ids test test-prop test-mutation
 
 typecheck:
 	pnpm exec tsc --noEmit -p jsconfig.json
@@ -45,3 +47,15 @@ test:
 ## Property tests (*.prop.test.js, fast-check) -> $(RESULTS)/test-prop.tsv.
 test-prop:
 	$(call vitest_results,test-prop,.prop.test.)
+
+## Mutation gate inputs over the kit-computed scope (.agent/reports/mutation/scope.txt):
+## StrykerJS with the trusted .agent/mutation config, then the numeric-literal mutator (Stryker never
+## mutates numbers) -> $(RESULTS)/mutants.tsv. The gate judges it against specs/*/mutants-accepted.
+test-mutation:
+	@mkdir -p $(RESULTS) .agent/reports/mutation && rm -f $(RESULTS)/mutants.tsv .agent/reports/mutation/stryker.json
+	@files=$$(.agent/bin/mutants-scope $(MUTATION_FILES)); \
+	if [ -z "$$files" ]; then : >$(RESULTS)/mutants.tsv; echo "test-mutation: no files in scope"; exit 0; fi; \
+	pnpm exec stryker run .agent/mutation/stryker.config.json --mutate "$$(printf '%s\n' "$$files" | paste -sd, -)" && \
+	.agent/bin/mutants-stryker .agent/reports/mutation/stryker.json >$(RESULTS)/mutants.tsv.tmp && \
+	.agent/bin/mutants-literals $(MUTATION_FILES) >>$(RESULTS)/mutants.tsv.tmp && \
+	mv $(RESULTS)/mutants.tsv.tmp $(RESULTS)/mutants.tsv
