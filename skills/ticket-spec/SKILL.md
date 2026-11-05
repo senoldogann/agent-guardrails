@@ -66,6 +66,17 @@ No open questions → the single line `No open questions.`
 - `specs/<ID>/write-allow`: bash globs (`*` matches `/`) of implementation files only (stubs and the modules the
   implementation needs). `spec-lock` rejects patterns reaching tests, configs, manifests or dotfiles.
 
+## Amending a locked spec after implementation
+
+When review finds a gap in locked tests after implementation commits exist (the owner decides; never on your own):
+1. `.agent/bin/start-spec <ID>`; restore every write-allowed implementation file to its stub from the last lock
+   commit (`git show <lock-commit>:<path> > <path>`).
+2. Change only the locked files the review asked for, then `.agent/bin/spec-lock <ID>`, commit
+   `spec(<ID>): <what the amendment adds>` and `.agent/bin/finish` (every locked test, old and new, must be red).
+3. `.agent/bin/start-implement <ID>`, restore the implementation (`git show <impl-commit>:<path> > <path>`), adjust it
+   only if a new test requires it, commit, `.agent/bin/finish`, push. CI re-proves the spec gate on the new lock
+   commit and the guard marks the PR "SPEC AMENDED" for the owner.
+
 ## 6. Hand-off
 
 - Commit, push, open a **draft** PR (`gh pr create --draft`) titled `spec(<ID>): ...`.
