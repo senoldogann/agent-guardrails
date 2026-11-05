@@ -18,10 +18,12 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `off` deletes the ruleset and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
   and `bin/revoke-head` (approval of a PR's exact HEAD as the commit status `merge-approval`). Enforced repos
   are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
-  For the Guardrails app, `inbox --json` prints one item per line, and with `GUARDRAILS_EVENTS_FD=<3-9>` the
+  For the Guardrails app, `inbox --json`, `projects --json` (the owner's repos with their state, one GraphQL
+  query) and `prs <owner/repo> --json` are read-only and print one item per line, and with `GUARDRAILS_EVENTS_FD=<3-9>` the
   commands also write their plan and each expected confirmation as JSON lines to that descriptor.
-- `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): lists what waits for the owner and
-  runs `guardrails approve|on|off` inside a pseudo-terminal (`script -q /dev/null`). It shows the CLI's plan
+- `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): lists what waits for the owner, a
+  Projects window with every repo's state and open PRs, set-up of new projects (clone check, then Terminal with
+  `claude "/guardrails-init"`), and runs `guardrails approve|on|off` inside a pseudo-terminal (`script -q /dev/null`). It shows the CLI's plan
   event, checks every confirmation against that plan and asks for Touch ID before typing it. The CLI stays
   the authority. The app is a convenience, not a boundary against an agent running as the same user.
   `GuardrailsCore` holds the testable parts; `app/build.sh` writes the kit path into Info.plist and installs

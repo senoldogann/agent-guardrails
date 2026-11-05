@@ -9,6 +9,8 @@
 #   guardrails approve [PR link]       approve a PR's HEAD; without a link, pick from the waiting PRs
 #   guardrails revoke <PR link>        withdraw an approval
 #   guardrails status                  every enforced repo: ruleset and kit files, plus this kit install
+#   guardrails projects --json         your repositories with their state (read-only, for the app)
+#   guardrails prs <owner/repo> --json the open PRs of one repository (read-only, for the app)
 #
 # Enforced repos are listed in ~/.config/agent-guardrails/repos and carry the GitHub topic agent-guardrails.
 # The global hooks treat a listed repo as a kit repo even if its local .agent/ is deleted, and from any
@@ -32,7 +34,7 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-  sed -n '5,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,13p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 1
 }
 
@@ -308,7 +310,11 @@ kit_install_alarm() {
 
 # Prints "turn-on" items: open /guardrails-init PRs in repos that are not enforced yet.
 bootstrap_items() {
-  gh search prs --owner "$(login)" --head chore/agent-guardrails --state open --limit 50 \
+  local owner
+  owner=$(login)
+  # Only the owner's PRs: anyone can open a PR from a branch of that name, from a fork too. `on` still compares
+  # the kit files with this install before it merges anything.
+  gh search prs --owner "$owner" --author "$owner" --head chore/agent-guardrails --state open --limit 50 \
     --json url,title,repository --jq '.[] | [.repository.nameWithOwner, .url, .title] | @tsv' |
     while IFS=$'\t' read -r repo url title; do
       registered_repos | grep -Fxi -- "$repo" >/dev/null ||
@@ -377,6 +383,39 @@ inbox() {
   [[ -s $registry ]] || printf '(no enforced repos yet: ask the agent for /guardrails-init in a project, then run guardrails on <PR link>)\n'
 }
 
+# The owner's repositories (not archived, newest push first) with what the app needs to show their state.
+# shellcheck disable=SC2016 # $endCursor is a GraphQL variable, filled in by gh --paginate
+projects_query='query($endCursor: String) {
+  viewer {
+    repositories(first: 100, after: $endCursor, ownerAffiliations: OWNER, isArchived: false,
+                 orderBy: {field: PUSHED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        nameWithOwner isFork isPrivate pushedAt viewerPermission defaultBranchRef { name }
+        repositoryTopics(first: 20) { nodes { topic { name } } }
+        rulesets(first: 20) { nodes { name enforcement } }
+        pullRequests(states: OPEN) { totalCount }
+        bootstrap: pullRequests(states: OPEN, headRefName: "chore/agent-guardrails", first: 5) {
+          nodes { url title isCrossRepository author { login } }
+        }
+      }
+    }
+  }
+}'
+
+projects_json() {
+  local owner
+  owner=$(login)
+  gh api graphql --paginate -f query="$projects_query" --jq '.data.viewer.repositories.nodes[]' |
+    project_states "$owner" "$(registered_repos)"
+}
+
+prs_json() {
+  [[ $1 =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "not an owner/repo name: $1"
+  gh pr list -R "$1" --state open --limit 100 \
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,author,updatedAt | pr_states
+}
+
 approve_pick() {
   local repo items choices="" count=0 kind url title note choice
   while IFS= read -r repo; do
@@ -427,6 +466,14 @@ case $command in
   status)
     require_args 0 $# "guardrails status"
     status
+    ;;
+  projects)
+    [[ $# -eq 1 && $1 == --json ]] || die "usage: guardrails projects --json"
+    projects_json
+    ;;
+  prs)
+    [[ $# -eq 2 && $2 == --json ]] || die "usage: guardrails prs <owner/repo> --json"
+    prs_json "$1"
     ;;
   on)
     [[ $# -ge 1 ]] || usage

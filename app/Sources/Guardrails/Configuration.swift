@@ -55,6 +55,13 @@ struct ActionRequest: Codable, Hashable {
         }
     }
 
+    /// owner/repo of the target: taken from a PR link (https://github.com/<owner>/<repo>/pull/<n>) or used as is.
+    var repo: String {
+        let parts = target.split(separator: "/")
+        if target.hasPrefix("https://github.com/"), parts.count >= 4 { return "\(parts[2])/\(parts[3])" }
+        return target
+    }
+
     var windowTitle: String {
         switch kind {
         case .approve: "Review and approve"

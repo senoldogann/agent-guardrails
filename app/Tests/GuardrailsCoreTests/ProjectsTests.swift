@@ -1,0 +1,73 @@
+import Foundation
+import Testing
+
+@testable import GuardrailsCore
+
+@Suite("projects")
+struct ProjectsTests {
+    private let output = """
+        {"repo":"acme/shop","state":"on","note":"ruleset active","private":true,"fork":false,"branch":"main","pushed":"2026-11-05T10:00:00Z","openPRs":3,"setupURL":"","setupTitle":""}
+        {"repo":"acme/billing","state":"alarm","note":"ruleset disabled","private":true,"fork":false,"branch":"main","pushed":"2026-11-04T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
+        {"repo":"acme/mobile","state":"ready","note":"set-up PR open","private":false,"fork":false,"branch":"main","pushed":"2026-11-03T10:00:00Z","openPRs":1,"setupURL":"https://github.com/acme/mobile/pull/2","setupTitle":"chore: install"}
+        {"repo":"acme/site","state":"off","note":"","private":false,"fork":false,"branch":"main","pushed":"2026-11-02T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
+        {"repo":"acme/vendored","state":"no-admin","note":"","private":false,"fork":true,"branch":"main","pushed":"2026-11-01T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
+        """
+
+    @Test func groupsByWhatTheOwnerDoes() throws {
+        let groups = groupProjects(try parseProjects(output), matching: "")
+        #expect(groups.needsYou.map(\.repo) == ["acme/billing"])
+        #expect(groups.on.map(\.repo) == ["acme/shop"])
+        #expect(groups.ready.map(\.setupURL) == ["https://github.com/acme/mobile/pull/2"])
+        #expect(groups.off.map(\.repo) == ["acme/site", "acme/vendored"])
+    }
+
+    @Test func searchMatchesOwnerAndName() throws {
+        let groups = groupProjects(try parseProjects(output), matching: " SHO ")
+        #expect(groups.on.map(\.repo) == ["acme/shop"])
+        #expect(groups.off.isEmpty && groups.ready.isEmpty && groups.needsYou.isEmpty)
+    }
+
+    @Test func parsesPullRequestKinds() throws {
+        let items = try parsePullRequests(
+            #"{"number":7,"url":"u","title":"feat: x","kind":"draft","note":"n","sha":"abc","draft":true,"author":"o","updated":"t"}"#)
+        #expect(items.map(\.kind) == [.draft])
+        #expect(throws: JSONLinesError.self) {
+            try parsePullRequests(#"{"number":7,"url":"u","title":"x","kind":"merged","note":"","sha":"","draft":false,"author":"","updated":""}"#)
+        }
+    }
+
+    @Test func dropsInvisibleFormatCharacters() {
+        #expect(displaySafe("fix\u{202E}txt.exe\u{200B}") == "fixtxt.exe")
+    }
+}
+
+@Suite("set up")
+struct SetupTests {
+    @Test func acceptsOnlyPlainRepoNames() {
+        #expect(isValidRepoName("acme/shop-app.v2"))
+        #expect(!isValidRepoName("acme/../etc"))
+        #expect(!isValidRepoName("acme/shop; rm -rf ~"))
+        #expect(!isValidRepoName("acme"))
+    }
+
+    @Test func matchesOriginsOfTheRepoOnly() {
+        #expect(originMatches("https://github.com/acme/shop.git\n", repo: "acme/shop"))
+        #expect(originMatches("git@github.com:Acme/Shop", repo: "acme/shop"))
+        #expect(!originMatches("https://github.com/evil/shop.git", repo: "acme/shop"))
+        #expect(!originMatches("https://github.com/acme/shop-fork.git", repo: "acme/shop"))
+    }
+
+    @Test func judgesAClone() {
+        #expect(judgeClone(origin: "https://github.com/acme/shop", statusPorcelain: "", branch: "main", defaultBranch: "main", repo: "acme/shop") == .ready)
+        #expect(judgeClone(origin: nil, statusPorcelain: "", branch: "main", defaultBranch: "main", repo: "acme/shop") != .ready)
+        #expect(judgeClone(origin: "https://github.com/acme/shop", statusPorcelain: "?? x\n", branch: "main", defaultBranch: "main", repo: "acme/shop") != .ready)
+        #expect(judgeClone(origin: "https://github.com/acme/shop", statusPorcelain: "", branch: "feat/x", defaultBranch: "main", repo: "acme/shop") != .ready)
+    }
+
+    @Test func quotesTheCloneInTheTerminalScript() throws {
+        let script = setupScript(clonePath: "/Users/o/my projects/it's", repo: "acme/shop")
+        #expect(script.contains("cd -- '/Users/o/my projects/it'\\''s' || exit 1"))
+        #expect(script.contains("exec claude '/guardrails-init'"))
+        #expect(!script.contains("dangerously"))
+    }
+}

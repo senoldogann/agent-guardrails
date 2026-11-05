@@ -62,8 +62,8 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
             HStack {
-                Button("Repositories") {
-                    openWindow(id: WindowID.repositories)
+                Button("Projects") {
+                    openWindow(id: WindowID.projects)
                     activateApp()
                 }
                 .buttonStyle(SecondaryPillStyle())

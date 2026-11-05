@@ -121,6 +121,35 @@ blocked${tab}u5${tab}feat(A-5): bad${tab}guard failed: the agent has to fix the 
 wait${tab}u6${tab}feat(A-6): new${tab}guard is running
 approve${tab}u7${tab}feat(A-7): revoked${tab}checks green"
 
+echo "pr_states"
+expect_eq "every open PR has a kind" "$(pr_states <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
+  "u1 answer u2 draft u3 approve u4 approved u5 blocked u6 wait u7 approve "
+
+echo "project_states"
+node() {
+  jq -n -c --arg name "$1" --arg permission "$2" --argjson rulesets "$3" --argjson topics "$4" --argjson bootstrap "$5" '{
+    nameWithOwner: $name, isFork: false, isPrivate: true, pushedAt: "2026-11-05T00:00:00Z", viewerPermission: $permission,
+    repositoryTopics: {nodes: ($topics | map({topic: {name: .}}))}, rulesets: {nodes: $rulesets},
+    pullRequests: {totalCount: 2}, bootstrap: {nodes: $bootstrap}}'
+}
+active='[{"name":"agent-guardrails","enforcement":"ACTIVE"}]'
+own_setup='[{"url":"https://github.com/acme/ready/pull/1","title":"chore: install","isCrossRepository":false,"author":{"login":"owner"}}]'
+fork_setup='[{"url":"https://github.com/acme/evil/pull/9","title":"chore: install","isCrossRepository":true,"author":{"login":"owner"}}]'
+stranger_setup='[{"url":"https://github.com/acme/evil/pull/8","title":"chore: install","isCrossRepository":false,"author":{"login":"mallory"}}]'
+nodes=$(
+  node acme/on ADMIN "$active" '["agent-guardrails"]' '[]'
+  node Acme/Disabled ADMIN '[{"name":"agent-guardrails","enforcement":"DISABLED"}]' '[]' '[]'
+  node acme/tagged ADMIN '[]' '["agent-guardrails"]' '[]'
+  node acme/ready ADMIN '[]' '[]' "$own_setup"
+  node acme/fork-pr ADMIN '[]' '[]' "$fork_setup"
+  node acme/stranger ADMIN '[]' '[]' "$stranger_setup"
+  node acme/readonly WRITE '[]' '[]' '[]'
+)
+expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
+  "acme/on on Acme/Disabled alarm acme/tagged alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
+expect_eq "a ready project carries its set-up PR" \
+  "$(project_states owner '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
+
 echo "events for the app"
 expect_eq "no events without the descriptor" "$(GUARDRAILS_EVENTS_FD='' emit_event '{"event":"x"}' 3>&1)" ""
 expect_eq "events go to the named descriptor" "$(GUARDRAILS_EVENTS_FD=3 emit_event '{"event":"x"}' 3>&1 >/dev/null)" '{"event":"x"}'
