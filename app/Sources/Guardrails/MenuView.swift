@@ -50,46 +50,9 @@ struct MenuView: View {
         return "Updated \(updated.formatted(date: .omitted, time: .shortened))"
     }
 
-    @ViewBuilder
     private var content: some View {
-        let snapshot = model.snapshot
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if let error = model.lastError {
-                    StatusPanel(symbol: "wifi.exclamationmark", title: "Could not refresh", message: error)
-                }
-                ForEach(snapshot.alarms) { AlarmBanner(text: $0.note) }
-                if !snapshot.approvals.isEmpty {
-                    SectionLabel(text: "Approve")
-                    ForEach(snapshot.approvals) { item in
-                        ItemRow(item: item, actionTitle: "Review", disabled: snapshot.hasKitInstallAlarm) {
-                            open(ActionRequest(kind: .approve, target: item.url, label: item.title))
-                        }
-                    }
-                }
-                if !snapshot.turnOns.isEmpty {
-                    SectionLabel(text: "Turn on")
-                    ForEach(snapshot.turnOns) { item in
-                        ItemRow(item: item, actionTitle: "Turn on", disabled: snapshot.hasKitInstallAlarm) {
-                            open(ActionRequest(kind: .turnOn, target: item.url, label: item.title))
-                        }
-                    }
-                }
-                if !snapshot.answers.isEmpty {
-                    SectionLabel(text: "The agent asks")
-                    ForEach(snapshot.answers) { item in
-                        ItemRow(item: item, actionTitle: "Open", disabled: false) { openInBrowser(item.url) }
-                    }
-                }
-                if !snapshot.inProgress.isEmpty {
-                    Text("\(snapshot.inProgress.count) in progress")
-                        .font(.caption)
-                        .foregroundStyle(Palette.textSecondary)
-                }
-                if snapshot.isQuiet, model.lastError == nil, model.lastUpdated != nil {
-                    QuietState(hasRepos: !snapshot.repos.isEmpty)
-                }
-            }
+            InboxList(model: model, open: open)
         }
         .frame(maxHeight: 460)
         .fixedSize(horizontal: false, vertical: true)
@@ -137,6 +100,77 @@ struct MenuView: View {
     private func open(_ request: ActionRequest) {
         openWindow(id: WindowID.review, value: request)
         activateApp()
+    }
+}
+
+/// The inbox in the menu panel. Kept as small separate views: Swift 6.3's compiler crashes in IR generation
+/// on one large view body with many conditional sections.
+struct InboxList: View {
+    let model: AppModel
+    let open: (ActionRequest) -> Void
+
+    var body: some View {
+        let snapshot = model.snapshot
+        VStack(alignment: .leading, spacing: 12) {
+            InboxProblems(error: model.lastError, alarms: snapshot.alarms)
+            ItemSection(title: "Approve", items: snapshot.approvals, actionTitle: "Review", disabled: snapshot.hasKitInstallAlarm) {
+                open(ActionRequest(kind: .approve, target: $0.url, label: $0.title))
+            }
+            ItemSection(title: "Turn on", items: snapshot.turnOns, actionTitle: "Turn on", disabled: snapshot.hasKitInstallAlarm) {
+                open(ActionRequest(kind: .turnOn, target: $0.url, label: $0.title))
+            }
+            ItemSection(title: "The agent asks", items: snapshot.answers, actionTitle: "Open", disabled: false) {
+                openInBrowser($0.url)
+            }
+            InboxFooterNote(
+                inProgress: snapshot.inProgress.count,
+                showsQuiet: snapshot.isQuiet && model.lastError == nil && model.lastUpdated != nil,
+                hasRepos: !snapshot.repos.isEmpty)
+        }
+    }
+}
+
+struct InboxProblems: View {
+    let error: String?
+    let alarms: [InboxItem]
+
+    var body: some View {
+        if let error {
+            StatusPanel(symbol: "wifi.exclamationmark", title: "Could not refresh", message: error)
+        }
+        ForEach(alarms) { AlarmBanner(text: $0.note) }
+    }
+}
+
+struct ItemSection: View {
+    let title: String
+    let items: [InboxItem]
+    let actionTitle: String
+    let disabled: Bool
+    let action: (InboxItem) -> Void
+
+    var body: some View {
+        if !items.isEmpty {
+            SectionLabel(text: title)
+            ForEach(items) { item in
+                ItemRow(item: item, actionTitle: actionTitle, disabled: disabled) { action(item) }
+            }
+        }
+    }
+}
+
+struct InboxFooterNote: View {
+    let inProgress: Int
+    let showsQuiet: Bool
+    let hasRepos: Bool
+
+    var body: some View {
+        if inProgress > 0 {
+            Text("\(inProgress) in progress").font(.caption).foregroundStyle(Palette.textSecondary)
+        }
+        if showsQuiet {
+            QuietState(hasRepos: hasRepos)
+        }
     }
 }
 
