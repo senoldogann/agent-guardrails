@@ -228,6 +228,15 @@ implement
 expect_exit "green checks allow stop" 0 stop_hook
 expect_success "report-checks renders the fresh log" .agent/bin/report-checks ABC-1
 expect_out "report is the real log" "ALL PASSED"
+checks_log=.agent/reports/ABC-1/checks.log
+cp "$checks_log" "$work/checks.log.bak"
+awk '/^\[exit / && !done { for (i = 1; i <= 3000; i++) printf "case %d passed with a long generated input line\n", i; done = 1 } { print }' \
+  "$work/checks.log.bak" >"$checks_log"
+expect_success "report-checks shortens a log too long for a PR comment" .agent/bin/report-checks ABC-1
+expect_out "short report keeps the summary" "ALL PASSED"
+expect_out "short report says what it left out" "lines left out; full log in .agent/reports/ABC-1/checks.log"
+if [[ $(.agent/bin/report-checks ABC-1 | wc -c) -lt 60000 ]]; then ok "short report fits a PR comment"; else fail "short report fits a PR comment"; fi
+cp "$work/checks.log.bak" "$checks_log"
 printf '// IMPLEMENTED\nexport const x = 1;\n' >src/domain/percent.ts
 expect_failure "report-checks refuses a stale log" .agent/bin/report-checks ABC-1
 implement
