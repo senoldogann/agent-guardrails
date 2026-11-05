@@ -121,6 +121,94 @@ blocked${tab}u5${tab}feat(A-5): bad${tab}guard failed: the agent has to fix the 
 wait${tab}u6${tab}feat(A-6): new${tab}guard is running
 approve${tab}u7${tab}feat(A-7): revoked${tab}checks green"
 
+echo "events for the app"
+expect_eq "no events without the descriptor" "$(GUARDRAILS_EVENTS_FD='' emit_event '{"event":"x"}' 3>&1)" ""
+expect_eq "events go to the named descriptor" "$(GUARDRAILS_EVENTS_FD=3 emit_event '{"event":"x"}' 3>&1 >/dev/null)" '{"event":"x"}'
+expect_eq "only descriptors 3-9 are used" "$(GUARDRAILS_EVENTS_FD=1 emit_event '{"event":"x"}')" ""
+expect_eq "files as JSON" "$(printf '!!\t.github/workflows/x.yml\n\tsrc/a b.ts\n' | files_json)" \
+  '[{"marker":"!!","path":".github/workflows/x.yml"},{"marker":"","path":"src/a b.ts"}]'
+
+# A fake gh on PATH answers the calls of bin/guardrails and pr_files from fixtures.
+fake_bin="$work/fake-bin"
+mkdir -p "$fake_bin"
+cat >"$fake_bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+case $args in
+  "api user --jq .login") echo owner ;;
+  "search repos "*) printf 'acme/shop\nacme/lost\n' ;;
+  "api repos/acme/shop/rulesets "*) echo active ;;
+  "api repos/acme/off/rulesets "*) echo "" ;;
+  "pr list -R acme/shop "*) cat "$FAKE_PRS" ;;
+  "pr list -R acme/off "*) echo '[]' ;;
+  "search prs "*) printf 'acme/new\thttps://github.com/acme/new/pull/1\tchore: install the kit\n' ;;
+  "api --paginate repos/acme/shop/pulls/1/files"*) printf 'src/a.ts\n' ;;
+  "api --paginate repos/acme/shop/pulls/2/files"*) printf 'src/a.ts\ncontrol-character src/??fake\n' ;;
+  *) echo "fake gh: unexpected call: $args" >&2; exit 1 ;;
+esac
+FAKE
+chmod +x "$fake_bin/gh"
+printf '%s' "$fixture" >"$work/prs.json"
+fake_home="$work/fake-home"
+mkdir -p "$fake_home/.config/agent-guardrails"
+printf 'acme/shop\nacme/off\n' >"$fake_home/.config/agent-guardrails/repos"
+run_cli() { HOME=$fake_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" "$@" 2>&1; }
+# Lines about the kit install itself depend on this checkout and the network; the tests skip them.
+inbox_text=$(run_cli inbox | grep -v 'kit install\|kit origin')
+expect_eq "inbox text" "$inbox_text" "ALARM  acme/lost carries the agent-guardrails topic but is not in $fake_home/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost
+ALARM  acme/off: ruleset missing. If you did not change it, check the audit log; restore with: guardrails on acme/off
+
+acme/shop
+  answer   spec(A-1): x
+           u1 (the agent is waiting for your decision)
+  approve  feat(A-3): ready (checks running)
+           approve-head u3
+  blocked  feat(A-5): bad (guard failed: the agent has to fix the PR)
+  wait     feat(A-6): new (guard is running)
+  approve  feat(A-7): revoked (checks green)
+           approve-head u7
+
+Not enforced yet
+  turn on  chore: install the kit
+           guardrails on https://github.com/acme/new/pull/1"
+inbox_json=$(run_cli inbox --json | jq -c 'select(.repo != "")')
+expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"","title":"","note":"acme/lost carries the agent-guardrails topic but is not in '"$fake_home"'/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost"}
+{"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active"}
+{"kind":"answer","repo":"acme/shop","url":"u1","title":"spec(A-1): x","note":"the agent is waiting for your decision"}
+{"kind":"approve","repo":"acme/shop","url":"u3","title":"feat(A-3): ready","note":"checks running"}
+{"kind":"blocked","repo":"acme/shop","url":"u5","title":"feat(A-5): bad","note":"guard failed: the agent has to fix the PR"}
+{"kind":"wait","repo":"acme/shop","url":"u6","title":"feat(A-6): new","note":"guard is running"}
+{"kind":"approve","repo":"acme/shop","url":"u7","title":"feat(A-7): revoked","note":"checks green"}
+{"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing"}
+{"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: ruleset missing. If you did not change it, check the audit log; restore with: guardrails on acme/off"}
+{"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":""}'
+
+echo "pr_files"
+expect_eq "plain file names pass" "$(PATH="$fake_bin:$PATH" pr_files acme/shop 1)" "src/a.ts"
+if (PATH="$fake_bin:$PATH" pr_files acme/shop 2 >/dev/null 2>&1); then
+  fail "a file name with control characters must be refused"
+else ok; fi
+
+echo "kit install checks"
+fake_kit="$work/fake-kit"
+git init -q "$fake_kit"
+printf 'x\n' >"$fake_kit/tool"
+git -C "$fake_kit" add tool
+git -C "$fake_kit" -c user.name=t -c user.email=t@t commit -q -m init
+expect_eq "clean install has no local changes" "$(kit=$fake_kit kit_local_changes)" ""
+printf 'y\n' >"$fake_kit/tool"
+git -C "$fake_kit" update-index --skip-worktree tool
+expect_eq "skip-worktree cannot hide an edit" "$(kit=$fake_kit kit_local_changes)" "not watched by git: tool"
+git -C "$fake_kit" update-index --no-skip-worktree tool
+git -C "$fake_kit" checkout -q tool
+git -C "$fake_kit" config status.showUntrackedFiles no
+printf 'z\n' >"$fake_kit/new-tool"
+expect_eq "untracked files show despite the repo config" "$(kit=$fake_kit kit_local_changes)" "?? new-tool"
+rm "$fake_kit/new-tool"
+git -C "$fake_kit" config core.fsmonitor "touch $work/fsmonitor-ran; false"
+kit=$fake_kit kit_local_changes >/dev/null 2>&1 || true
+if [[ -e "$work/fsmonitor-ran" ]]; then fail "core.fsmonitor ran while checking the install"; else ok; fi
+
 echo "project bash-guard shim"
 shim="$template/.agent/hooks/bash-guard.sh"
 shim_project=$(new_project shim)
