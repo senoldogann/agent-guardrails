@@ -1,0 +1,161 @@
+import Foundation
+import Testing
+
+@testable import GuardrailsCore
+
+private let approvePlan = PullRequestPlan(
+    repo: "acme/shop", pr: 7, url: "https://github.com/acme/shop/pull/7", title: "feat(A-1): x",
+    sha: "abc1234def5678", files: [PlannedFile(path: "src/a.ts", marker: "")])
+private let workflowPlan = PullRequestPlan(
+    repo: "acme/shop", pr: 8, url: "https://github.com/acme/shop/pull/8", title: "ci: y",
+    sha: "0123456789abcdef", files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")])
+
+@Suite("inbox")
+struct InboxTests {
+    @Test func groupsLinesByWhatTheOwnerDoes() throws {
+        let output = """
+            {"kind":"alarm","repo":"","url":"","title":"","note":"the kit install has local changes"}
+            {"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active"}
+            {"kind":"approve","repo":"acme/shop","url":"u3","title":"feat: ready","note":"checks green"}
+            {"kind":"wait","repo":"acme/shop","url":"u6","title":"feat: new","note":"guard is running"}
+            {"kind":"turn-on","repo":"acme/new","url":"u9","title":"chore: install","note":""}
+            """
+        let snapshot = try parseInbox(output)
+        #expect(snapshot.alarms.count == 1)
+        #expect(snapshot.hasKitInstallAlarm)
+        #expect(snapshot.repos == [EnforcedRepo(name: "acme/shop", rulesetState: "active")])
+        #expect(snapshot.approvals.map(\.url) == ["u3"])
+        #expect(snapshot.inProgress.map(\.url) == ["u6"])
+        #expect(snapshot.turnOns.map(\.repo) == ["acme/new"])
+        #expect(!snapshot.isQuiet)
+    }
+
+    @Test func refusesUnknownKinds() {
+        #expect(throws: InboxParseError.self) {
+            try parseInbox(#"{"kind":"approved","repo":"a/b","url":"","title":"","note":""}"#)
+        }
+    }
+
+    @Test func reportsOnlyNewApprovals() throws {
+        let before = try parseInbox(#"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}"#)
+        let after = try parseInbox(
+            #"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}"# + "\n"
+                + #"{"kind":"approve","repo":"a/b","url":"u2","title":"t2","note":"n"}"#)
+        #expect(newApprovals(previous: before, current: after).map(\.url) == ["u2"])
+    }
+}
+
+@Suite("events and confirmations")
+struct ConfirmationTests {
+    @Test func parsesEveryPlanAndConfirmation() throws {
+        let approve = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234def","files":[{"marker":"!!","path":".github/workflows/x.yml"}]}"#)
+        guard case .plan(.approve(let pr)) = approve else {
+            Issue.record("not an approve plan: \(approve)")
+            return
+        }
+        #expect(pr.hasWorkflowChanges && pr.needsDiffReview && pr.shortSHA == "abc1234")
+        let off = try parseEvent(
+            #"{"event":"plan","action":"off","repo":"acme/shop","branch":"main","removed":["D\t.agent/bin/x"],"notes":[]}"#)
+        #expect(off == .plan(.turnOff(RemovalPlan(repo: "acme/shop", branch: "main", removed: ["D\t.agent/bin/x"], notes: []))))
+        #expect(try parseEvent(#"{"event":"confirm","step":"commit","expect":"abc1234"}"#)
+            == .confirm(ConfirmRequest(step: .commit, expect: "abc1234")))
+        #expect(throws: EventParseError.self) { try parseEvent(#"{"event":"plan","action":"merge"}"#) }
+    }
+
+    @Test func answersOnlyWhatThePlanSays() throws {
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(approvePlan)) == "abc1234")
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "fffffff"), plan: .approve(approvePlan))
+        }
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: nil)
+        }
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .workflows, expect: "workflows"), plan: .approve(approvePlan))
+        }
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .workflows, expect: "workflows"), plan: .approve(workflowPlan)) == "workflows")
+        let removal = Plan.turnOff(RemovalPlan(repo: "acme/shop", branch: "main", removed: [], notes: []))
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/shop"), plan: removal) == "acme/shop")
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/other"), plan: removal)
+        }
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/shop"), plan: .approve(approvePlan))
+        }
+    }
+
+    @Test func knowsTheFinalStep() {
+        #expect(isFinalConfirmation(ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(approvePlan)))
+        #expect(!isFinalConfirmation(ConfirmRequest(step: .commit, expect: "0123456"), plan: .approve(workflowPlan)))
+        #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(approvePlan))
+            == "approve acme/shop PR #7 at commit abc1234")
+    }
+
+    @Test func environmentIsAnAllowlist() {
+        let environment = cliEnvironment(
+            inherited: ["HOME": "/Users/o", "BASH_ENV": "/tmp/evil", "GH_TOKEN": "x", "PATH": "/evil"], eventsDescriptor: 3)
+        #expect(environment["HOME"] == "/Users/o")
+        #expect(environment["BASH_ENV"] == nil && environment["GH_TOKEN"] == nil)
+        #expect(environment["PATH"] == cliSearchPath)
+        #expect(environment["GUARDRAILS_EVENTS_FD"] == "3")
+    }
+}
+
+/// Drives a fake CLI that behaves like bin/guardrails: it needs a terminal, writes a plan and a confirm
+/// event to descriptor 3, and reads the confirmation from /dev/tty.
+@Suite("terminal session")
+struct TerminalSessionTests {
+    private func fakeCLI() throws -> String {
+        let script = """
+            #!/bin/bash
+            set -euo pipefail
+            [[ -t 0 && -t 1 ]] || { echo "no terminal"; exit 3; }
+            printf '%s\\n' '{"event":"plan","action":"off","repo":"acme/shop","branch":"main","removed":[],"notes":[]}' >&"$GUARDRAILS_EVENTS_FD"
+            printf '%s\\n' '{"event":"confirm","step":"repo","expect":"acme/shop"}' >&"$GUARDRAILS_EVENTS_FD"
+            read -r -p "Type acme/shop to continue: " typed </dev/tty
+            [[ $typed == acme/shop ]] || { echo "mismatch"; exit 4; }
+            echo "done"
+            """
+        let url = FileManager.default.temporaryDirectory.appending(path: "fake-guardrails-\(UUID().uuidString).sh")
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        return url.path
+    }
+
+    @Test func answersAConfirmationThroughThePseudoTerminal() async throws {
+        let cli = try fakeCLI()
+        let session = try TerminalSession(
+            command: terminalCommand(cliPath: cli, arguments: []),
+            environment: cliEnvironment(inherited: ProcessInfo.processInfo.environment, eventsDescriptor: eventsDescriptor))
+        var plan: Plan?
+        var terminal = ""
+        var exit: Int32?
+        for await output in session.output {
+            switch output {
+            case .event(.plan(let announced)): plan = announced
+            case .event(.confirm(let request)): try session.send(try confirmationAnswer(for: request, plan: plan) + "\n")
+            case .terminal(let text): terminal += text
+            case .invalidEvent(let error): Issue.record("invalid event: \(error)")
+            case .exited(let code): exit = code
+            }
+        }
+        #expect(exit == 0, "terminal output: \(terminal)")
+        #expect(terminal.contains("done"))
+    }
+
+    @Test func closingTheInputStopsTheCommand() async throws {
+        let cli = try fakeCLI()
+        let session = try TerminalSession(
+            command: terminalCommand(cliPath: cli, arguments: []),
+            environment: cliEnvironment(inherited: ProcessInfo.processInfo.environment, eventsDescriptor: eventsDescriptor))
+        var exit: Int32?
+        for await output in session.output {
+            switch output {
+            case .event(.confirm): session.closeInput()
+            case .exited(let code): exit = code
+            case .event(.plan), .terminal, .invalidEvent: break
+            }
+        }
+        #expect(exit != nil && exit != 0)
+    }
+}
