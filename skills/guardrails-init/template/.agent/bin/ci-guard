@@ -2,10 +2,11 @@
 # Usage: ci-guard <base-commit> <head-ref> <head-branch-name> <default-branch> <pr-base-branch>
 # Runs from the DEFAULT branch checkout (pull_request_target) and only reads the PR through git,
 # so a PR cannot weaken the guard that judges it. Every PR is merged only after a human approves
-# its exact HEAD (merge-approval environment); this guard makes that review safe and focused:
+# its exact HEAD (commit status merge-approval); this guard makes that review safe and focused:
 #   hard failures  - PR not targeting the default branch, merge commits, symlinks/submodules,
 #                    dependency/vendor directories, broken spec locks, ambiguous or invalid tickets,
-#                    write-allow patterns that reach guarded paths
+#                    write-allow patterns that reach guarded paths, workflow files that could stand
+#                    in for a required check or post statuses
 #   review summary - head SHA, ticket, and every human-owned path the PR changes
 # Pattern syntax in write-allow: bash glob, where "*" also matches "/".
 set -euo pipefail
@@ -47,6 +48,45 @@ while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
   esac
   changed+="$path"$'\n'
 done < <(git diff --raw -z --no-renames "$base" "$head")
+
+# A PR's own workflows run on the PR (pull_request, push) and their jobs report check runs under the same
+# GitHub Actions app as the real checks, so a job named like a required check could stand in for it, and a
+# token with statuses: write could post merge-approval. Changed workflow files therefore may not name the
+# required checks outside their own file, compute job names, use YAML forms this line-based check cannot
+# read (flow mappings, anchors, block-scalar names), or grant status rights. The guard workflow itself only
+# runs from the default branch (pull_request_target), so its trigger may not change.
+workflow_problems() {
+  local path=$1 content=$2 name=${1##*/} own_job="" ids
+  [[ $name == checks-*.yml ]] && own_job=${name%.yml}
+  grep -Eiq 'statuses:|write-all' <<<"$content" && printf 'grants commit status rights\n'
+  grep -Eq '^[^#]*:[[:space:]]*\{([^{]|$)' <<<"$content" && printf 'uses a YAML flow mapping\n'
+  grep -Eq '(^|[[:space:]])[&*][A-Za-z0-9_-]+([[:space:]]|$)' <<<"$content" && printf 'uses a YAML anchor or alias\n'
+  grep -Eq '^[[:space:]]+name:[^#]*\$\{\{' <<<"$content" && printf 'computes a name with an expression\n'
+  grep -Eq '^[[:space:]]+name:[[:space:]]*[|>]' <<<"$content" && printf 'uses a block scalar as a name\n'
+  if [[ $path == .github/workflows/agent-guard.yml ]]; then
+    grep -Eq '^on:[[:space:]]*$' <<<"$content" &&
+      [[ $(awk '/^["'\'']?on["'\'']?:/ {n++} /^true:/ {n++} END {print n + 0}' <<<"$content") == 1 ]] &&
+      awk '/^on:[[:space:]]*$/ {inside = 1; next} inside && /^[^[:space:]#]/ {inside = 0}
+        inside && NF && $0 !~ /^[[:space:]]*#/ && $0 !~ /^  pull_request_target:[[:space:]]*$/ &&
+        $0 !~ /^    types:[[:space:]]*\[[a-z_, ]+\][[:space:]]*$/ {bad = 1}
+        END {exit bad}' <<<"$content" ||
+      printf 'changes the guard trigger (it must stay pull_request_target only)\n'
+    return 0
+  fi
+  grep -F 'merge-approval' <<<"$content" >/dev/null && printf 'names merge-approval\n'
+  ids=$(sed -nE 's/^[[:space:]]+(name:[[:space:]]*)?["'\'']?(guard|merge-approval|checks-[A-Za-z0-9_-]+)["'\'']?[[:space:]]*:?[[:space:]]*(#.*)?$/\2/p' <<<"$content" | sort -u)
+  while IFS= read -r id; do
+    [[ -n $id && $id != "$own_job" ]] && printf 'defines a job or name "%s", which belongs to a required check\n' "$id"
+  done <<<"$ids"
+  return 0
+}
+while IFS= read -r path; do
+  [[ $path == .github/workflows/*.yml || $path == .github/workflows/*.yaml ]] || continue
+  git cat-file -e "$head:$path" 2>/dev/null || continue
+  while IFS= read -r problem; do
+    [[ -z $problem ]] || fail "workflow $path $problem"
+  done < <(workflow_problems "$path" "$(git show "$head:$path")")
+done <<<"$changed"
 
 # Tickets touched by this PR.
 tickets=$(awk -F/ '$1 == "specs" && NF >= 3 { print $2 }' <<<"$changed" | sort -u)

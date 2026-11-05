@@ -18,6 +18,14 @@ kit_drift() {
     -e "s#^Files $template/(.*) and .* differ\$#differs from the kit: \\1#" \
     -e "s#^Only in $template/(.*): (.*)\$#missing: \\1/\\2#" \
     -e "s#^Only in $dir/(.*): (.*)\$#not in the kit: \\1/\\2#" || true
+  # diff and cmp follow symlinks and ignore modes, so check both separately.
+  find "$dir/.agent" "$dir/.claude" "$dir/.github" -type l 2>/dev/null | sed "s#^$dir/#symlink not allowed: #"
+  (cd "$template" && find .agent -type f) | while IFS= read -r file; do
+    [[ -f "$dir/$file" && ! -L "$dir/$file" ]] || continue
+    if [[ -x "$template/$file" && ! -x "$dir/$file" ]] || [[ ! -x "$template/$file" && -x "$dir/$file" ]]; then
+      printf 'file mode differs from the kit: %s\n' "$file"
+    fi
+  done
   cmp -s "$template/.claude/settings.json" "$dir/.claude/settings.json" ||
     printf 'differs or missing: .claude/settings.json\n'
   cmp -s "$template/.github/workflows/agent-guard.yml" "$dir/.github/workflows/agent-guard.yml" ||
@@ -30,6 +38,22 @@ kit_drift() {
     cmp -s "$template/ci/$name" "$workflow" || printf 'differs from the kit: .github/workflows/%s\n' "$name"
   done
   [[ $found -eq 1 ]] || printf 'missing: .github/workflows/checks-<lang>.yml\n'
+}
+
+# Dies unless the kit install is exactly the reviewed main of its origin: no local changes, HEAD equal to
+# origin's main. The owner's commands and the template they compare against come from this checkout, so
+# a change an agent made there must not silently become the reference.
+require_reviewed_kit() {
+  local local_sha remote_sha origin
+  origin=$(git -C "$kit" remote get-url origin)
+  [[ -z $(git -C "$kit" status --porcelain) ]] ||
+    die "the kit install at $kit has uncommitted changes, so this command may not be the reviewed one. Inspect them with: git -C $kit status"
+  local_sha=$(git -C "$kit" rev-parse HEAD)
+  remote_sha=$(git -C "$kit" ls-remote origin refs/heads/main | cut -f1) ||
+    die "could not reach $origin to confirm the kit install is its reviewed main"
+  [[ -n $remote_sha ]] || die "$origin has no main branch"
+  [[ $local_sha == "$remote_sha" ]] ||
+    die "the kit install at $kit is at ${local_sha:0:7}, not at main of $origin (${remote_sha:0:7}). Update it with: git -C $kit switch main && git -C $kit pull --ff-only"
 }
 
 # Prints the checks-<lang> job names a checkout's workflows define (the ruleset requires each one).
@@ -102,12 +126,19 @@ remove_agents_section() {
 # prints one tab-separated line per PR that needs the owner: "<kind>\t<url>\t<title>\t<note>".
 # Kinds: answer (the agent asked a question: label needs-decision), approve (guard passed, HEAD not
 # approved yet). Drafts without a question are the agent's work in progress and are skipped, as are
-# PRs whose HEAD is already approved.
+# PRs whose HEAD is already approved. Any failed run named guard wins over a later success, because a
+# workflow added by the PR could report a run of that name (approve-head checks the real guard run).
+# Titles are written by the agent, so control characters are replaced before they reach the terminal.
 classify_prs() {
   jq -r '
     def latest(f): [.statusCheckRollup[]? | select(f)] | sort_by(.startedAt // .createdAt // "") | last;
+    def clean: gsub("[[:cntrl:]]"; "?");
     .[]
-    | (latest(.__typename == "CheckRun" and .name == "guard")) as $guard
+    | .title |= clean
+    | (latest(.__typename == "CheckRun" and .name == "guard")) as $latest_guard
+    | (if any(.statusCheckRollup[]?; .__typename == "CheckRun" and .name == "guard" and .status == "COMPLETED"
+           and (.conclusion | IN("SUCCESS", "CANCELLED", "SKIPPED", "NEUTRAL") | not))
+       then {status: "COMPLETED", conclusion: "FAILURE"} else $latest_guard end) as $guard
     | (latest(.__typename == "StatusContext" and .context == "merge-approval")) as $approval
     | ([.statusCheckRollup[]? | select(.__typename == "CheckRun" and (.name | startswith("checks-")))]) as $checks
     | (if ($checks | length) == 0 then "checks not started"

@@ -13,7 +13,9 @@
 # Limits: obfuscated commands (string concatenation, scripts written to files) can evade text matching;
 # the ruleset on GitHub, which needs the owner's typed approval per HEAD, is the authority.
 # Exit code 2 blocks the call and shows stderr to the agent.
-set -euo pipefail
+set -Eeuo pipefail
+# Fail closed: an internal error (missing jq, unreadable file) blocks the call instead of letting it through.
+trap 'printf "BLOCKED by bash-guard: internal error near line %s; ask the user to check the hook\n" "$LINENO" >&2; exit 2' ERR
 # shellcheck source=kit-project.sh
 source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
@@ -36,44 +38,58 @@ matches() {
   grep -Eiq -- "$1" <<<"$cmd"
 }
 
-# Everywhere: the owner's commands and approval status of kit repositories come only from the owner's own shell.
+# Everywhere: the owner's commands, the approval status and the rulesets of kit repositories, and the
+# owner's list of enforced repositories are the owner's alone.
 matches 'merge-approval' && deny "merge approval (owner-only commit status)"
-matches '\.config/agent-guardrails' && deny "the owner's list of enforced repositories"
-# Split into simple commands. A program that only reads or records text (viewers, git, gh) may mention
-# the owner's commands; any other program that names them could run them (script, xargs, find -exec,
-# bash -c and similar wrappers included).
-# split_commands prints one simple command per line: it splits at ; & | ( ) and backticks outside quotes,
-# keeps quoted text in its command (so `rg "a|b"` stays one rg call and `bash -c "..."` stays one bash call)
-# and drops the quote characters.
+if matches '\.config' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
+if matches '(^|[^[:alnum:]_])gh[[:space:]]+api' && matches '/rulesets|/statuses/' &&
+  matches '(-X|--method)[[:space:]=]*(POST|PUT|PATCH|DELETE)|(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)'; then
+  deny "writing rulesets or commit statuses (owner-only)"
+fi
+
+# split_commands prints one simple command per line. It reads the whole command (so a quoted newline
+# cannot hide the next command), splits at ; & | ( ) backticks and newlines outside quotes, keeps quoted
+# text inside its command (so `rg "a|b"` stays one rg call and `bash -c "..."` one bash call) and drops
+# the quote characters.
 split_commands() {
-  awk '{
-    out = ""; q = ""
-    for (i = 1; i <= length($0); i++) {
-      c = substr($0, i, 1)
-      if (q != "") { if (c == q) { q = "" } else { out = out c }; continue }
-      if (c == "\"" || c == "\047") { q = c; continue }
-      if (c ~ /[;&|()`]/) { c = "\n" }
-      out = out c
-    }
-    print out
-  }'
+  awk '{ s = s $0 "\n" }
+    END {
+      out = ""; q = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") { if (c == q) { q = "" } else if (c == "\n") { out = out " " } else { out = out c }; continue }
+        if (c == "\"" || c == "\047") { q = c; continue }
+        if (c ~ /[;&|()`\n]/) { c = "\n" }
+        out = out c
+      }
+      printf "%s\n", out
+    }'
 }
+# A program that only reads or records text may mention the owner's commands (a commit message, a search);
+# any other program that names them could run them (script, xargs, find -exec, bash -c and similar). A
+# "reader" loses that status when the command could still execute something: an environment prefix
+# (LESSOPEN=...), command substitution, git config or aliases (-c, --config-env, !), rg --pre, pagers.
+owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])guardrails[[:space:]]+(on|off|approve|revoke)([[:space:]]|$)'
 while IFS= read -r segment; do
-  segment=$(sed -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*//' <<<"$segment")
-  program=${segment%%[[:space:]]*}
+  grep -Eq "$owner_command" <<<"$segment" || continue
+  bare=$(sed -E 's/^[[:space:]]+//' <<<"$segment")
+  program=${bare%%[[:space:]]*}
   program=${program##*/}
+  reader=0
   case $program in
-    cat | less | more | head | tail | grep | egrep | fgrep | rg | ls | wc | diff | git | gh | shellcheck | stat | file | realpath | readlink | which)
-      [[ $segment == *alias* || $segment == *'!'* ]] || continue
-      ;;
+    cat | head | tail | grep | egrep | fgrep | rg | ls | wc | diff | git | gh | shellcheck | stat | file | realpath | readlink | which) reader=1 ;;
   esac
-  if grep -Eq '(^|[[:space:]/!=])(approve|revoke)-head([[:space:]]|$)|(^|[[:space:]/!=])guardrails[[:space:]]+(on|off|approve|revoke)([[:space:]]|$)' <<<"$segment"; then
-    deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke)"
+  if [[ $reader -eq 1 ]] &&
+    ! grep -Eq '\$\(|alias|!|(^|[[:space:]])(-c|--config-env|--pre|--pre-glob|--exec|-x)([[:space:]=]|$)|PAGER|EDITOR|LESS' <<<"$bare"; then
+    continue
   fi
+  deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke)"
 done < <(split_commands <<<"$raw")
 
-# Everything below applies only inside kit repositories or to commands that name an enforced repository.
-is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" || exit 0
+# Everything below applies inside kit repositories, to commands that name an enforced repository, and to
+# commands that address a repository by its numeric id (which hides its name).
+is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" ||
+  matches 'repositories/[0-9]+' || exit 0
 
 # Credentials and token fallbacks.
 matches 'security[[:space:]]+(find|dump|export)-' && deny "reading the macOS keychain"

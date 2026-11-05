@@ -6,7 +6,7 @@
 set -euo pipefail
 input=$(cat)
 skill="$HOME/.claude/skills/guardrails-init"
-if [[ -L $skill ]]; then
+if [[ -d $skill ]]; then
   guard="$(cd "$(realpath "$skill")/../.." && pwd -P)/hooks-global/bash-guard.sh"
   if [[ -x $guard ]]; then
     "$guard" <<<"$input"

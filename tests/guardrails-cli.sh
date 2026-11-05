@@ -54,6 +54,14 @@ differs from the kit: .github/workflows/checks-node.yml"
 project=$(new_project drift4)
 rm "$project/.github/workflows/checks-node.yml"
 expect_eq "missing checks workflow is drift" "$(kit_drift "$project")" "missing: .github/workflows/checks-<lang>.yml"
+project=$(new_project drift5)
+chmod -x "$project/.agent/bin/ci-guard"
+expect_eq "lost executable bit is drift" "$(kit_drift "$project")" "file mode differs from the kit: .agent/bin/ci-guard"
+project=$(new_project drift6)
+mkdir -p "$project/scripts"
+mv "$project/.agent/bin/ci-guard" "$project/scripts/guard"
+ln -s ../../scripts/guard "$project/.agent/bin/ci-guard"
+expect_eq "symlinked kit file is drift" "$(kit_drift "$project")" "symlink not allowed: .agent/bin/ci-guard"
 expect_eq "check jobs come from the workflows" "$(check_jobs "$(new_project jobs)")" "checks-node"
 
 echo "remove_kit_files"

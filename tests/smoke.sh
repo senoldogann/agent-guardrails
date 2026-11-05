@@ -344,5 +344,20 @@ expect_out "draft reason is explained" "spec for ABC-2 is not locked yet"
 expect_failure "branch not naming the ticket fails" ci_guard feat/ABC-2-one feat/other main
 expect_out "branch mismatch is explained" "does not name ticket ABC-2"
 
+git checkout -q -b chore/fake-approval main
+mkdir -p .github/workflows
+printf 'on: pull_request\njobs:\n  merge-approval:\n    runs-on: ubuntu-latest\n    steps:\n      - run: "true"\n' >.github/workflows/approve.yml
+git add -A
+git commit -qm fake
+expect_failure "workflow job named like a required check fails" ci_guard chore/fake-approval chore/fake-approval main
+expect_out "fake check is explained" "belongs to a required check"
+git checkout -q -b chore/kit-checks main
+mkdir -p .github/workflows
+cp "$kit/skills/guardrails-init/template/ci/checks-node.yml" .github/workflows/
+cp "$kit/skills/guardrails-init/template/.github/workflows/agent-guard.yml" .github/workflows/
+git add -A
+git commit -qm kit
+expect_success "the kit's own workflows pass" ci_guard chore/kit-checks chore/kit-checks main
+
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

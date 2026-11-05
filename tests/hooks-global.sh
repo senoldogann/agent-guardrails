@@ -137,6 +137,18 @@ allow 'chmod +x bin/guardrails'
 allow 'git commit -m "docs: run guardrails on <PR link> to turn it on"'
 allow 'gh pr create --title x --body "then run approve-head <link>"'
 allow 'cd ~/myprojects/agent-guardrails && make check'
+block 'git log -1 "
+cat "; guardrails approve 1'
+block 'git -c diff.external="script -q /dev/null guardrails approve" diff HEAD~1'
+block 'LESSOPEN="|guardrails approve %s" less x'
+# shellcheck disable=SC2016 # the hook must see the literal command substitution
+block 'echo "$(guardrails approve 1)"'
+# shellcheck disable=SC2016 # the hook must see the literal command substitution
+block 'git commit -m "$(guardrails approve 1)"'
+block 'rg --pre approve-head x .'
+allow 'git commit -m "docs: explain approve-head" -m "and guardrails off"'
+block 'rm -rf ~/.config/agent-g*'
+block 'cd ~/.config && rm -r agent-guardrails'
 block 'cat ~/.config/agent-guardrails/repos'
 block 'printf "acme/x\n" >> ~/.config/agent-guardrails/repos'
 
@@ -155,7 +167,11 @@ cwd=$plain_repo
 block 'gh api -X DELETE repos/acme/enforced/rulesets/1'
 block 'gh pr merge 3 --admin -R acme/enforced'
 block 'gh repo delete acme/enforced --yes'
-allow 'gh api -X DELETE repos/acme/other/rulesets/1'
+block 'gh api -X DELETE repos/acme/other/rulesets/1'
+allow 'gh api repos/acme/other/rulesets'
+block 'gh api -X DELETE repositories/123456/rulesets/42'
+block 'gh api -X PATCH repositories/123456 -f allow_merge_commit=true'
+allow 'gh api -X PATCH repos/acme/other -f allow_merge_commit=true'
 allow 'gh pr review 12 --approve'
 git -C "$cloned_repo" remote set-url origin git@github.com:acme/enforced.git
 cwd=$cloned_repo

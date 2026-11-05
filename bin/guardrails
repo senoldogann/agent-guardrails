@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Owner's command for the agent-guardrails kit. Run it in your own terminal, never through an agent
-# (the agent's bash-guard blocks every subcommand except `inbox` and `status`).
+# (the agent's bash-guard blocks on, off, approve and revoke).
 #
 #   guardrails                         what waits for you (same as `guardrails inbox`)
 #   guardrails on <bootstrap PR link>  check, merge and enforce a /guardrails-init PR
@@ -8,10 +8,11 @@
 #   guardrails off <owner/repo>        stop enforcing and remove the kit: the agent works there as before
 #   guardrails approve [PR link]       approve a PR's HEAD; without a link, pick from the waiting PRs
 #   guardrails revoke <PR link>        withdraw an approval
-#   guardrails status                  every enforced repo: ruleset, kit files, plus this kit install
+#   guardrails status                  every enforced repo: ruleset and kit files, plus this kit install
 #
-# Enforced repos are listed in ~/.config/agent-guardrails/repos. The global hooks treat a listed repo as a
-# kit repo even if its local .agent/ is deleted, and from any directory when a command names it.
+# Enforced repos are listed in ~/.config/agent-guardrails/repos and carry the GitHub topic agent-guardrails.
+# The global hooks treat a listed repo as a kit repo even if its local .agent/ is deleted, and from any
+# directory when a command names it; the inbox raises an alarm when the list and the topics disagree.
 set -euo pipefail
 kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
@@ -21,6 +22,7 @@ source "$kit/hooks-global/kit-project.sh"
 
 registry=$(guardrails_registry)
 ruleset_name=agent-guardrails
+topic=agent-guardrails
 tmp_dirs=""
 # shellcheck disable=SC2329,SC2317 # invoked by the EXIT trap
 cleanup() {
@@ -30,7 +32,7 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-  sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,11p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 1
 }
 
@@ -38,12 +40,18 @@ require_owner_terminal() {
   [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
     die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run guardrails in your own shell."
   [[ -t 0 && -t 1 ]] || die "guardrails $1 needs an interactive terminal (typed confirmation)"
+  require_reviewed_kit
 }
 
 confirm() {
   local expected=$1 prompt=$2 typed
   read -r -p "$prompt" typed </dev/tty
   [[ $typed == "$expected" ]] || die "confirmation did not match; nothing changed"
+}
+
+# Agent-written text (titles) loses control characters before it reaches the terminal.
+clean() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177' <<<"$1"
 }
 
 registered_repos() {
@@ -85,7 +93,26 @@ require_no_drift() {
   drift=$(kit_drift "$1")
   [[ -z $drift ]] || die "the kit files differ from your installed kit ($kit), so they could carry changes nobody reviewed:
 $drift
-Update the installed kit (git pull in $kit) or ask the agent to redo the kit files, then try again."
+Update the installed kit (git -C $kit pull --ff-only) or ask the agent to redo the kit files, then try again."
+}
+
+# Dies when any workflow of the checkout could post commit statuses (and so forge merge-approval).
+require_no_status_rights() {
+  local workflow
+  for workflow in "$1"/.github/workflows/*.yml "$1"/.github/workflows/*.yaml; do
+    [[ -e $workflow ]] || continue
+    if grep -Ei 'statuses:|write-all' "$workflow" >/dev/null; then
+      die "${workflow#"$1"/} grants commit status rights (could forge merge-approval); remove that first"
+    fi
+  done
+}
+
+# Prints the files a PR changes; dies when GitHub cannot list them.
+pr_files() {
+  local files
+  files=$(gh api --paginate "repos/$1/pulls/$2/files?per_page=100" --jq '.[].filename')
+  [[ -n $files ]] || die "could not list the files of PR #$2 in $1"
+  printf '%s\n' "$files"
 }
 
 # Applies the ruleset and repository settings the kit relies on. Required checks come from the
@@ -95,7 +122,7 @@ enforce() {
   jobs=$(check_jobs "$dir")
   [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
   # Actions-produced checks are pinned to GitHub Actions (15368); merge-approval is the owner's commit
-  # status, which has no app to pin to.
+  # status, which has no app to pin to. ci-guard keeps PR workflows from defining jobs with these names.
   required=$(jq -n --arg jobs "$jobs" '(["guard"] + ($jobs | split("\n") | map(select(length > 0)))
     | map({context: ., integration_id: 15368})) + [{context: "merge-approval"}]')
   ruleset=$(jq -n --arg name "$ruleset_name" --argjson required "$required" '{
@@ -124,12 +151,12 @@ enforce() {
     -F enabled=true -f allowed_actions=all -F sha_pinning_required=true >/dev/null
   gh label create needs-decision -R "$repo" --force --color D93F0B \
     --description "The agent is waiting for the owner's decision" >/dev/null
-  register "$repo"
+  gh repo edit "$repo" --add-topic "$topic" >/dev/null
   printf 'on: %s (ruleset active, required checks: guard %s merge-approval)\n' "$repo" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
 on_pr() {
-  local repo pr pr_json sha base default_branch dir
+  local repo pr pr_json sha base default_branch dir files file marker extra_workflows=""
   read -r repo pr < <(pr_target "$1")
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft,state)
@@ -143,17 +170,37 @@ on_pr() {
   dir=$(clone_at "$repo" "$sha")
   tmp_dirs+=" $dir"
   require_no_drift "$dir"
+  require_no_status_rights "$dir"
+  files=$(pr_files "$repo" "$pr")
+  while IFS= read -r file; do
+    case $file in
+      .github/workflows/agent-guard.yml | .github/workflows/checks-*.yml) ;;
+      .github/workflows/* | .github/actions/*) extra_workflows+="  $file"$'\n' ;;
+    esac
+  done <<<"$files"
+  [[ -z $extra_workflows ]] ||
+    die "the bootstrap PR changes workflows besides the kit's own; take them out of this PR:
+$extra_workflows"
 
-  printf '\nPR #%s %s\n%s\nhead: %s\n\nKit files match your installed kit. Review the rest, the agent wrote it:\n' \
-    "$pr" "$(jq -r .title <<<"$pr_json")" "$(jq -r .url <<<"$pr_json")" "$sha"
-  gh pr diff "$pr" -R "$repo" --name-only | grep -Ev '^(\.agent/|\.claude/settings\.json$|\.github/workflows/(agent-guard|checks-[a-z]+)\.yml$)' |
-    sed 's/^/  /' || printf '  (nothing else)\n'
+  printf '\nPR #%s %s\n%s\nhead: %s\n\n' "$pr" "$(clean "$(jq -r .title <<<"$pr_json")")" "$(jq -r .url <<<"$pr_json")" "$sha"
+  printf 'Kit files (.agent/, .claude/settings.json, guard and checks workflows) match your installed kit.\n'
+  printf 'The agent wrote the rest; review it (! = human-owned from now on):\n'
+  while IFS= read -r file; do
+    case $file in .agent/* | .claude/settings.json | .github/workflows/agent-guard.yml | .github/workflows/checks-*.yml) continue ;; esac
+    marker="  "
+    if is_human_owned "$file"; then marker="! "; fi
+    printf '%s %s\n' "$marker" "$file"
+  done <<<"$files"
   printf '\n'
   confirm "${sha:0:7}" "Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
 
+  # Listed before the merge, so a failure in between still shows up as an alarm in the inbox.
+  register "$repo"
+  trap 'printf "guardrails on stopped before %s was fully enforced; finish with: guardrails on %s\n" "$repo" "$repo" >&2; cleanup' EXIT
   gh pr merge "$pr" -R "$repo" --squash --delete-branch --match-head-commit "$sha" >/dev/null
   printf 'merged PR #%s\n' "$pr"
   enforce "$repo" "$dir"
+  trap cleanup EXIT
   printf 'Next: ask the agent for /ticket-spec <ID>. Run guardrails to see what waits for you.\n'
 }
 
@@ -163,44 +210,60 @@ on_repo() {
   dir=$(clone_at "$repo" "$default_branch")
   tmp_dirs+=" $dir"
   require_no_drift "$dir"
+  require_no_status_rights "$dir"
   confirm "$repo" "Kit files on $default_branch match your installed kit. Type $repo to turn the guardrails on: "
+  register "$repo"
   enforce "$repo" "$dir"
 }
 
 off_repo() {
-  local repo=$1 default_branch dir notes ruleset_id branch=chore/remove-agent-guardrails url
+  local repo=$1 default_branch dir notes ruleset_id branch=chore/remove-agent-guardrails url head file
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch")
   tmp_dirs+=" $dir"
+  [[ -z $(git -C "$dir" ls-remote origin "refs/heads/$branch") ]] ||
+    die "branch $branch already exists on $repo; nobody but this command should create it. Inspect and delete it, then try again."
   git -C "$dir" switch --quiet -c "$branch"
   notes=$(remove_kit_files "$dir")
   git -C "$dir" add -A
 
   printf '\nTurning off %s:\n  - delete the %s ruleset (merges no longer wait for checks or your approval)\n' "$repo" "$ruleset_name"
-  printf '  - stop treating it as a kit repo on this machine (the agent works there as before the kit)\n'
+  printf '  - stop treating it as a kit repo on this machine and remove its %s topic\n' "$topic"
+  printf '  - keep the repository settings the kit set: squash merge only, auto-merge allowed, branch deleted\n'
+  printf '    on merge, read-only workflow token, actions pinned to SHAs, label needs-decision\n'
   if git -C "$dir" diff --cached --quiet; then
     printf '  - no kit files left on %s\n' "$default_branch"
   else
     printf '  - open and merge a PR on %s that removes:\n' "$default_branch"
     git -C "$dir" diff --cached --name-status | sed 's/^/      /'
+    for file in AGENTS.md Makefile; do
+      if git -C "$dir" diff --cached --quiet -- "$file" 2>/dev/null; then continue; fi
+      [[ -e "$dir/$file" ]] || continue
+      printf '\n    changes to %s:\n' "$file"
+      git -C "$dir" --no-pager diff --cached --no-color -- "$file" | sed 's/^/      /'
+    done
   fi
   [[ -z $notes ]] || printf '%s\n' "$notes" | sed 's/^/    note: /'
   printf '\n'
   confirm "$repo" "Type $repo to turn the guardrails off: "
 
-  ruleset_id=$(gh api "repos/$repo/rulesets" --jq ".[] | select(.name == \"$ruleset_name\") | .id")
-  [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$repo/rulesets/$ruleset_id" >/dev/null
-  printf 'ruleset deleted\n'
   if ! git -C "$dir" diff --cached --quiet; then
     git -C "$dir" commit --quiet -m "chore: remove agent guardrails kit" \
       -m "The owner turned the agent guardrails off for this repository with 'guardrails off'."
+    head=$(git -C "$dir" rev-parse HEAD)
     git -C "$dir" push --quiet -u origin "$branch"
+  fi
+  ruleset_id=$(gh api "repos/$repo/rulesets" --jq ".[] | select(.name == \"$ruleset_name\") | .id")
+  [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$repo/rulesets/$ruleset_id" >/dev/null
+  printf 'ruleset deleted\n'
+  if [[ -n ${head:-} ]]; then
     url=$(cd "$dir" && gh pr create --base "$default_branch" --head "$branch" \
       --title "chore: remove agent guardrails kit" \
       --body "The owner turned the agent guardrails off with \`guardrails off\`. This removes the kit's files; specs/ stays as the record of decided requirements.")
-    gh pr merge "$url" --squash --delete-branch >/dev/null
+    gh pr merge "$url" --squash --delete-branch --match-head-commit "$head" >/dev/null
     printf 'removed the kit files: %s\n' "$url"
   fi
+  gh repo edit "$repo" --remove-topic "$topic" >/dev/null
   unregister "$repo"
   printf 'off: %s. Pull the default branch in your local clones so their .agent/ disappears too.\n' "$repo"
 }
@@ -211,30 +274,46 @@ repo_items() {
     --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup | classify_prs
 }
 
+login() {
+  gh api user --jq .login
+}
+
 # Prints "turn-on" items: open /guardrails-init PRs in repos that are not enforced yet.
 bootstrap_items() {
-  local login
-  login=$(gh api user --jq .login)
-  gh search prs --owner "$login" --head chore/agent-guardrails --state open --limit 50 \
+  gh search prs --owner "$(login)" --head chore/agent-guardrails --state open --limit 50 \
     --json url,title,repository --jq '.[] | [.repository.nameWithOwner, .url, .title] | @tsv' |
     while IFS=$'\t' read -r repo url title; do
-      registered_repos | grep -Fxi -- "$repo" >/dev/null || printf 'turn-on\t%s\t%s\t%s\n' "$url" "$title" "guardrails on $url"
+      registered_repos | grep -Fxi -- "$repo" >/dev/null ||
+        printf 'turn-on\t%s\t%s\t%s\n' "$url" "$(clean "$title")" "guardrails on $url"
+    done
+}
+
+# Repos tagged on GitHub as enforced but missing from this machine's list (the list lost an entry).
+topic_alarms() {
+  gh search repos --owner "$(login)" --topic "$topic" --limit 100 --json fullName --jq '.[].fullName' |
+    while IFS= read -r repo; do
+      registered_repos | grep -Fxi -- "$repo" >/dev/null ||
+        printf 'ALARM  %s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
+          "$repo" "$topic" "$registry" "$repo"
     done
 }
 
 kit_install_alarm() {
   local local_sha remote_sha
   [[ -z $(git -C "$kit" status --porcelain) ]] ||
-    printf 'ALARM  the kit install at %s has uncommitted changes: the commands you run may not be the reviewed ones\n' "$kit"
+    printf 'ALARM  the kit install at %s has uncommitted changes: on, off and approve refuse until it is clean\n' "$kit"
   local_sha=$(git -C "$kit" rev-parse HEAD)
-  remote_sha=$(git -C "$kit" ls-remote origin HEAD | cut -f1)
-  [[ -z $remote_sha || $local_sha == "$remote_sha" ]] ||
-    printf 'note   the kit install is not at the kit repo'\''s main (git -C %s pull)\n' "$kit"
+  if ! remote_sha=$(git -C "$kit" ls-remote origin refs/heads/main 2>/dev/null | cut -f1) || [[ -z $remote_sha ]]; then
+    printf 'note   could not reach the kit origin to compare the install with its main\n'
+  elif [[ $local_sha != "$remote_sha" ]]; then
+    printf 'ALARM  the kit install is not at its origin main: on, off and approve refuse until it is (git -C %s pull --ff-only)\n' "$kit"
+  fi
 }
 
 inbox() {
   local repo state items any=0 kind url title note
   kit_install_alarm
+  topic_alarms
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     state=$(ruleset_state "$repo")
@@ -286,16 +365,17 @@ approve_pick() {
 }
 
 status() {
-  local repo default_branch tree_remote tree_kit
+  local repo default_branch dir drift
   kit_install_alarm
   printf 'kit install: %s at %s\n' "$kit" "$(git -C "$kit" rev-parse --short HEAD)"
-  tree_kit=$(git -C "$kit" rev-parse HEAD:skills/guardrails-init/template/.agent)
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
-    tree_remote=$(gh api "repos/$repo/git/trees/$default_branch" --jq '.tree[] | select(.path == ".agent") | .sha')
+    dir=$(clone_at "$repo" "$default_branch")
+    tmp_dirs+=" $dir"
+    drift=$(kit_drift "$dir")
     printf '%-45s ruleset %-8s kit files %s\n' "$repo" "$(ruleset_state "$repo")" \
-      "$([[ $tree_remote == "$tree_kit" ]] && printf 'same as installed kit' || printf 'differ from installed kit (update PR needed)')"
+      "$([[ -z $drift ]] && printf 'same as installed kit' || printf 'differ from installed kit (kit update PR needed)')"
   done < <(registered_repos)
   [[ -s $registry ]] || printf 'no enforced repos\n'
 }
@@ -325,6 +405,5 @@ case $command in
     if [[ $# -eq 0 ]]; then approve_pick; else exec "$kit/bin/approve-head" "$@"; fi
     ;;
   revoke) exec "$kit/bin/revoke-head" "$@" ;;
-  -h | --help | help) usage ;;
   *) usage ;;
 esac
