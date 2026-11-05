@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Usage: questions-lint <TICKET>
+# Every question in specs/<TICKET>/OPEN_QUESTIONS.md must help the owner decide quickly: each
+# "## Q<n>" section needs non-empty "Options:", "Recommendation:" and "Evidence:" lines (the
+# recommended option, why, and what supports it: a standard, documentation, the code, an experiment).
+# A file without any Q<n> heading ("No open questions.") passes.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+require_args 1 $# "questions-lint <TICKET>"
+cd_project_root
+
+file="specs/$1/OPEN_QUESTIONS.md"
+[[ -f $file ]] || die "$file is missing; the spec phase must create it"
+
+problems=$(awk '
+  function flush() {
+    if (q == "") return
+    if (!options) print q ": missing \"Options:\""
+    if (!recommendation) print q ": missing \"Recommendation:\" (the option you recommend and why)"
+    if (!evidence) print q ": missing \"Evidence:\" (standard, documentation, code or experiment behind it)"
+  }
+  /^#+[[:space:]]*[Qq][[:space:]]*[0-9]+/ { flush(); q = $0; options = 0; recommendation = 0; evidence = 0; next }
+  /^Options:[[:space:]]*[^[:space:]]/ { options = 1 }
+  /^Recommendation:[[:space:]]*[^[:space:]]/ { recommendation = 1 }
+  /^Evidence:[[:space:]]*[^[:space:]]/ { evidence = 1 }
+  END { flush() }
+' "$file")
+
+if [[ -n $problems ]]; then
+  printf 'open questions in %s are not ready for the owner:\n%s\n' "$file" "$problems" >&2
+  exit 1
+fi

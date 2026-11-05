@@ -6,7 +6,7 @@ AGENT_TICKET := $(shell .agent/bin/active-ticket)
 SPEC_TICKET ?= $(AGENT_TICKET)
 CHECK_LOG := .agent/reports/$(if $(AGENT_TICKET),$(AGENT_TICKET),no-ticket)/checks.log
 
-.PHONY: ci check check-spec test-red verify-green-all verify-green-others verify-red-ticket trace tests-lock-check lock-verify-all docs-check
+.PHONY: ci check check-spec check-draft questions-lint-ticket test-red verify-green-all verify-green-others verify-red-ticket trace tests-lock-check lock-verify-all docs-check
 
 ## Entry point for CI (BASE_SHA = PR base): spec gate on the PR's last spec commit, full gate on HEAD.
 ci:
@@ -20,7 +20,15 @@ check:
 ## Spec gate: contracts compile, specs trace to criteria, every locked test of SPEC_TICKET fails on
 ## NotImplemented, nothing else fails, and every other ticket stays green.
 check-spec:
-	@.agent/bin/run-checks "$(CHECK_LOG)" typecheck lint fmt-check test-red verify-red-ticket verify-green-others trace tests-lock-check lock-verify-all docs-check
+	@.agent/bin/run-checks "$(CHECK_LOG)" typecheck lint fmt-check questions-lint-ticket test-red verify-red-ticket verify-green-others trace tests-lock-check lock-verify-all docs-check
+
+## Draft gate for a spec that is not locked yet: it must compile, lint and ask its questions properly.
+check-draft:
+	@.agent/bin/run-checks "$(CHECK_LOG)" typecheck lint fmt-check questions-lint-ticket docs-check
+
+questions-lint-ticket:
+	@test -n "$(SPEC_TICKET)" || { echo "questions-lint-ticket: no ticket (start-spec or SPEC_TICKET=...)" >&2; exit 1; }
+	@.agent/bin/questions-lint "$(SPEC_TICKET)"
 
 ## Runs the suite for its results only; failures are expected against stubs and judged by verify-red.
 test-red:

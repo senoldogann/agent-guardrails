@@ -44,13 +44,17 @@ Copy the ticket's criteria verbatim as `- AC-<n>: <text>`. Do not invent criteri
 
 ## 4. `specs/<ID>/OPEN_QUESTIONS.md`
 
-Every point the ticket leaves undecided (rounding, currency, ranges, error behaviour, overlaps, files you could not
-edit). Never guess, never write the decision yourself:
+Every point the ticket leaves undecided (rounding, currency, ranges, error behaviour, overlaps with existing code,
+files you were not allowed to edit). Never guess and never write the decision yourself, but always recommend: the
+owner decides faster with a clear recommendation, its reason, and what supports it (a standard, documentation,
+the existing code, or an experiment you ran). `make check-spec` rejects questions without them.
 
 ```markdown
 ## Q1: <question>
 Context: <why it matters, which AC/property it affects>
-Options: <A / B / ...> (no recommendation unless asked)
+Options: A) ... / B) ... / C) ...
+Recommendation: <option> because <reason>
+Evidence: <standard, documentation, code reference or experiment result>
 Decision:
 ```
 

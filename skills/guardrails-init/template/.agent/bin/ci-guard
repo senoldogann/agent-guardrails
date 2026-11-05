@@ -58,6 +58,9 @@ elif [[ $ticket_count -eq 1 ]]; then
   [[ $ticket =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]] || fail "invalid ticket id '$ticket' (expected e.g. ABC-123)"
   [[ $branch == *"/$ticket-"* || $branch == *"/$ticket" ]] || fail "branch '$branch' does not name ticket $ticket"
 
+  git cat-file -e "$head:specs/$ticket/spec.lock" 2>/dev/null ||
+    fail "spec for $ticket is not locked yet (draft); answer its questions and run spec-lock before merging"
+
   allow_file="specs/$ticket/write-allow"
   if git cat-file -e "$head:$allow_file" 2>/dev/null; then
     tracked=$(git ls-tree -r --name-only "$head")

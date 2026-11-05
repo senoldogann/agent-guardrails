@@ -15,6 +15,7 @@ Deterministic checks and the owner's approval decide whether work is done, not t
 - Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.github/`, `specs/`, tests,
   configs, manifests, lockfiles, dotfiles, `AGENTS.md`, `CLAUDE.md`, `Makefile`.
 - A check that looks wrong is reported (`.agent/bin/block "<question>"`), never changed, loosened or skipped.
+- Every question to the owner names the recommended option first, with the reason and the evidence behind it.
 - Knowledge the team needs (conventions, gotchas, commands, decisions that hold) goes into this file, skills
   or checks through a reviewed PR. Only personal preferences live in local memory (`CLAUDE.local.md`,
   `~/.claude`), which is git-ignored and never the only place a team rule exists.
