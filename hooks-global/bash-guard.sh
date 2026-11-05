@@ -42,6 +42,11 @@ matches() {
 # owner's list of enforced repositories are the owner's alone.
 matches 'merge-approval' && deny "merge approval (owner-only commit status)"
 if matches '\.config' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
+if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit install"; fi
+if matches 'topic' && matches 'agent-guardrails'; then deny "the agent-guardrails topic marks enforced repositories (owner-only)"; fi
+if matches '(^|[^[:alnum:]_])gh[[:space:]]+api[[:space:]]+graphql' && matches 'ruleset|commitstatus|statuses'; then
+  deny "rulesets or statuses through GraphQL (owner-only)"
+fi
 if matches '(^|[^[:alnum:]_])gh[[:space:]]+api' && matches '/rulesets|/statuses/' &&
   matches '(-X|--method)[[:space:]=]*(POST|PUT|PATCH|DELETE)|(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)'; then
   deny "writing rulesets or commit statuses (owner-only)"
@@ -49,42 +54,80 @@ fi
 
 # split_commands prints one simple command per line. It reads the whole command (so a quoted newline
 # cannot hide the next command), splits at ; & | ( ) backticks and newlines outside quotes, keeps quoted
-# text inside its command (so `rg "a|b"` stays one rg call and `bash -c "..."` one bash call) and drops
-# the quote characters.
+# text inside its command (so `rg "a|b"` stays one rg call and `bash -c "..."` one bash call), keeps a
+# heredoc body with the command that reads it, and drops quote characters and backslashes (as the shell
+# does, so `ap\prove` is matched as approve).
 split_commands() {
   awk '{ s = s $0 "\n" }
     END {
-      out = ""; q = ""
-      for (i = 1; i <= length(s); i++) {
+      out = ""; q = ""; pending = ""
+      n = length(s)
+      for (i = 1; i <= n; i++) {
         c = substr(s, i, 1)
+        if (c == "\\") { continue }
         if (q != "") { if (c == q) { q = "" } else if (c == "\n") { out = out " " } else { out = out c }; continue }
         if (c == "\"" || c == "\047") { q = c; continue }
+        if (c == "<" && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<") {
+          j = i + 2
+          if (substr(s, j, 1) == "-") { j++ }
+          while (substr(s, j, 1) == " ") { j++ }
+          word = ""
+          while (j <= n && substr(s, j, 1) !~ /[[:space:];&|()<>]/) { word = word substr(s, j, 1); j++ }
+          gsub(/["\047\\]/, "", word)
+          if (word != "") { pending = word }
+          out = out "<<" word " "
+          i = j - 1
+          continue
+        }
+        if (c == "\n" && pending != "") {
+          # Append the heredoc body to the current command, up to the terminator line.
+          rest = substr(s, i + 1)
+          while (rest != "") {
+            k = index(rest, "\n")
+            line = (k > 0) ? substr(rest, 1, k - 1) : rest
+            rest = (k > 0) ? substr(rest, k + 1) : ""
+            i += (k > 0) ? k : length(line)
+            stripped = line
+            sub(/^\t+/, "", stripped)
+            if (stripped == pending) { break }
+            gsub(/\\/, "", line)
+            out = out " " line
+          }
+          pending = ""
+          out = out "\n"
+          continue
+        }
         if (c ~ /[;&|()`\n]/) { c = "\n" }
         out = out c
       }
       printf "%s\n", out
     }'
 }
-# A program that only reads or records text may mention the owner's commands (a commit message, a search);
-# any other program that names them could run them (script, xargs, find -exec, bash -c and similar). A
-# "reader" loses that status when the command could still execute something: an environment prefix
-# (LESSOPEN=...), command substitution, git config or aliases (-c, --config-env, !), rg --pre, pagers.
+# A command that only reads or records text may mention the owner's commands (a commit message, a PR
+# body, a search, a file written from a heredoc); any other program that names them could run them
+# (script, xargs, find -exec, bash -c, git difftool/bisect/submodule and similar). Readers lose that
+# status when the text can still execute: command substitution, rg --pre, or anything in the same
+# command line that runs a shell or interpreter (which could read the "text" from a pipe).
 owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])guardrails[[:space:]]+(on|off|approve|revoke)([[:space:]]|$)'
+segments=$(split_commands <<<"$raw")
+interpreter=0
+if grep -Eq '^[[:space:]]*([^[:space:]]*/)?(sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|deno|bun|perl|ruby|php|osascript|xargs|eval|source|\.|env|exec|script|expect|unbuffer|nohup|time|sudo)([[:space:]]|$)' <<<"$segments"; then
+  interpreter=1
+fi
 while IFS= read -r segment; do
   grep -Eq "$owner_command" <<<"$segment" || continue
   bare=$(sed -E 's/^[[:space:]]+//' <<<"$segment")
-  program=${bare%%[[:space:]]*}
-  program=${program##*/}
   reader=0
-  case $program in
-    cat | head | tail | grep | egrep | fgrep | rg | ls | wc | diff | git | gh | shellcheck | stat | file | realpath | readlink | which) reader=1 ;;
-  esac
-  if [[ $reader -eq 1 ]] &&
-    ! grep -Eq '\$\(|alias|!|(^|[[:space:]])(-c|--config-env|--pre|--pre-glob|--exec|-x)([[:space:]=]|$)|PAGER|EDITOR|LESS' <<<"$bare"; then
-    continue
+  if [[ $interpreter -eq 0 ]] && ! grep -Eq '\$\(|(^|[[:space:]])--pre(-glob)?([[:space:]=]|$)' <<<"$bare"; then
+    if grep -Eq '^([^[:space:]]*/)?(cat|tee|head|tail|grep|egrep|fgrep|rg|ls|wc|diff|shellcheck|stat|file|realpath|readlink|which)([[:space:]]|$)' <<<"$bare" ||
+      grep -Eq '^git[[:space:]]+(commit|log|show|grep|status|add|tag)([[:space:]]|$)' <<<"$bare" ||
+      grep -Eq '^gh[[:space:]]+(pr|issue|release)[[:space:]]+(create|comment|edit|view|list)([[:space:]]|$)' <<<"$bare"; then
+      reader=1
+    fi
   fi
+  [[ $reader -eq 1 ]] && continue
   deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke)"
-done < <(split_commands <<<"$raw")
+done <<<"$segments"
 
 # Everything below applies inside kit repositories, to commands that name an enforced repository, and to
 # commands that address a repository by its numeric id (which hides its name).

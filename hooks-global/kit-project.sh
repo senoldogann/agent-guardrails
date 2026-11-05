@@ -14,9 +14,11 @@ origin_repo() {
   sed -E 's#^.*github\.com[:/]##; s#\.git$##; s#/$##' <<<"$url"
 }
 
+# An existing but unreadable list counts as listing every repository: the guard fails closed.
 is_registered_repo() {
   local registry
   registry=$(guardrails_registry)
+  [[ -e $registry && ! -r $registry ]] && return 0
   [[ -n $1 && -f $registry ]] && grep -Fxi -- "$1" "$registry" >/dev/null
 }
 
@@ -35,6 +37,7 @@ is_kit_project() {
 mentions_registered_repo() {
   local text=$1 registry repo
   registry=$(guardrails_registry)
+  [[ -e $registry && ! -r $registry ]] && return 0
   [[ -f $registry ]] || return 1
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue

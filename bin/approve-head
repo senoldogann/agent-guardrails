@@ -46,8 +46,8 @@ guard=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target
 while IFS= read -r workflow; do
   [[ -n $workflow ]] || continue
   if gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content | base64 --decode |
-    grep -Ei 'statuses:[[:space:]]*write|write-all' >/dev/null; then
-    die "$workflow grants statuses: write (could forge merge-approval); refuse to approve"
+    grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null; then
+    die "$workflow lets its token write checks or statuses (could fake merge-approval); refuse to approve"
   fi
 done < <(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path')
 

@@ -147,6 +147,24 @@ block 'echo "$(guardrails approve 1)"'
 block 'git commit -m "$(guardrails approve 1)"'
 block 'rg --pre approve-head x .'
 allow 'git commit -m "docs: explain approve-head" -m "and guardrails off"'
+block 'git difftool -y --extcmd="guardrails approve" HEAD~1'
+block 'git bisect run guardrails approve 1'
+block 'git submodule foreach "guardrails off o/r"'
+block 'guardrails ap\prove 1'
+block 'printf "guardrails approve 1" | sh'
+allow 'gh pr create --title x --body "Fixes it! Run guardrails on <link> next."'
+allow 'cat >notes.md <<'"'"'EOF'"'"'
+Run guardrails on <PR link>, then approve-head <link>.
+EOF'
+block 'python3 - <<EOF
+import os; os.system("guardrails approve 1")
+EOF'
+block 'cat <<EOF | bash
+guardrails approve 1
+EOF'
+block 'gh api graphql -f query="mutation { deleteRepositoryRuleset(input: {repositoryRulesetId: 1}) { clientMutationId } }"'
+block 'gh repo edit acme/shop --remove-topic agent-guardrails'
+block 'cat ~/.local/share/agent-guardrails/bin/guardrails-lib.sh'
 block 'rm -rf ~/.config/agent-g*'
 block 'cd ~/.config && rm -r agent-guardrails'
 block 'cat ~/.config/agent-guardrails/repos'

@@ -25,8 +25,10 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 
 ## Commands
 
-- Install: `./install.sh` (symlinks skills into `~/.claude/skills`, registers global hooks, links the owner
-  commands onto PATH; idempotent, backs up settings.json before changing it).
+- Install: `./install.sh` from a clone nobody develops in (symlinks skills into `~/.claude/skills`, registers
+  global hooks, links the owner commands onto PATH; idempotent, moves links over from another kit clone,
+  backs up settings.json before changing it). The owner's commands refuse to run from a clone with local
+  changes or not at its origin's main.
 - Check: `make check` (= shellcheck + the offline tests in `tests/`).
 - Language adapters: `make test-lang` (slow; real mini projects per language).
 

@@ -96,13 +96,14 @@ $drift
 Update the installed kit (git -C $kit pull --ff-only) or ask the agent to redo the kit files, then try again."
 }
 
-# Dies when any workflow of the checkout could post commit statuses (and so forge merge-approval).
+# Dies when any workflow of the checkout could write check runs or commit statuses (and so fake a
+# required check or merge-approval): pull_request runs execute the PR's code with that token.
 require_no_status_rights() {
   local workflow
   for workflow in "$1"/.github/workflows/*.yml "$1"/.github/workflows/*.yaml; do
     [[ -e $workflow ]] || continue
-    if grep -Ei 'statuses:|write-all' "$workflow" >/dev/null; then
-      die "${workflow#"$1"/} grants commit status rights (could forge merge-approval); remove that first"
+    if grep -Ei '(checks|statuses):[[:space:]]*write|write-all' "$workflow" >/dev/null; then
+      die "${workflow#"$1"/} lets its token write checks or statuses (could fake an approval); remove that first"
     fi
   done
 }
@@ -196,9 +197,10 @@ $extra_workflows"
 
   # Listed before the merge, so a failure in between still shows up as an alarm in the inbox.
   register "$repo"
-  trap 'printf "guardrails on stopped before %s was fully enforced; finish with: guardrails on %s\n" "$repo" "$repo" >&2; cleanup' EXIT
+  trap 'printf "guardrails on stopped before merging. Retry with: guardrails on %s\n" "$1" >&2; cleanup' EXIT
   gh pr merge "$pr" -R "$repo" --squash --delete-branch --match-head-commit "$sha" >/dev/null
   printf 'merged PR #%s\n' "$pr"
+  trap 'printf "guardrails on stopped after merging, before %s was fully enforced. Finish with: guardrails on %s\n" "$repo" "$repo" >&2; cleanup' EXIT
   enforce "$repo" "$dir"
   trap cleanup EXIT
   printf 'Next: ask the agent for /ticket-spec <ID>. Run guardrails to see what waits for you.\n'
