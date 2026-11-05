@@ -7,7 +7,9 @@ fast-check's global config. Implementation code under `src/` also passes the res
 (`.agent/lint/biome-restrictions.json`): it may not import test frameworks, exit the process,
 use `globalThis`/`process`, access `.constructor`/`__proto__`, or modify built-ins and prototypes. `src/domain/**` may not import Node built-ins at all.
 It may not `throw` either, except the stub's `throw new Error("NotImplemented: ...")`: contracts return
-typed results, and a throwing self-check would kill mutants without any locked test noticing.
+typed results, and a throwing self-check would kill mutants without any locked test noticing. It may
+also not use `try`/`catch`/`finally`, async code (`async`, `await`, `Promise`, `.then`/`.catch`/`.finally`),
+module-level `let`/`var`, or import anything from `.agent/` except the kit invariant (see Invariants).
 
 Mutation gate (`make test-mutation`): StrykerJS plus a numeric-literal mutator (n+1, n-1) run against
 the changed source files; a mutant counts as killed only when a locked test fails. Every boundary
@@ -109,8 +111,21 @@ documentation; the kit ships no Gherkin runner.
 
 ## Invariants
 
-When a branded value must be built from a computation that the types cannot prove (for example a total that
-is non-negative because both inputs were validated), check it once and throw
-`new Error("Invariant: <what must hold>")`. That is the only other `throw` the restriction lint allows. Such a
-branch can never run, so its mutants cannot be caught by any test: list them in `specs/<ID>/mutants-accepted`
-with the reason "invariant, unreachable". A mutant caught only by an Invariant error counts as survived.
+When a value must be narrowed (for example to a branded type) by a condition that can never fail,
+use the kit helper, the only `.agent/` module implementation code may import. Import it exactly as
+`import { invariant } from "<relative path>/.agent/runtime/invariant.ts";` and call it only as a
+statement whose message is a string literal starting with `Invariant: `:
+
+```ts
+import { invariant } from "../../.agent/runtime/invariant.ts";
+
+const provenNonNegative = (n: bigint): NonNegativeMinor => {
+	invariant(isNonNegativeMinor(n), "Invariant: applyDiscount amounts are non-negative");
+	return n;
+};
+```
+
+`invariant` is an assertion function (`asserts condition`), so the type checker narrows `n` without a
+cast. Mutation runs resolve it to a no-op, so a mutant is killed only when a locked test assertion
+fails, and the mutants inside the `invariant(...)` statement are not generated or counted. The
+condition must not hide logic: anything the tests must check lives outside the statement.

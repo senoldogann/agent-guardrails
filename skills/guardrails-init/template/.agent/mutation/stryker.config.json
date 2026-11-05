@@ -1,8 +1,12 @@
 {
 	"$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-	"_comment": "Trusted StrykerJS configuration (human-owned). The Makefile passes it explicitly and computes the files to mutate itself (--mutate); a project config is never read. TS 7 has no JavaScript API: tsconfigFile points at a file that does not exist so Stryker skips its tsconfig rewrite, and no checker plugin is used. pnpm needs the runner plugin listed explicitly. disableBail reports every failing test, so killedBy can be matched against locked tests.",
+	"_comment": "Trusted StrykerJS configuration (human-owned). The Makefile passes it explicitly and computes the files to mutate itself (--mutate); a project config is never read. TS 7 has no JavaScript API: tsconfigFile points at a file that does not exist so Stryker skips its tsconfig rewrite, and no checker plugin is used. pnpm needs the runner plugin listed explicitly. disableBail reports every failing test, so killedBy can be matched against locked tests. The agent-invariant ignorer skips mutants inside kit invariant(...) statements.",
 	"testRunner": "vitest",
-	"plugins": ["@stryker-mutator/vitest-runner"],
+	"plugins": [
+		"@stryker-mutator/vitest-runner",
+		"./.agent/mutation/invariant-ignorer.mjs"
+	],
+	"ignorers": ["agent-invariant"],
 	"vitest": { "configFile": ".agent/mutation/vitest.config.ts" },
 	"tsconfigFile": ".agent/mutation/no-tsconfig-for-stryker.json",
 	"coverageAnalysis": "perTest",
