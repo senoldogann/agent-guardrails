@@ -40,5 +40,7 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - Pattern files (`write-allow`) are bash globs where `*` also matches `/`.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority.
+- A kit change that adds or renames an owner command, a skill or a global hook only reaches the owner after
+  `./install.sh` runs again; such a PR says so in its description, and the agent runs it after the merge.
 - bash-guard reads every line of a command, heredoc bodies included: write text that names the owner's
   commands with the Write tool, not a heredoc.
