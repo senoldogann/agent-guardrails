@@ -13,9 +13,11 @@
 # Limits: obfuscated commands (string concatenation, scripts written to files) can evade text matching;
 # the ruleset on GitHub, which needs the owner's typed approval per HEAD, is the authority.
 # Exit code 2 blocks the call and shows stderr to the agent.
-set -Eeuo pipefail
-# Fail closed: an internal error (missing jq, unreadable file) blocks the call instead of letting it through.
-trap 'printf "BLOCKED by bash-guard: internal error near line %s; ask the user to check the hook\n" "$LINENO" >&2; exit 2' ERR
+set -euo pipefail
+# Fail closed: any exit other than 0 (allow) becomes 2 (block), so an internal error (missing jq, unreadable
+# file) blocks the call instead of letting it through. Subshells keep their own exit codes.
+# shellcheck disable=SC2154 # status is assigned inside the trap
+trap 'status=$?; if [[ $status -ne 0 && $status -ne 2 ]]; then printf "BLOCKED by bash-guard: internal error (exit %s); ask the user to check the hook\n" "$status" >&2; exit 2; fi' EXIT
 # shellcheck source=kit-project.sh
 source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
@@ -24,7 +26,7 @@ raw=$(jq -r '.tool_input.command // empty' <<<"$input")
 [[ -n $raw ]] || exit 0
 # Normalize common spellings so quoting or path tricks do not hide a gh call:
 # drop quotes and backslashes, and turn $(which gh)/$(command -v gh)/`which gh` into gh.
-quote_chars=$'"\'\\'
+quote_chars=$'\\\\"\''
 # shellcheck disable=SC2016 # $( and backticks are literal text to rewrite, not expansions
 gh_lookup='s/\$\((which|command -v|type -p) gh\)/gh/g; s/`(which|command -v|type -p) gh`/gh/g'
 cmd=$(tr -d "$quote_chars" <<<"$raw" | sed -E "$gh_lookup")
@@ -192,6 +194,6 @@ while IFS= read -r call; do
       ;;
     *) deny "gh $group $action is not on the allow-list" ;;
   esac
-done < <(grep -oE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"']*)?' <<<"$cmd" | sed -E 's/^[/;&|(`"'"'"'[:space:]]+//; s/^.*\/gh /gh /')
+done < <({ grep -oE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"']*)?' <<<"$cmd" || true; } | sed -E 's/^[/;&|(`"'"'"'[:space:]]+//; s/^.*\/gh /gh /')
 
 exit 0
