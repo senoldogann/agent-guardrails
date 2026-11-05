@@ -21,11 +21,12 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   `~/.claude`), which is git-ignored and never the only place a team rule exists.
 - Repeated agent mistakes are fixed in context or checks via `/process-fix`, not by hand-editing code or docs:
   ask the agent why it happened first.
-- Agent identity: the agent uses the owner's GitHub account through a fine-grained token with access to this
-  repository only: Contents, Pull requests, Issues read/write; Actions, Commit statuses read (Metadata is
-  automatic); never Commit statuses write, Administration, Workflows, Deployments, Environments, Secrets,
-  Variables or Webhooks. Without Commit statuses write the agent cannot forge `merge-approval`.
-  It is set as `GH_TOKEN` in `.claude/settings.local.json` `env` (git-ignored). The remote is HTTPS and
-  `gh auth setup-git` makes git push with that token, so the owner's SSH key is never used by the agent.
-  The global bash-guard hook blocks approvals, admin merges, settings changes and credential reads.
+- Agent identity: the agent works with the owner's GitHub account. The global bash-guard hook blocks
+  approvals, admin merges, settings changes and credential reads; the ruleset makes every merge wait for the
+  owner's `merge-approval`. Accepted risk: bash-guard matches command text, so a deliberately disguised
+  command could still act as the owner. The optional hardening is a fine-grained token for this repository
+  only (Contents, Pull requests, Issues read/write; Actions, Commit statuses read; never Commit statuses
+  write, Administration, Workflows, Deployments, Environments, Secrets, Variables or Webhooks) set as
+  `GH_TOKEN` in `.claude/settings.local.json` with an HTTPS remote and `gh auth setup-git`; GitHub then
+  refuses those actions itself.
 - This file describes current state only; history lives in commit and PR messages.
