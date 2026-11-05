@@ -55,6 +55,7 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority.
 - A kit change that adds or renames an owner command, a skill or a global hook only reaches the owner after
-  `./install.sh` runs again; such a PR says so in its description, and the agent runs it after the merge.
+  `./install.sh` runs again; such a PR says so in its description. The owner updates the install clone
+  (`git pull --ff-only`, `./install.sh`, `make app`); bash-guard blocks the agent from touching it.
 - bash-guard reads every line of a command, heredoc bodies included: write text that names the owner's
   commands with the Write tool, not a heredoc.
