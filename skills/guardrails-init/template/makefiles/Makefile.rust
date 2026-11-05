@@ -22,7 +22,7 @@ lint:
 	$(CLIPPY) --locked --all-targets -- -D warnings
 	$(CLIPPY) --locked --lib -- -D warnings -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used \
 		-D clippy::unreachable -D clippy::unimplemented
-	.agent/bin/escape-check rs
+	.agent/bin/escape-check rs .
 
 fmt-check:
 	cargo fmt --check

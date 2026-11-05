@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Usage: escape-check <ts|js|py|rs|swift>
-# Fails on type-system escape hatches and lint suppressions in tracked source files.
+# Usage: escape-check <ts|js|py|rs|swift> <dir>
+# Fails on type-system escape hatches and lint suppressions in tracked source files under <dir>
+# ("." for the whole repository; Swift app projects pass the package that the gates cover).
 # Linters cover most of these; this catches suppression comments that would silence them.
 # In every language it also bans mutation-testing suppressions and probes (a test or implementation
 # that skips mutants or detects the active mutant would fake the mutation gate).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
-require_args 1 $# "escape-check <ts|js|py|rs|swift>"
+require_args 2 $# "escape-check <ts|js|py|rs|swift> <dir>"
 cd_project_root
 
 mutation='Stryker disable|stryMutAct|__stryker__|pragma: *no mutate|MUTANT_UNDER_TEST|mutants::skip'
@@ -31,7 +32,12 @@ case $1 in
   *) die "unknown language: $1" ;;
 esac
 
-hits=$(git ls-files -z -- "${globs[@]}" | xargs -0 grep -nE "$pattern|$mutation" || true)
+dir=${2%/}
+scoped=()
+for glob in "${globs[@]}"; do
+  if [[ $dir == . ]]; then scoped+=("$glob"); else scoped+=("$dir/$glob"); fi
+done
+hits=$(git ls-files -z -- "${scoped[@]}" | xargs -0 grep -nE "$pattern|$mutation" || true)
 if [[ -n $hits ]]; then
   printf 'type/lint escape hatches found (fix the root cause; a human may change this rule):\n%s\n' "$hits" >&2
   exit 1

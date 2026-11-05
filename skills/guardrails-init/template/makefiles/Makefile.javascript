@@ -19,7 +19,7 @@ typecheck:
 lint:
 	pnpm exec biome lint --error-on-warnings .
 	pnpm exec biome lint --error-on-warnings --config-path .agent/lint/biome-restrictions.json .
-	.agent/bin/escape-check js
+	.agent/bin/escape-check js .
 
 fmt-check:
 	pnpm exec biome format .

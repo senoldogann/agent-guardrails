@@ -5,6 +5,12 @@ Tools: SwiftPM, swift-testing (XCTest is disabled in the Makefile), SwiftLint `-
 Implementation code under `Sources/` may not exit the process, crash (`fatalError`,
 `preconditionFailure`), import a test framework, or patch the runtime (SwiftLint custom rules).
 
+In an Xcode app project the gates run on the local package named by `SWIFT_PKG` in the Makefile
+(for example `Packages/Core`). Every path below is then relative to that directory, and test IDs,
+`locked-files` and `write-allow` entries are repository paths: `Packages/Core/Sources/Domain/Percent.swift`.
+The package must build for macOS (declare `.macOS` in `platforms`, no UIKit/SwiftUI imports), because
+`swift test` runs on the host. App and UI code stay outside the gates; tickets change the package.
+
 `private init` restricts construction to one file, but the contract and implementation live in
 separate files. So the guarantee holds outside the module (internal init is invisible there);
 inside the module, `escape-check swift` + review keep `init(validated:)` calls in the implementation

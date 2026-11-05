@@ -37,6 +37,7 @@ is_human_owned() {
   esac
   case $path in
     specs/* | docs/CODEOWNERS | CODEOWNERS) return 0 ;;
+    *.xcodeproj/* | *.xcworkspace/*) return 0 ;;
     tests/* | */tests/* | test/* | */test/* | Tests/* | */Tests/* | */__tests__/* | __tests__/*) return 0 ;;
   esac
   case $base in
@@ -51,6 +52,7 @@ is_human_owned() {
     stryker.config.* | stryker.conf.* | mutants.toml | setup.cfg.mutmut | mutmut_config.py) return 0 ;;
     Cargo.toml | Cargo.lock | build.rs | clippy.toml | rustfmt.toml | rust-toolchain | rust-toolchain.toml | nextest.toml) return 0 ;;
     Package.swift | Package.resolved | *.xcconfig | *.pbxproj | *.xcscheme | *.entitlements | Info.plist) return 0 ;;
+    *.xctestplan | *.xcprivacy | *.storekit | project.yml) return 0 ;;
     Dockerfile | *.dockerfile | docker-compose*.yml | compose*.yml) return 0 ;;
   esac
   return 1

@@ -43,3 +43,11 @@ require_report() {
   local report=$1
   [[ -s $report ]] || die "runner report $report is missing or empty; the test process did not finish its report"
 }
+
+# Prints the path prefix of test files in a SwiftPM package directory: empty for "." (the repository
+# root), "<dir>/" otherwise. Dies when the directory has no Package.swift.
+package_prefix() {
+  local dir=${1%/}
+  [[ -f "$dir/Package.swift" ]] || die "no Package.swift in '$1' (SWIFT_PKG in the Makefile)"
+  if [[ $dir == . ]]; then printf ''; else printf '%s/' "${dir#./}"; fi
+}

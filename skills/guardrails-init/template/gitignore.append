@@ -1,3 +1,6 @@
 # Personal, never shared (agent-guardrails)
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Python bytecode the kit's checks can leave next to its test support (agent-guardrails)
+__pycache__/

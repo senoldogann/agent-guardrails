@@ -158,7 +158,7 @@ EOF
 expect_failure "bare invariant throw: restriction lint rejects it (use the kit invariant)" restriction_lint
 printf '// Stryker disable next-line all: equivalent\nexport const one = 1;\n' >src/domain/suppressed.ts
 git add src/domain/suppressed.ts
-expect_failure "Stryker suppression comment: escape-check rejects it" .agent/bin/escape-check ts
+expect_failure "Stryker suppression comment: escape-check rejects it" .agent/bin/escape-check ts .
 git rm -q -f src/domain/suppressed.ts
 write_correct
 

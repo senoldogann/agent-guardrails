@@ -24,6 +24,14 @@ The template lives in `template/` next to this file (resolve this skill's base d
 1. **Detect the language** from manifests: `package.json` + `tsconfig.json` → typescript,
    `package.json` without tsconfig → javascript, `pyproject.toml` → python, `Cargo.toml` → rust,
    `Package.swift` → swift. Several or none → stop and ask; do not guess.
+   Swift app projects (an `*.xcodeproj` or `*.xcworkspace`, no root `Package.swift`): the gates run on the
+   local SwiftPM package that holds the logic. Exactly one tracked `*/Package.swift` outside `.build` →
+   swift, with `SWIFT_PKG := <its directory>` and `APP_SCHEME := <the app scheme>` in the copied Makefile
+   (check the scheme with `xcodebuild -list`; set `APP_DESTINATION` to `generic/platform=macOS` for a
+   macOS app). Several → stop and ask which one. None → stop and recommend moving the domain logic into a
+   local package first; the app target itself is outside the test gates and only has to compile.
+   Swift CI runs on GitHub's macOS runner, whose toolchain lags behind a developer's newest Xcode: keep
+   `swift-tools-version` in Package.swift at the oldest version the package needs (6.0 for swift-testing).
 2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json` or `.github/workflows/agent-guard.yml`
    exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`).
 3. **Branch** `chore/agent-guardrails` from the up-to-date default branch. If that branch already exists
