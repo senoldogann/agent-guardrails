@@ -1,10 +1,12 @@
-// Biome plugin: implementation code returns typed results; the only allowed `throw` is a stub's
-// `throw new Error("NotImplemented: <name>")`. A self-check that throws would make mutants "killed"
-// without any locked test noticing, so it is banned rather than trusted.
+// Biome plugin: implementation code returns typed results. Two `throw` forms are allowed:
+// a stub's `throw new Error("NotImplemented: <name>")`, and an invariant that can never fail but lets a
+// branded type be built without a cast: `throw new Error("Invariant: <what must hold>")`. A mutant that
+// only an Invariant error catches does not count as killed (mutants-stryker, mutants-literals), so an
+// invariant cannot stand in for a locked test.
 
 language js
 
 `throw $error` as $node where {
-  not $error <: `new Error($message)` where { $message <: r"^[\"'`]NotImplemented: .*" },
-  register_diagnostic(span=$node, message="`throw` is banned in implementation code (contracts return typed results); only a stub may throw new Error('NotImplemented: <name>').", severity="error")
+  not $error <: `new Error($message)` where { or { $message <: r"^[\"'`]NotImplemented: .*", $message <: r"^[\"'`]Invariant: .*" } },
+  register_diagnostic(span=$node, message="`throw` is banned in implementation code (contracts return typed results); only throw new Error('NotImplemented: <name>') in a stub or throw new Error('Invariant: <what must hold>').", severity="error")
 }

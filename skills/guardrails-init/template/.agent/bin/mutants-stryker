@@ -20,7 +20,8 @@ jq -r --argjson locked "$(locked_test_ids_json)" "$MUTANTS_JQ_LIB"'
   | .value.mutants[]
   | slice_text($lines; .location) as $original
   | ([(.killedBy // [])[] | $test_ids[.] // "" | select($is_locked[.] == true)] | length > 0) as $locked_kill
-  | (if .status == "Killed" then (if $locked_kill then "killed" else "survived" end)
+  | ((.statusReason // "") | test("Invariant: ")) as $invariant_kill
+  | (if .status == "Killed" then (if $locked_kill and ($invariant_kill | not) then "killed" else "survived" end)
      elif .status == "Timeout" then "timeout"
      elif .status == "Survived" then "survived"
      elif .status == "NoCoverage" then "no-coverage"
@@ -30,7 +31,8 @@ jq -r --argjson locked "$(locked_test_ids_json)" "$MUTANTS_JQ_LIB"'
       ($file + ":" + (.location.start.line | tostring)),
       $status,
       (describe(.mutatorName; $original; .replacement)
-        + (if .status == "Killed" and ($locked_kill | not) then " (killed only by unlocked tests)"
+        + (if .status == "Killed" and $invariant_kill then " (caught only by an Invariant error)"
+           elif .status == "Killed" and ($locked_kill | not) then " (killed only by unlocked tests)"
            elif $status == "error" then " (Stryker status " + .status + ")" else "" end))
     ] | join("\t")
 ' "$1" | fingerprint_rows
