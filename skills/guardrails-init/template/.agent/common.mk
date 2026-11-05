@@ -6,7 +6,7 @@ AGENT_TICKET := $(shell .agent/bin/active-ticket)
 SPEC_TICKET ?= $(AGENT_TICKET)
 CHECK_LOG := .agent/reports/$(if $(AGENT_TICKET),$(AGENT_TICKET),no-ticket)/checks.log
 
-.PHONY: ci check check-spec check-draft questions-lint-ticket test-red verify-green-all verify-green-others verify-red-ticket trace tests-lock-check lock-verify-all docs-check
+.PHONY: mutation ci check check-spec check-draft questions-lint-ticket test-red verify-green-all verify-green-others verify-red-ticket trace tests-lock-check lock-verify-all docs-check
 
 ## Entry point for CI (BASE_SHA = PR base): spec gate on the PR's last spec commit, full gate on HEAD.
 ci:
@@ -66,3 +66,9 @@ lock-verify-all:
 
 docs-check:
 	@.agent/bin/docs-check
+
+## Mutation gate on demand (slow): mutants of the source changed since BASE_SHA must all be killed.
+mutation:
+	@test -n "$(BASE_SHA)" || { echo "mutation: BASE_SHA is required (e.g. BASE_SHA=$$(git merge-base HEAD origin/main))" >&2; exit 1; }
+	@.agent/bin/mutation-scope "$(BASE_SHA)"
+	@if [ -s .agent/reports/mutation/scope.txt ]; then $(MAKE) --no-print-directory test-mutation && .agent/bin/mutation-gate; fi

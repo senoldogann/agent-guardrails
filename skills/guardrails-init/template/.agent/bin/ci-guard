@@ -107,6 +107,8 @@ if [[ $spec_count -gt 1 ]]; then
   done < <(git show "$last:specs/${ticket:-}/locked-files" | awk 'NF && $0 !~ /^#/')
   git diff --stat "$first" "$last" -- "${amended_paths[@]}"
 fi
+accepted_added=$(git diff "$base" "$head" -- 'specs/*/mutants-accepted' | awk '/^\+[^+]/ { print "  " substr($0, 2) }')
+[[ -z $accepted_added ]] || printf 'MUTANTS ACCEPTED AS EQUIVALENT (owner decision; check each reason):\n%s\n' "$accepted_added"
 workflows=$(grep -E '^\.github/(workflows|actions)/' <<<"$changed" || true)
 [[ -z $workflows ]] || printf 'WORKFLOW FILES CHANGED (could add fake required checks; review line by line):\n%s\n' "$workflows"
 owned=""
