@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Usage: approve-head <pr-number>        (run by the HUMAN owner, from inside the project checkout)
+# Usage: approve-head <pr-link-or-number>   (run by the HUMAN owner in their own terminal)
+# With a PR link it works from any directory; a bare number uses the current directory's repository.
 # Gives the owner's merge approval for the exact current HEAD of a PR by posting the commit status
 # `merge-approval` = success. The ruleset requires that context, so a new push needs a new approval.
 # Lives in the kit install directory, outside every project, so an agent cannot edit the copy you run.
@@ -7,19 +8,18 @@
 # be able to write commit statuses) and when the PR is not ready: base must be the default branch,
 # the `guard` check run for that SHA must have succeeded, no workflow may grant `statuses: write`.
 set -euo pipefail
-kit=$(cd "$(dirname "$0")/.." && pwd -P)
+kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
-require_args 1 $# "approve-head <pr-number>"
+source "$kit/bin/pr-target.sh"
+require_args 1 $# "approve-head <pr-link-or-number>"
 
 [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
   die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run approve-head in your own shell."
 [[ -t 0 ]] || die "approve-head needs an interactive terminal (typed confirmation)"
 
-pr=$1
-[[ $pr =~ ^[0-9]+$ ]] || die "PR number must be numeric: $pr"
-repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
-pr_json=$(gh pr view "$pr" --json headRefOid,baseRefName,title,url,isDraft)
+read -r repo pr < <(pr_target "$1")
+default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
+pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft)
 sha=$(jq -r .headRefOid <<<"$pr_json")
 base=$(jq -r .baseRefName <<<"$pr_json")
 
@@ -38,7 +38,7 @@ while IFS= read -r workflow; do
   fi
 done < <(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path')
 
-files=$(gh pr diff "$pr" --name-only)
+files=$(gh pr diff "$pr" -R "$repo" --name-only)
 printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$(jq -r .title <<<"$pr_json")" "$(jq -r .url <<<"$pr_json")" "$sha"
 workflow_changes=""
 while IFS= read -r file; do

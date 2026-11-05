@@ -59,6 +59,7 @@ The template lives in `template/` next to this file (resolve this skill's base d
 10. **Tell the owner the steps only they can do** (bash-guard blocks them for agents):
     - review and merge the bootstrap PR;
     - run `.agent/bin/setup-github` and do the manual step it prints;
-    - approve PRs with the kit's `bin/approve-head <pr>` from their own shell (never the agent's);
+    - approve PRs with `approve-head <PR link>` in their own terminal (never the agent's); the command is
+      on PATH after the kit's `install.sh`, and every ready PR carries it in a comment;
     - create the fine-grained token described in `AGENTS.md` "Agent identity", put it in
       `.claude/settings.local.json` → `env.GH_TOKEN`, use an HTTPS remote and run `gh auth setup-git`.

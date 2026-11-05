@@ -55,5 +55,5 @@ printf 'repository and Actions settings: ok\n'
 cat <<EOF_MANUAL
 Manual step: create the agent's fine-grained token (see AGENTS.md "Agent identity"), use an HTTPS
 remote and run 'gh auth setup-git' so git pushes with that token instead of your SSH key.
-Approve a PR's HEAD with the kit's bin/approve-head <pr> from your own shell.
+Approve a PR's HEAD with 'approve-head <PR link>' in your own terminal (installed by the kit's install.sh).
 EOF_MANUAL
