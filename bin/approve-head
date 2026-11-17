@@ -31,24 +31,23 @@ base=$(jq -r .baseRefName <<<"$pr_json")
 [[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
 [[ $(jq -r .isDraft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
 
-ruleset_id=$(gh api "repos/$repo/rulesets" --jq '.[] | select(.name == "agent-guardrails" and .enforcement == "active") | .id')
-required=""
-code_owner_review=""
-if [[ -n $ruleset_id ]]; then
-  ruleset=$(gh api "repos/$repo/rulesets/$ruleset_id")
-  required=$(jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' <<<"$ruleset")
-  code_owner_review=$(jq -r '.rules[] | select(.type == "pull_request") | .parameters.require_code_owner_review' <<<"$ruleset")
-fi
-if grep -Fx merge-approval <<<"$required" >/dev/null; then
+# The approval must protect something: status mode needs the active branch ruleset to require merge-approval,
+# review mode needs it active next to a review ruleset with every review setting on (ruleset_approval_mode).
+ruleset_named() {
+  local id
+  id=$(gh api "repos/$repo/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$1\") | .id")
+  [[ -z $id ]] || gh api "repos/$repo/rulesets/$id"
+}
+branch_rules=$(ruleset_named agent-guardrails)
+mode=-
+if [[ -n $branch_rules && $(ruleset_approval_mode <<<"$branch_rules") == status ]]; then
   mode=status
-elif [[ $code_owner_review == true ]]; then
-  mode=review
-  owner=$(gh api user --jq .login)
-  [[ $(jq -r .author.login <<<"$pr_json") != "$owner" ]] ||
-    die "PR #$pr is your own, and GitHub does not let you approve it. As a repository admin you may merge it yourself: gh pr merge $(jq -r .url <<<"$pr_json") --squash --admin"
-else
-  die "the agent-guardrails ruleset on $repo is not active or requires neither merge-approval nor a code owner review, so an approval would not protect anything. Check the audit log, then restore it with: guardrails on $repo"
+elif [[ -n $branch_rules && $(jq -r .enforcement <<<"$branch_rules") == active ]]; then
+  review_rules=$(ruleset_named agent-guardrails-review)
+  if [[ -n $review_rules && $(ruleset_approval_mode <<<"$review_rules") == review ]]; then mode=review; fi
 fi
+[[ $mode != - ]] ||
+  die "the agent-guardrails rulesets on $repo are missing, inactive or changed, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
 
 # The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
 # from any check run named "guard": a workflow added by the PR could report a check run of that name.
@@ -56,13 +55,20 @@ guard=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target
   --jq '[.workflow_runs[] | select(.path == ".github/workflows/agent-guard.yml")] | sort_by(.created_at) | last | .conclusion // "missing"')
 [[ $guard == success ]] || die "guard run for $sha is '$guard'; wait for it or fix the PR"
 
+# Read in full before the loop: a failed listing or download must stop the approval, not skip the scan.
+workflows=$(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path') ||
+  die "cannot list the workflows of $sha; nothing approved"
 while IFS= read -r workflow; do
   [[ -n $workflow ]] || continue
-  if gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content | base64 --decode |
-    grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null; then
-    die "$workflow lets its token write checks or statuses (could fake merge-approval); refuse to approve"
+  content=$(gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content) || die "cannot read $workflow at $sha; nothing approved"
+  if base64 --decode <<<"$content" | grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null; then
+    die "$workflow lets its token write checks or statuses (could fake a required check); refuse to approve"
   fi
-done < <(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path')
+done <<<"$workflows"
+
+if [[ $mode == review && $(jq -r .author.login <<<"$pr_json") == "$(gh api user --jq .login)" ]]; then
+  die "PR #$pr is your own, and GitHub does not let you approve it. Its checks passed; as a repository admin you may merge it yourself: gh pr merge $(jq -r .url <<<"$pr_json") --squash --admin"
+fi
 
 files=$(pr_files "$repo" "$pr")
 # Titles are written by the agent: drop control characters so they cannot redraw the lines below.
@@ -105,9 +111,13 @@ if [[ $mode == status ]]; then
   exit 0
 fi
 # The review names the commit the owner saw, so a push between showing and approving cannot receive it.
-gh api -X POST "repos/$repo/pulls/$pr/reviews" -f commit_id="$sha" -f event=APPROVE \
-  -f body="Approved by the owner for $sha after the agent-guardrails checks." >/dev/null
+review_id=$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f commit_id="$sha" -f event=APPROVE \
+  -f body="Approved by the owner for $sha after the agent-guardrails checks." --jq .id)
 now=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid)
-[[ $now == "$sha" ]] ||
-  die "PR #$pr moved to ${now:0:7} while you approved ${sha:0:7}; your review covers ${sha:0:7} only and GitHub will not count it. Review the new head."
+if [[ $now != "$sha" ]]; then
+  # Do not leave an approval behind on a PR that moved; GitHub's handling of it is not something to rely on.
+  gh api -X PUT "repos/$repo/pulls/$pr/reviews/$review_id/dismissals" \
+    -f message="The PR moved to ${now:0:7} while the owner approved ${sha:0:7}" -f event=DISMISS >/dev/null
+  die "PR #$pr moved to ${now:0:7} while you approved ${sha:0:7}; your review was dismissed. Review the new head."
+fi
 printf 'approved %s with a GitHub review (PR #%s)\n' "$sha" "$pr"

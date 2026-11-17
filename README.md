@@ -55,8 +55,9 @@ PRs as the App's bot, and you approve them like any teammate's PR (review mode):
    requests only: no workflows, administration or statuses.
 2. Install it with **Only select repositories** on the projects the agent works in.
 3. Make sure each project has `.github/CODEOWNERS` whose first line is `* @<you>` (new set-up PRs add it).
-4. Run `guardrails on <owner/repo>` again. The ruleset then requires a code owner's review that GitHub
-   dismisses on every new push, and lets you, as admin, merge your own PRs (`gh pr merge --admin`).
+4. Run `guardrails on <owner/repo>` again. A code owner's review is then required, and GitHub dismisses it on
+   every new push. As admin you may merge your own PRs without a review (`gh pr merge --admin`); their
+   checks are still required.
 
 `guardrails agent status` shows where the App is installed; `guardrails status` shows each project's mode.
 While the agent runs as your computer user it can still reach your own login, so the identity separates

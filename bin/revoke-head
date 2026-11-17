@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Usage: revoke-head <pr-link-or-number>   (run by the HUMAN owner in their own terminal)
-# Withdraws every approval the owner gave the PR's current HEAD, which blocks the merge again:
+# Withdraws the owner's approvals of the PR's current HEAD:
 #   status mode: posts the commit status `merge-approval` = failure (the newest status of a context wins);
-#   review mode: dismisses the owner's approving GitHub reviews of the PR.
+#   review mode: dismisses the owner's approving GitHub reviews of the PR. Other code owners' approvals still
+#   count; the command names them.
 set -euo pipefail
 kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
@@ -17,22 +18,24 @@ require_args 1 $# "revoke-head <pr-link-or-number>"
 read -r repo pr < <(pr_target "$1")
 sha=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid)
 owner=$(gh api user --jq .login)
-withdrawn=0
 
-if [[ -n $(gh api "repos/$repo/commits/$sha/statuses" --jq '.[] | select(.context == "merge-approval") | .id') ]]; then
-  gh api -X POST "repos/$repo/statuses/$sha" -f state=failure -f context=merge-approval \
-    -f description="Approval revoked by owner for PR #$pr" >/dev/null
-  printf 'merge-approval: failure on %s (PR #%s)\n' "$sha" "$pr"
-  withdrawn=1
-fi
+# Posted in both modes: the newest status of a context wins, and in review mode it is not required (harmless).
+gh api -X POST "repos/$repo/statuses/$sha" -f state=failure -f context=merge-approval \
+  -f description="Approval revoked by owner for PR #$pr" >/dev/null
+printf 'merge-approval: failure on %s (PR #%s)\n' "$sha" "$pr"
 
+# Read in full first: a failed listing must stop here, not look like "no review to dismiss".
+reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+  --jq ".[] | select(.state == \"APPROVED\" and .user.login == \"$owner\") | .id") ||
+  die "cannot list the reviews of PR #$pr; your approving reviews may still count"
 while IFS= read -r review; do
   [[ -n $review ]] || continue
   gh api -X PUT "repos/$repo/pulls/$pr/reviews/$review/dismissals" \
     -f message="Approval withdrawn by the owner" -f event=DISMISS >/dev/null
   printf 'dismissed your approving review %s (PR #%s)\n' "$review" "$pr"
-  withdrawn=1
-done < <(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
-  --jq ".[] | select(.state == \"APPROVED\" and .user.login == \"$owner\") | .id")
-
-[[ $withdrawn -eq 1 ]] || printf 'PR #%s carries no approval of yours; nothing to withdraw\n' "$pr"
+done <<<"$reviews"
+others=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+  --jq "[.[] | select(.state == \"APPROVED\" and .user.login != \"$owner\") | .user.login] | unique | join(\", \")") ||
+  die "cannot list the reviews of PR #$pr"
+[[ -z $others ]] ||
+  printf 'note: %s also approved PR #%s; their reviews still count until they or an admin dismiss them\n' "$others" "$pr"

@@ -28,6 +28,7 @@ source "$kit/bin/agent-app-lib.sh"
 
 registry=$(guardrails_registry)
 ruleset_name=agent-guardrails
+review_ruleset_name=agent-guardrails-review
 tag_ruleset_name=agent-guardrails-tags
 topic=agent-guardrails
 tmp_dirs=""
@@ -79,23 +80,35 @@ unregister() {
   mv "$registry.tmp" "$registry"
 }
 
-# Prints "review", "status" or "-": how the active ruleset expects the owner's approval.
-approval_mode() {
-  local ruleset_id ruleset
-  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" \
-    --jq ".[] | select(.name == \"$ruleset_name\" and .enforcement == \"active\") | .id")
-  [[ -n $ruleset_id ]] || { printf -- '-\n'; return 0; }
-  ruleset=$(gh api "repos/$1/rulesets/$ruleset_id")
-  jq -r 'if any(.rules[]; .type == "pull_request" and .parameters.require_code_owner_review) then "review"
-    elif any(.rules[]; .type == "required_status_checks"
-      and any(.parameters.required_status_checks[]; .context == "merge-approval")) then "status"
-    else "-" end' <<<"$ruleset"
+# Prints the live ruleset with the given name, or nothing when the repository has none. Arguments: owner/repo, name.
+live_ruleset() {
+  local ruleset_id
+  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$2\") | .id")
+  [[ -z $ruleset_id ]] || gh api "repos/$1/rulesets/$ruleset_id"
 }
 
-# Prints the ruleset's enforcement (active, evaluate, disabled) or "missing".
+# Prints "review", "status" or "-": how the active rulesets expect the owner's approval. Status mode needs the
+# branch ruleset to require merge-approval, review mode an active review ruleset as review_ruleset builds it.
+approval_mode() {
+  local branch review
+  branch=$(live_ruleset "$1" "$ruleset_name")
+  if [[ -n $branch && $(ruleset_approval_mode <<<"$branch") == status ]]; then
+    printf 'status\n'
+    return 0
+  fi
+  review=$(live_ruleset "$1" "$review_ruleset_name")
+  if [[ -n $branch && $(jq -r .enforcement <<<"$branch") == active && -n $review &&
+    $(ruleset_approval_mode <<<"$review") == review ]]; then
+    printf 'review\n'
+    return 0
+  fi
+  printf -- '-\n'
+}
+
+# Prints the branch ruleset's enforcement (active, evaluate, disabled) or "missing".
 ruleset_state() {
   local state
-  state=$(gh api "repos/$1/rulesets" --jq ".[] | select(.name == \"$ruleset_name\") | .enforcement")
+  state=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$ruleset_name\") | .enforcement")
   printf '%s\n' "${state:-missing}"
 }
 
@@ -140,43 +153,53 @@ put_ruleset() {
   fi
 }
 
-# Prints the ruleset for a repository: review mode when the agent App is installed there safely and the
-# checkout's CODEOWNERS gives every path to the owner, status mode when the App is not installed. Dies when the
-# App is installed but review mode's preconditions are not met. Arguments: owner/repo, checkout, pinned checks.
-choose_ruleset() {
-  local repo=$1 dir=$2 checks=$3 installation problems
-  installation=""
-  if agent_app_registered; then installation=$(agent_installation "$repo"); fi
-  if [[ -z $installation ]]; then
-    status_mode_ruleset "$ruleset_name" "$checks"
-    return 0
-  fi
+# Deletes the ruleset with the given name if the repository has it. Arguments: owner/repo, name.
+delete_ruleset() {
+  local ruleset_id
+  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$2\") | .id")
+  [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$1/rulesets/$ruleset_id" >/dev/null
+}
+
+# Succeeds when review mode applies: the agent App is installed on the repository, on selected repositories
+# only and with no extra permission, and the default branch's CODEOWNERS gives every path to the owner with
+# no errors GitHub reports. Fails (status mode) when the App is not registered here or not installed there.
+# Dies when the App is installed but a precondition is missing, and when the lookup itself fails, so an error
+# never quietly turns into status mode. Arguments: owner/repo, checkout of the default branch.
+review_mode_ready() {
+  local repo=$1 dir=$2 installation problems errors
+  agent_app_registered || return 1
+  installation=$(agent_installation "$repo") || die "cannot tell whether the agent App is installed on $repo; nothing changed"
+  [[ -n $installation ]] || return 1
   problems=$({
     installation_problems <<<"$installation"
     codeowners_problems "$dir" "$(login)"
   })
-  [[ -z $problems ]] || die "the agent App is installed on $repo, but review mode needs:
-$problems
-Fix this in a PR you author (your own PRs: guardrails approve <PR link> while status mode is on), then run: guardrails on $repo"
-  review_mode_ruleset "$ruleset_name" "$checks"
+  errors=$(gh api "repos/$repo/codeowners/errors" --jq '.errors[] | "CODEOWNERS line \(.line): \(.message | split("\n")[0])"') ||
+    die "cannot read CODEOWNERS errors of $repo from GitHub; nothing changed"
+  [[ -z $problems$errors ]] || die "the agent App is installed on $repo, but review mode needs:
+$problems${problems:+${errors:+$'\n'}}$errors
+Fix this in a PR you author (while status mode is on: guardrails approve <PR link>), then run: guardrails on $repo"
 }
 
 # Applies the rulesets and repository settings the kit relies on. Required checks come from the
-# checkout's own checks-<lang> workflows.
+# checkout's own checks-<lang> workflows. Nobody bypasses the branch ruleset (checks, history, deletion); in
+# review mode a separate review ruleset lets admins merge their own PRs without a review.
 enforce() {
-  local repo=$1 dir=$2 jobs checks ruleset mode
+  local repo=$1 dir=$2 jobs checks mode
   jobs=$(check_jobs "$dir")
   [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
   # ci-guard keeps PR workflows from defining jobs with these names.
   checks=$(pinned_checks "$jobs")
-  ruleset=$(choose_ruleset "$repo" "$dir" "$checks")
-  put_ruleset "$repo" "$ruleset_name" "$ruleset"
-  put_ruleset "$repo" "$tag_ruleset_name" "$(tag_ruleset "$tag_ruleset_name")"
-  if [[ $(jq '.rules[] | select(.type == "pull_request") | .parameters.require_code_owner_review' <<<"$ruleset") == true ]]; then
-    mode="review mode: approve the agent's PRs with a GitHub review (guardrails approve, github.com or GitHub Mobile)"
+  if review_mode_ready "$repo" "$dir"; then
+    put_ruleset "$repo" "$ruleset_name" "$(branch_ruleset "$ruleset_name" "$checks")"
+    put_ruleset "$repo" "$review_ruleset_name" "$(review_ruleset "$review_ruleset_name")"
+    mode="review mode: approve the agent's PRs with a GitHub review (guardrails approve, github.com or GitHub Mobile); tags: admins only"
   else
-    mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval)"
+    put_ruleset "$repo" "$ruleset_name" "$(status_mode_ruleset "$ruleset_name" "$checks")"
+    delete_ruleset "$repo" "$review_ruleset_name"
+    mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval); tags: admins, which includes the agent while it uses your login"
   fi
+  put_ruleset "$repo" "$tag_ruleset_name" "$(tag_ruleset "$tag_ruleset_name")"
   gh api -X PATCH "repos/$repo" -F allow_squash_merge=true -F allow_merge_commit=false \
     -F allow_rebase_merge=false -F allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null
   gh api -X PUT "repos/$repo/actions/permissions/workflow" \
@@ -186,7 +209,7 @@ enforce() {
   gh label create needs-decision -R "$repo" --force --color D93F0B \
     --description "The agent is waiting for the owner's decision" >/dev/null
   gh repo edit "$repo" --add-topic "$topic" >/dev/null
-  printf 'on: %s (%s; required checks: guard %s; tags: admins only)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
+  printf 'on: %s (%s; required checks: guard %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
 on_pr() {
@@ -259,7 +282,7 @@ on_repo() {
 }
 
 off_repo() {
-  local repo=$1 default_branch dir notes ruleset_id name branch=chore/remove-agent-guardrails url head file
+  local repo=$1 default_branch dir notes name branch=chore/remove-agent-guardrails url head file
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch")
   tmp_dirs+=" $dir"
@@ -270,7 +293,8 @@ off_repo() {
   git -C "$dir" add -A
 
   printf '\nTurning off %s:\n  - delete the %s ruleset (merges no longer wait for checks or your approval)\n' "$repo" "$ruleset_name"
-  printf '  - delete the %s ruleset (anyone with write access can create tags again)\n' "$tag_ruleset_name"
+  printf '  - delete the %s and %s rulesets (no review required, anyone with write access can create tags)\n' \
+    "$review_ruleset_name" "$tag_ruleset_name"
   printf '  - stop treating it as a kit repo on this machine and remove its %s topic\n' "$topic"
   printf '  - keep the repository settings the kit set: squash merge only, auto-merge allowed, branch deleted\n'
   printf '    on merge, read-only workflow token, actions pinned to SHAs, label needs-decision\n'
@@ -300,9 +324,8 @@ off_repo() {
     head=$(git -C "$dir" rev-parse HEAD)
     git -C "$dir" push --quiet -u origin "$branch"
   fi
-  for name in "$ruleset_name" "$tag_ruleset_name"; do
-    ruleset_id=$(gh api "repos/$repo/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$name\") | .id")
-    [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$repo/rulesets/$ruleset_id" >/dev/null
+  for name in "$ruleset_name" "$review_ruleset_name" "$tag_ruleset_name"; do
+    delete_ruleset "$repo" "$name"
   done
   printf 'rulesets deleted\n'
   if [[ -n ${head:-} ]]; then
@@ -478,7 +501,7 @@ approve_pick() {
 }
 
 status() {
-  local repo default_branch dir drift
+  local repo default_branch dir drift mode owners
   kit_install_alarm
   printf 'kit install: %s at %s\n' "$kit" "$(kit_git rev-parse --short HEAD)"
   while IFS= read -r repo; do
@@ -487,10 +510,16 @@ status() {
     dir=$(clone_at "$repo" "$default_branch")
     tmp_dirs+=" $dir"
     drift=$(kit_drift "$dir")
+    mode=$(approval_mode "$repo")
     printf '%-45s ruleset %-8s approval %-6s tags %-8s kit files %s\n' "$repo" "$(ruleset_state "$repo")" \
-      "$(approval_mode "$repo")" "$(gh api "repos/$repo/rulesets?includes_parents=false" \
+      "$mode" "$(gh api "repos/$repo/rulesets?includes_parents=false" \
         --jq "[.[] | select(.name == \"$tag_ruleset_name\") | .enforcement] | first // \"missing\"")" \
       "$([[ -z $drift ]] && printf 'same as installed kit' || printf 'differ from installed kit (kit update PR needed)')"
+    # A CODEOWNERS change merged after `on` could leave paths without a human code owner.
+    if [[ $mode == review ]]; then
+      owners=$(codeowners_problems "$dir" "$(login)")
+      [[ -z $owners ]] || printf '  ALARM %s\n' "${owners//$'\n'/$'\n'  ALARM }"
+    fi
   done < <(registered_repos)
   [[ -s $registry ]] || printf 'no enforced repos\n'
 }
