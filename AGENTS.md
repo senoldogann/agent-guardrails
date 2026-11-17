@@ -58,6 +58,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - Release: raise `VERSION` (semver) and move the `Unreleased` entries of `CHANGELOG.md` under that version in
   the same PR; after the merge `.github/workflows/release.yml` tags `v<VERSION>` and publishes the section as the
   release notes. Changes worth a note go under `Unreleased` in their own PR.
+- App release (owner, macOS): `make app-release` (Developer ID signing, notarization with the notarytool
+  profile `guardrails-notary`, upload to the GitHub release of `VERSION`).
 - App: `make app-test` (core tests), `make app` (build and install from the kit install; needs Xcode 26+).
   Rebuild the app after a kit change that touches `app/`.
 

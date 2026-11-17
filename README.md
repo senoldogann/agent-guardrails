@@ -30,6 +30,10 @@ make -C ~/.local/share/agent-guardrails app   # optional, macOS: installs ~/Appl
 changing anything. To update, press **Update** in the menu bar app when it offers one, or run
 `guardrails update`: it shows the new commits, asks you to confirm the exact one, fast-forwards the clone,
 runs `install.sh` again and rebuilds the app.
+`make app` signs the app with your "Developer ID Application" identity when the keychain has one (ad hoc
+otherwise, for this Mac only). `make app-release` builds a notarized copy for other Macs and attaches it to
+the GitHub release of `VERSION`; it needs `xcrun notarytool store-credentials guardrails-notary` once. A
+downloaded app expects the kit at `~/.local/share/agent-guardrails`.
 `guardrails version` shows the installed version; what changed between versions is in
 [CHANGELOG.md](CHANGELOG.md) and on the releases page.
 

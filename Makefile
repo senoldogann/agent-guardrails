@@ -1,9 +1,9 @@
-.PHONY: check lint test test-lang app app-test
+.PHONY: check lint test test-lang app app-test app-release
 
 check: lint test
 
 lint:
-	shellcheck -x install.sh app/build.sh scripts/*.sh bin/* tests/*.sh tests/lang/*.sh hooks-global/*.sh skills/guardrails-init/template/.agent/hooks/*.sh \
+	shellcheck -x install.sh app/build.sh app/release.sh scripts/*.sh bin/* tests/*.sh tests/lang/*.sh hooks-global/*.sh skills/guardrails-init/template/.agent/hooks/*.sh \
 		$$(find skills/guardrails-init/template/.agent/bin -type f)
 
 test:
@@ -26,3 +26,7 @@ app:
 
 app-test:
 	swift test --package-path app
+
+## The owner, on macOS: a signed, notarized Guardrails.app attached to the GitHub release of VERSION.
+app-release:
+	app/release.sh

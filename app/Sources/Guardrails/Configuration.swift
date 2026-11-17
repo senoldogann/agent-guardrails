@@ -25,7 +25,8 @@ struct AppConfiguration: Sendable, Equatable {
         guard let kitPath = Bundle.main.object(forInfoDictionaryKey: "GuardrailsKitPath") as? String else {
             return .failure(.missingKey)
         }
-        let configuration = AppConfiguration(kitPath: kitPath)
+        // A release build carries "~/.local/share/agent-guardrails"; a local build the absolute path of its kit.
+        let configuration = AppConfiguration(kitPath: (kitPath as NSString).expandingTildeInPath)
         guard FileManager.default.isExecutableFile(atPath: configuration.cliPath) else {
             return .failure(.missingCLI(configuration.cliPath))
         }
