@@ -10,8 +10,10 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   1. `/ticket-spec <ID>` → draft PR with contracts, stubs, locked tests (`AC-<n>` in test names), spec files.
   2. The owner answers `specs/<ID>/OPEN_QUESTIONS.md` and reviews the spec; the agent locks it (`spec-lock`).
   3. `/ticket-implement <ID>` → implementation in `specs/<ID>/write-allow` paths only.
-  4. The owner approves the exact HEAD in their own terminal (`guardrails approve`, or `approve-head <PR link>`;
-     commit status `merge-approval`); nothing merges without it, and every new push needs a new approval.
+  4. The owner approves the exact HEAD: in review mode (the agent pushes as the owner's agent App) with a
+     GitHub review from a code owner, given in the browser, GitHub Mobile or `guardrails approve`; in status
+     mode with the commit status `merge-approval` from `guardrails approve` (or `approve-head <PR link>`) in
+     their own terminal. Nothing merges without it, and every new push needs a new approval.
      `guardrails` (no arguments) lists what waits for the owner: questions (PR label `needs-decision`, set by
      `.agent/bin/block`) and PRs to approve.
 - Locked files (`specs/<ID>/spec.lock`, test IDs in `tests.lock`) change only by re-locking in a reviewed PR.
@@ -30,9 +32,12 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   `~/.claude`), which is git-ignored and never the only place a team rule exists.
 - Repeated agent mistakes are fixed in context or checks via `/process-fix`, not by hand-editing code or docs:
   ask the agent why it happened first.
-- Agent identity: the agent works with the owner's GitHub account. The kit's bash-guard hook (global, and
-  `.agent/hooks/bash-guard.sh` for every teammate) blocks approvals, admin merges, settings changes and
-  credential reads here; the ruleset makes every merge wait for the owner's `merge-approval`. Accepted risk:
+- Agent identity: where the owner's agent App is installed, the agent's gh and git push run as that App's bot
+  (the session start says so) and the App has no workflows permission: `.github/workflows` changes come from
+  a human. Elsewhere the agent works with the owner's GitHub account. Either way the kit's bash-guard hook
+  (global, and `.agent/hooks/bash-guard.sh` for every teammate) blocks approvals, admin merges, settings
+  changes and credential reads here, and the ruleset makes every merge wait for the owner's approval.
+  Accepted risk: while the agent runs as the owner's computer user, the owner's own login stays reachable and
   bash-guard matches command text, so a deliberately disguised command could still act as the owner; the
   ruleset and the owner's per-HEAD approval stay the authority.
 - This file describes current state only; history lives in commit and PR messages.

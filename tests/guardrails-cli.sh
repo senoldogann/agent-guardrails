@@ -167,8 +167,8 @@ args="$*"
 case $args in
   "api user --jq .login") echo owner ;;
   "search repos "*) printf 'acme/shop\nacme/lost\n' ;;
-  "api repos/acme/shop/rulesets "*) echo active ;;
-  "api repos/acme/off/rulesets "*) echo "" ;;
+  "api repos/acme/shop/rulesets"*) echo active ;;
+  "api repos/acme/off/rulesets"*) echo "" ;;
   "pr list -R acme/shop "*) cat "$FAKE_PRS" ;;
   "pr list -R acme/off "*) echo '[]' ;;
   "search prs "*) printf 'acme/new\thttps://github.com/acme/new/pull/1\tchore: install the kit\n' ;;
@@ -250,6 +250,71 @@ run_shim() {
   printf '%s' $?
   set -e
 }
+echo "rulesets and CODEOWNERS"
+checks=$(pinned_checks $'checks-node\n')
+expect_eq "checks pinned to GitHub Actions" "$checks" \
+  '[{"context":"guard","integration_id":15368},{"context":"checks-node","integration_id":15368}]'
+status_rules=$(status_mode_ruleset agent-guardrails "$checks")
+expect_eq "status mode requires merge-approval, no review" \
+  "$(jq -c '[(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks | map(.context)),
+    (.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count), .bypass_actors]' <<<"$status_rules")" \
+  '[["guard","checks-node","merge-approval"],0,[]]'
+branch_rules=$(branch_ruleset agent-guardrails "$checks")
+expect_eq "review mode's branch ruleset: the checks, no merge-approval, nobody bypasses" \
+  "$(jq -c '[(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks | map(.context)),
+    .bypass_actors]' <<<"$branch_rules")" '[["guard","checks-node"],[]]'
+expect_eq "both modes keep history linear and the branch undeletable" \
+  "$(jq -c '[.rules[].type]' <<<"$branch_rules") $(jq -c '[.rules[].type]' <<<"$status_rules")" \
+  '["deletion","non_fast_forward","required_linear_history","pull_request","required_status_checks"] ["deletion","non_fast_forward","required_linear_history","pull_request","required_status_checks"]'
+review_rules=$(review_ruleset agent-guardrails-review)
+expect_eq "the review ruleset holds only a fresh code owner review" \
+  "$(jq -c '[[.rules[].type], (.rules[0].parameters
+      | [.required_approving_review_count, .require_code_owner_review, .dismiss_stale_reviews_on_push, .require_last_push_approval])]' \
+    <<<"$review_rules")" '[["pull_request"],[1,true,true,true]]'
+expect_eq "only admins bypass the review, and only through a PR" "$(jq -c .bypass_actors <<<"$review_rules")" \
+  '[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'
+expect_eq "approval mode of each ruleset" \
+  "$(for r in "$status_rules" "$branch_rules" "$review_rules"; do ruleset_approval_mode <<<"$r"; done | tr '\n' ' ')" \
+  "status - review "
+expect_eq "a weakened review ruleset is no approval mode" \
+  "$(jq -c '.rules[0].parameters.dismiss_stale_reviews_on_push = false' <<<"$review_rules" | ruleset_approval_mode) $(
+    jq -c '.enforcement = "evaluate"' <<<"$status_rules" | ruleset_approval_mode)" "- -"
+expect_eq "tags: every tag, admins only" "$(tag_ruleset agent-guardrails-tags | jq -c '[.target, .conditions.ref_name.include, [.rules[].type], .bypass_actors[0].bypass_mode]')" \
+  '["tag",["~ALL"],["creation","update","deletion"],"always"]'
+owners="$work/owners"
+mkdir -p "$owners/.github" "$owners/docs"
+expect_eq "missing CODEOWNERS" "$(codeowners_problems "$owners" Alice)" \
+  "no CODEOWNERS file; add .github/CODEOWNERS whose first line is: * @Alice"
+printf '# owners\n\n* @alice @acme/devs\nsrc/pay/ @acme/payments\n' >"$owners/.github/CODEOWNERS"
+printf 'docs/\n' >"$owners/docs/CODEOWNERS"
+expect_eq "catch-all owned by the login (any case) is usable; later files are ignored" "$(codeowners_problems "$owners" Alice)" ""
+printf '* @bob\n' >"$owners/.github/CODEOWNERS"
+expect_eq "catch-all owned by someone else" "$(codeowners_problems "$owners" alice)" \
+  '.github/CODEOWNERS: the first rule must be "* @alice" (found "* @bob")'
+printf 'src/ @alice\n* @alice\n' >"$owners/.github/CODEOWNERS"
+expect_eq "catch-all not first" "$(codeowners_problems "$owners" alice)" \
+  '.github/CODEOWNERS: the first rule must be "* @alice" (found "src/ @alice")'
+printf '* @alice\nvendor/\n' >"$owners/.github/CODEOWNERS"
+expect_eq "a rule without owners" "$(codeowners_problems "$owners" alice)" \
+  '.github/CODEOWNERS: "vendor/" names no owner, so its paths need no code owner review'
+printf '* # @alice\nvendor/ # @alice\nmy\\ dir/\nlib/ dev@acme.dev\r\n' >"$owners/.github/CODEOWNERS"
+expect_eq "owners inside comments do not count; escaped spaces stay in the pattern; emails are owners" \
+  "$(codeowners_problems "$owners" alice)" '.github/CODEOWNERS: the first rule must be "* @alice" (found "*")
+.github/CODEOWNERS: "*" names no owner, so its paths need no code owner review
+.github/CODEOWNERS: "vendor/" names no owner, so its paths need no code owner review
+.github/CODEOWNERS: "my\ dir/" names no owner, so its paths need no code owner review'
+printf '# only comments\n' >"$owners/.github/CODEOWNERS"
+expect_eq "a file without rules" "$(codeowners_problems "$owners" alice)" \
+  '.github/CODEOWNERS: no rules; its first line must be "* @alice"'
+rm "$owners/.github/CODEOWNERS"
+printf '* @alice\n' >"$owners/CODEOWNERS"
+expect_eq "root CODEOWNERS is used before docs/" "$(codeowners_problems "$owners" alice)" ""
+reviewed=$(jq -c '[.[] | select(.url == "u3" or .url == "u7") | .reviewDecision = "APPROVED"]' <<<"$fixture" |
+  pr_states | jq -r .kind | tr '\n' ' ')
+expect_eq "review mode: an approving review decision counts as approved" "$reviewed" "approved approved "
+pending=$(jq -c '[.[] | select(.url == "u3") | .reviewDecision = "REVIEW_REQUIRED"]' <<<"$fixture" | pr_states | jq -r .kind)
+expect_eq "review mode: a required review still waits for the owner" "$pending" "approve"
+
 echo "graphql_with_retry"
 # A fake gh fails as GitHub does on a timed-out query until $FLAKY_FAILS calls have failed.
 flaky_bin="$work/flaky-bin"

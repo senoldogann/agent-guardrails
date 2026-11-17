@@ -39,10 +39,29 @@ changing anything. To update, run `git pull --ff-only` in the clone, then `insta
 3. Work ticket by ticket: `/ticket-spec` writes the spec and its open questions, you answer and lock it, and
    `/ticket-implement` builds against it.
 4. When CI is green, approve the PR's exact HEAD with `guardrails approve <PR URL>` or **Review** in the app.
-   Approving takes a typed confirmation, and in the app also Touch ID.
+   Approving takes a typed confirmation, and in the app also Touch ID. In review mode (below) an approving
+   review on github.com or GitHub Mobile works too.
 
 Run `guardrails` with no arguments to see what waits for you. `guardrails off <owner/repo>` turns a project
 off again.
+
+## The agent's own GitHub identity (review mode)
+
+Without it the agent works with your GitHub login. GitHub does not let you approve your own pull requests, so
+the kit records your approval as a commit status (status mode). With an agent App the agent pushes and opens
+PRs as the App's bot, and you approve them like any teammate's PR (review mode):
+
+1. `guardrails agent create` registers a private GitHub App in your browser. It may write contents and pull
+   requests only: no workflows, administration or statuses.
+2. Install it with **Only select repositories** on the projects the agent works in.
+3. Make sure each project has `.github/CODEOWNERS` whose first line is `* @<you>` (new set-up PRs add it).
+4. Run `guardrails on <owner/repo>` again. A code owner's review is then required, and GitHub dismisses it on
+   every new push. As admin you may merge your own PRs without a review (`gh pr merge --admin`); their
+   checks are still required.
+
+`guardrails agent status` shows where the App is installed; `guardrails status` shows each project's mode.
+While the agent runs as your computer user it can still reach your own login, so the identity separates
+whose work is whose (and makes reviews possible); it is not a security boundary against the agent itself.
 
 ## How it is enforced
 

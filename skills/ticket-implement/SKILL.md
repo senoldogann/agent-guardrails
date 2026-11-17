@@ -26,11 +26,12 @@ disable-model-invocation: true
 4. Commit (Conventional Commits), then `.agent/bin/finish`: it runs `make check` on the committed HEAD and logs
    it under the ticket, so `.agent/bin/report-checks <ID>` can prove the evidence matches what you push.
    Then push, mark the PR ready (`gh pr ready`), enable auto-merge
-   (`gh pr merge --auto --squash`). It merges only after CI is green and the owner runs `approve-head` for
-   that exact HEAD. Do not push after asking for approval unless asked: a push invalidates it.
-5. Post a PR comment for the owner, in plain language, with the command to copy:
-   `Ready for your approval. In your own terminal (not the agent's) run: approve-head <PR URL>`.
-   The owner's `guardrails` inbox lists the PR as well, so they can also pick it with `guardrails approve`.
+   (`gh pr merge --auto --squash`). It merges only after CI is green and the owner approves that exact HEAD.
+   Do not push after asking for approval unless asked: a push invalidates it.
+5. Post a PR comment for the owner, in plain language (`gh pr comment --body-file`). If the session start
+   said gh runs as the agent App's bot (review mode): `Ready for your review: approve it on GitHub, or in
+   your own terminal run: approve-head <PR URL>`. Otherwise: `Ready for your approval. In your own terminal
+   (not the agent's) run: approve-head <PR URL>`. The owner's `guardrails` inbox lists the PR as well.
 
 ## When the mutation gate fails
 

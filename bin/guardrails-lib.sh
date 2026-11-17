@@ -162,10 +162,11 @@ remove_agents_section() {
   rm -f "$file.tmp"
 }
 
-# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup[,author,updatedAt]` on
-# stdin and prints one compact JSON object per PR: {number, url, title, kind, note, sha, draft, author, updated}.
-# Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's work in progress),
-# approved (HEAD already approved), wait (guard running), blocked (guard failed), approve (guard passed,
+# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision
+# [,author,updatedAt]` on stdin and prints one compact JSON object per PR: {number, url, title, kind, note, sha,
+# draft, author, updated}. Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's
+# work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
+# review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
 # HEAD not approved yet). Any failed run named guard wins over a later success, because a workflow added by
 # the PR could report a run of that name (approve-head checks the real guard run). Titles are written by
 # the agent, so control characters are replaced before they reach a terminal or the app.
@@ -187,7 +188,7 @@ pr_states() {
        else "checks failing" end) as $checks_note
     | (if any(.labels[]?; .name == "needs-decision") then ["answer", "the agent is waiting for your decision"]
        elif .isDraft then ["draft", "the agent is working on it"]
-       elif ($approval.state // "") == "SUCCESS" then ["approved", "approved; merges when checks pass"]
+       elif ($approval.state // "") == "SUCCESS" or .reviewDecision == "APPROVED" then ["approved", "approved; merges when checks pass"]
        elif $guard == null or $guard.status != "COMPLETED" then ["wait", "guard is running"]
        elif $guard.conclusion != "SUCCESS" then ["blocked", "guard failed: the agent has to fix the PR"]
        else ["approve", $checks_note] end) as $state
@@ -254,4 +255,115 @@ graphql_with_retry() {
   done
   rm -f "$err_file"
   die "GitHub did not answer the GraphQL query after $attempts attempts. Last error: $err"
+}
+
+# The required checks of a kit repository as ruleset entries: guard and each checks-<lang> job, pinned to
+# GitHub Actions (integration 15368) so no other App can report them. Argument: job names, one per line.
+pinned_checks() {
+  jq -c -n --arg jobs "$1" '["guard"] + ($jobs | split("\n") | map(select(length > 0)))
+    | map({context: ., integration_id: 15368})'
+}
+
+# The default-branch ruleset nobody bypasses, in both modes: no deletion, no force push, linear history,
+# squash-merged PRs with resolved threads, and the required checks.
+# Arguments: ruleset name, required checks (JSON array of {context[, integration_id]}).
+branch_ruleset() {
+  jq -c -n --arg name "$1" --argjson checks "$2" '{
+    name: $name, target: "branch", enforcement: "active", bypass_actors: [],
+    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+    rules: [
+      {type: "deletion"}, {type: "non_fast_forward"}, {type: "required_linear_history"},
+      {type: "pull_request", parameters: {
+        required_approving_review_count: 0, require_code_owner_review: false,
+        dismiss_stale_reviews_on_push: false, require_last_push_approval: false,
+        required_review_thread_resolution: true, allowed_merge_methods: ["squash"]}},
+      {type: "required_status_checks", parameters: {
+        strict_required_status_checks_policy: false, required_status_checks: $checks}}
+    ]}'
+}
+
+# Status mode (the agent works with the owner's login, so a GitHub review cannot express the owner's
+# approval): the branch ruleset also requires the owner's commit status merge-approval on the exact HEAD.
+# Arguments: ruleset name, pinned checks (JSON array).
+status_mode_ruleset() {
+  branch_ruleset "$1" "$(jq -c '. + [{context: "merge-approval"}]' <<<"$2")"
+}
+
+# Review mode (the agent pushes as its App's bot): a separate ruleset holds only the review rule, so the
+# owner's bypass for their own PRs skips the review and nothing else (checks, history, deletion stay). It needs
+# one approving review from a code owner; bots cannot be code owners. A push that changes the diff or the
+# merge base dismisses it, and the last push must be approved by someone other than its pusher. Admins may
+# bypass it only by merging a PR, never by pushing. Argument: ruleset name.
+review_ruleset() {
+  jq -c -n --arg name "$1" '{
+    name: $name, target: "branch", enforcement: "active",
+    bypass_actors: [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}],
+    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+    rules: [{type: "pull_request", parameters: {
+      required_approving_review_count: 1, require_code_owner_review: true,
+      dismiss_stale_reviews_on_push: true, require_last_push_approval: true,
+      required_review_thread_resolution: true, allowed_merge_methods: ["squash"]}}]}'
+}
+
+# Reads a live ruleset (GET /repos/{r}/rulesets/{id}) and prints its approval mode for the default branch:
+# "status" when it is active and requires merge-approval, "review" when it is an active review ruleset as
+# review_ruleset builds it (all four review settings on), "-" otherwise.
+ruleset_approval_mode() {
+  jq -r 'if .enforcement != "active" then "-"
+    elif any(.rules[]; .type == "required_status_checks"
+      and any(.parameters.required_status_checks[]; .context == "merge-approval")) then "status"
+    elif any(.rules[]; .type == "pull_request" and .parameters.required_approving_review_count >= 1
+      and .parameters.require_code_owner_review and .parameters.dismiss_stale_reviews_on_push
+      and .parameters.require_last_push_approval) then "review"
+    else "-" end'
+}
+
+# Tags are created, moved and deleted by repository admins only, so a release workflow cannot be triggered by
+# a tag the agent's bot made. In status mode the agent uses the owner's admin login, so this holds only for
+# other writers there. Argument: ruleset name.
+tag_ruleset() {
+  jq -c -n --arg name "$1" '{
+    name: $name, target: "tag", enforcement: "active",
+    bypass_actors: [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}],
+    conditions: {ref_name: {include: ["~ALL"], exclude: []}},
+    rules: [{type: "creation"}, {type: "update"}, {type: "deletion"}]}'
+}
+
+# Prints one line per problem with a checkout's CODEOWNERS for review mode, nothing when it is usable. GitHub
+# uses the first of .github/CODEOWNERS, CODEOWNERS and docs/CODEOWNERS. Its first rule must be `*` owned by
+# the given login (so every path has a human code owner), and every rule must name at least one owner (a rule
+# without owners leaves its paths without a code owner). Owners are @user, @org/team or an email address;
+# anything from a field starting with # is a comment, and `\ ` is an escaped space inside a pattern. Whether
+# the owners exist and can write is GitHub's check (GET /repos/{r}/codeowners/errors), not this one's.
+# Arguments: checkout directory, owner login.
+codeowners_problems() {
+  local dir=$1 login=$2 file="" candidate
+  for candidate in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+    if [[ -f $dir/$candidate ]]; then
+      file=$candidate
+      break
+    fi
+  done
+  if [[ -z $file ]]; then
+    printf 'no CODEOWNERS file; add .github/CODEOWNERS whose first line is: * @%s\n' "$login"
+    return 0
+  fi
+  tr -d '\r' <"$dir/$file" | awk -v file="$file" -v login="@$(tr '[:upper:]' '[:lower:]' <<<"$login")" '
+    {
+      gsub(/\\ /, "\001")
+      n = 0; owners = ""; mine = 0
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^#/) break
+        n++
+        if (n == 1) { pattern = $i; continue }
+        if ($i ~ /^@[^@]+$/ || $i ~ /^[^@]+@[^@]+$/) { owners = owners " " $i; if (tolower($i) == login) mine = 1 }
+      }
+      if (n == 0) next
+      gsub(/\001/, "\\ ", pattern)
+      rules++
+      if (rules == 1 && (pattern != "*" || !mine))
+        printf "%s: the first rule must be \"* %s\" (found \"%s%s\")\n", file, login, pattern, owners
+      if (owners == "") printf "%s: \"%s\" names no owner, so its paths need no code owner review\n", file, pattern
+    }
+    END { if (rules == 0) printf "%s: no rules; its first line must be \"* %s\"\n", file, login }'
 }

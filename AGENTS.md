@@ -15,8 +15,11 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `template/.github/workflows/agent-guard.yml` base-branch guard.
 - `bin/guardrails`: the owner's command. Without arguments it lists what waits for the owner across enforced
   repos; `on` checks a bootstrap PR's kit files against this install, merges it and applies the ruleset;
-  `off` deletes the ruleset and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
-  and `bin/revoke-head` (approval of a PR's exact HEAD as the commit status `merge-approval`). Enforced repos
+  `off` deletes the rulesets and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
+  and `bin/revoke-head` (approval of a PR's exact HEAD). `on` picks the mode: review mode when the agent App is
+  installed on the repo (a code owner's GitHub review pinned to the commit, CODEOWNERS required; the review
+  sits in its own ruleset that admins may bypass through a PR, while the branch ruleset with the checks has no
+  bypass), status mode otherwise (the commit status `merge-approval`); both add a tag ruleset (admins only). Rulesets are built by pure functions in `bin/guardrails-lib.sh`. Enforced repos
   are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
   `agent create` registers the agent's own GitHub App through the manifest flow (`scripts/app-manifest-flow.py`,
   standard library only) and keeps its ID and private key in `~/.config/agent-guardrails/agent/`;

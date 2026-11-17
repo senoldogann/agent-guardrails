@@ -28,6 +28,8 @@ source "$kit/bin/agent-app-lib.sh"
 
 registry=$(guardrails_registry)
 ruleset_name=agent-guardrails
+review_ruleset_name=agent-guardrails-review
+tag_ruleset_name=agent-guardrails-tags
 topic=agent-guardrails
 tmp_dirs=""
 # shellcheck disable=SC2329,SC2317 # invoked by the EXIT trap
@@ -78,10 +80,35 @@ unregister() {
   mv "$registry.tmp" "$registry"
 }
 
-# Prints the ruleset's enforcement (active, evaluate, disabled) or "missing".
+# Prints the live ruleset with the given name, or nothing when the repository has none. Arguments: owner/repo, name.
+live_ruleset() {
+  local ruleset_id
+  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$2\") | .id")
+  [[ -z $ruleset_id ]] || gh api "repos/$1/rulesets/$ruleset_id"
+}
+
+# Prints "review", "status" or "-": how the active rulesets expect the owner's approval. Status mode needs the
+# branch ruleset to require merge-approval, review mode an active review ruleset as review_ruleset builds it.
+approval_mode() {
+  local branch review
+  branch=$(live_ruleset "$1" "$ruleset_name")
+  if [[ -n $branch && $(ruleset_approval_mode <<<"$branch") == status ]]; then
+    printf 'status\n'
+    return 0
+  fi
+  review=$(live_ruleset "$1" "$review_ruleset_name")
+  if [[ -n $branch && $(jq -r .enforcement <<<"$branch") == active && -n $review &&
+    $(ruleset_approval_mode <<<"$review") == review ]]; then
+    printf 'review\n'
+    return 0
+  fi
+  printf -- '-\n'
+}
+
+# Prints the branch ruleset's enforcement (active, evaluate, disabled) or "missing".
 ruleset_state() {
   local state
-  state=$(gh api "repos/$1/rulesets" --jq ".[] | select(.name == \"$ruleset_name\") | .enforcement")
+  state=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$ruleset_name\") | .enforcement")
   printf '%s\n' "${state:-missing}"
 }
 
@@ -115,34 +142,64 @@ require_no_status_rights() {
   done
 }
 
-# Applies the ruleset and repository settings the kit relies on. Required checks come from the
-# checkout's own checks-<lang> workflows.
-enforce() {
-  local repo=$1 dir=$2 jobs required ruleset ruleset_id
-  jobs=$(check_jobs "$dir")
-  [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
-  # Actions-produced checks are pinned to GitHub Actions (15368); merge-approval is the owner's commit
-  # status, which has no app to pin to. ci-guard keeps PR workflows from defining jobs with these names.
-  required=$(jq -n --arg jobs "$jobs" '(["guard"] + ($jobs | split("\n") | map(select(length > 0)))
-    | map({context: ., integration_id: 15368})) + [{context: "merge-approval"}]')
-  ruleset=$(jq -n --arg name "$ruleset_name" --argjson required "$required" '{
-    name: $name, target: "branch", enforcement: "active", bypass_actors: [],
-    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
-    rules: [
-      {type: "deletion"}, {type: "non_fast_forward"}, {type: "required_linear_history"},
-      {type: "pull_request", parameters: {
-        required_approving_review_count: 0, require_code_owner_review: false,
-        dismiss_stale_reviews_on_push: false, require_last_push_approval: false,
-        required_review_thread_resolution: true, allowed_merge_methods: ["squash"]}},
-      {type: "required_status_checks", parameters: {
-        strict_required_status_checks_policy: false, required_status_checks: $required}}
-    ]}')
-  ruleset_id=$(gh api "repos/$repo/rulesets" --jq ".[] | select(.name == \"$ruleset_name\") | .id")
+# Creates or replaces the ruleset with the given name. Arguments: owner/repo, name, ruleset JSON.
+put_ruleset() {
+  local repo=$1 name=$2 ruleset=$3 ruleset_id
+  ruleset_id=$(gh api "repos/$repo/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$name\") | .id")
   if [[ -n $ruleset_id ]]; then
     gh api -X PUT "repos/$repo/rulesets/$ruleset_id" --input - <<<"$ruleset" >/dev/null
   else
     gh api -X POST "repos/$repo/rulesets" --input - <<<"$ruleset" >/dev/null
   fi
+}
+
+# Deletes the ruleset with the given name if the repository has it. Arguments: owner/repo, name.
+delete_ruleset() {
+  local ruleset_id
+  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$2\") | .id")
+  [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$1/rulesets/$ruleset_id" >/dev/null
+}
+
+# Succeeds when review mode applies: the agent App is installed on the repository, on selected repositories
+# only and with no extra permission, and the default branch's CODEOWNERS gives every path to the owner with
+# no errors GitHub reports. Fails (status mode) when the App is not registered here or not installed there.
+# Dies when the App is installed but a precondition is missing, and when the lookup itself fails, so an error
+# never quietly turns into status mode. Arguments: owner/repo, checkout of the default branch.
+review_mode_ready() {
+  local repo=$1 dir=$2 installation problems errors
+  agent_app_registered || return 1
+  installation=$(agent_installation "$repo") || die "cannot tell whether the agent App is installed on $repo; nothing changed"
+  [[ -n $installation ]] || return 1
+  problems=$({
+    installation_problems <<<"$installation"
+    codeowners_problems "$dir" "$(login)"
+  })
+  errors=$(gh api "repos/$repo/codeowners/errors" --jq '.errors[] | "CODEOWNERS line \(.line): \(.message | split("\n")[0])"') ||
+    die "cannot read CODEOWNERS errors of $repo from GitHub; nothing changed"
+  [[ -z $problems$errors ]] || die "the agent App is installed on $repo, but review mode needs:
+$problems${problems:+${errors:+$'\n'}}$errors
+Fix this in a PR you author (while status mode is on: guardrails approve <PR link>), then run: guardrails on $repo"
+}
+
+# Applies the rulesets and repository settings the kit relies on. Required checks come from the
+# checkout's own checks-<lang> workflows. Nobody bypasses the branch ruleset (checks, history, deletion); in
+# review mode a separate review ruleset lets admins merge their own PRs without a review.
+enforce() {
+  local repo=$1 dir=$2 jobs checks mode
+  jobs=$(check_jobs "$dir")
+  [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
+  # ci-guard keeps PR workflows from defining jobs with these names.
+  checks=$(pinned_checks "$jobs")
+  if review_mode_ready "$repo" "$dir"; then
+    put_ruleset "$repo" "$ruleset_name" "$(branch_ruleset "$ruleset_name" "$checks")"
+    put_ruleset "$repo" "$review_ruleset_name" "$(review_ruleset "$review_ruleset_name")"
+    mode="review mode: approve the agent's PRs with a GitHub review (guardrails approve, github.com or GitHub Mobile); tags: admins only"
+  else
+    put_ruleset "$repo" "$ruleset_name" "$(status_mode_ruleset "$ruleset_name" "$checks")"
+    delete_ruleset "$repo" "$review_ruleset_name"
+    mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval); tags: admins, which includes the agent while it uses your login"
+  fi
+  put_ruleset "$repo" "$tag_ruleset_name" "$(tag_ruleset "$tag_ruleset_name")"
   gh api -X PATCH "repos/$repo" -F allow_squash_merge=true -F allow_merge_commit=false \
     -F allow_rebase_merge=false -F allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null
   gh api -X PUT "repos/$repo/actions/permissions/workflow" \
@@ -152,7 +209,7 @@ enforce() {
   gh label create needs-decision -R "$repo" --force --color D93F0B \
     --description "The agent is waiting for the owner's decision" >/dev/null
   gh repo edit "$repo" --add-topic "$topic" >/dev/null
-  printf 'on: %s (ruleset active, required checks: guard %s merge-approval)\n' "$repo" "$(tr '\n' ' ' <<<"$jobs")"
+  printf 'on: %s (%s; required checks: guard %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
 on_pr() {
@@ -225,7 +282,7 @@ on_repo() {
 }
 
 off_repo() {
-  local repo=$1 default_branch dir notes ruleset_id branch=chore/remove-agent-guardrails url head file
+  local repo=$1 default_branch dir notes name branch=chore/remove-agent-guardrails url head file
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch")
   tmp_dirs+=" $dir"
@@ -236,6 +293,8 @@ off_repo() {
   git -C "$dir" add -A
 
   printf '\nTurning off %s:\n  - delete the %s ruleset (merges no longer wait for checks or your approval)\n' "$repo" "$ruleset_name"
+  printf '  - delete the %s and %s rulesets (no review required, anyone with write access can create tags)\n' \
+    "$review_ruleset_name" "$tag_ruleset_name"
   printf '  - stop treating it as a kit repo on this machine and remove its %s topic\n' "$topic"
   printf '  - keep the repository settings the kit set: squash merge only, auto-merge allowed, branch deleted\n'
   printf '    on merge, read-only workflow token, actions pinned to SHAs, label needs-decision\n'
@@ -265,9 +324,10 @@ off_repo() {
     head=$(git -C "$dir" rev-parse HEAD)
     git -C "$dir" push --quiet -u origin "$branch"
   fi
-  ruleset_id=$(gh api "repos/$repo/rulesets" --jq ".[] | select(.name == \"$ruleset_name\") | .id")
-  [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$repo/rulesets/$ruleset_id" >/dev/null
-  printf 'ruleset deleted\n'
+  for name in "$ruleset_name" "$review_ruleset_name" "$tag_ruleset_name"; do
+    delete_ruleset "$repo" "$name"
+  done
+  printf 'rulesets deleted\n'
   if [[ -n ${head:-} ]]; then
     url=$(cd "$dir" && gh pr create --base "$default_branch" --head "$branch" \
       --title "chore: remove agent guardrails kit" \
@@ -283,7 +343,7 @@ off_repo() {
 # Prints the tab-separated inbox items (see classify_prs) of one repo.
 repo_items() {
   gh pr list -R "$1" --state open --limit 100 \
-    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup | classify_prs
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision | classify_prs
 }
 
 login() {
@@ -419,7 +479,7 @@ projects_json() {
 prs_json() {
   [[ $1 =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "not an owner/repo name: $1"
   gh pr list -R "$1" --state open --limit 100 \
-    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,author,updatedAt | pr_states
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,author,updatedAt | pr_states
 }
 
 approve_pick() {
@@ -441,7 +501,7 @@ approve_pick() {
 }
 
 status() {
-  local repo default_branch dir drift
+  local repo default_branch dir drift mode owners
   kit_install_alarm
   printf 'kit install: %s at %s\n' "$kit" "$(kit_git rev-parse --short HEAD)"
   while IFS= read -r repo; do
@@ -450,8 +510,16 @@ status() {
     dir=$(clone_at "$repo" "$default_branch")
     tmp_dirs+=" $dir"
     drift=$(kit_drift "$dir")
-    printf '%-45s ruleset %-8s kit files %s\n' "$repo" "$(ruleset_state "$repo")" \
+    mode=$(approval_mode "$repo")
+    printf '%-45s ruleset %-8s approval %-6s tags %-8s kit files %s\n' "$repo" "$(ruleset_state "$repo")" \
+      "$mode" "$(gh api "repos/$repo/rulesets?includes_parents=false" \
+        --jq "[.[] | select(.name == \"$tag_ruleset_name\") | .enforcement] | first // \"missing\"")" \
       "$([[ -z $drift ]] && printf 'same as installed kit' || printf 'differ from installed kit (kit update PR needed)')"
+    # A CODEOWNERS change merged after `on` could leave paths without a human code owner.
+    if [[ $mode == review ]]; then
+      owners=$(codeowners_problems "$dir" "$(login)")
+      [[ -z $owners ]] || printf '  ALARM %s\n' "${owners//$'\n'/$'\n'  ALARM }"
+    fi
   done < <(registered_repos)
   [[ -s $registry ]] || printf 'no enforced repos\n'
 }
@@ -494,13 +562,21 @@ agent_create() {
 
 # Prints the agent App and, for every enforced repository, whether it is installed there safely.
 agent_status() {
-  local dir repo installation problems
+  local dir repo installation problems jwt id account selection token
   dir=$(agent_dir)
   if ! agent_app_registered; then
     printf 'no agent App registered on this machine: the agent works with your GitHub login (run guardrails agent create)\n'
     return 0
   fi
   printf 'agent App: %s (%s[bot])\n' "$(jq -r .html_url "$dir/app.json")" "$(jq -r .slug "$dir/app.json")"
+  jwt=$(app_jwt "$(jq -r .client_id "$dir/app.json")" "$dir/private-key.pem" "$(date +%s)")
+  while IFS=$'\t' read -r id account selection; do
+    [[ -n $id ]] || continue
+    token=$(github_app_api POST "/app/installations/$id/access_tokens" "$jwt" '{"permissions":{"metadata":"read"}}' | jq -r .token)
+    printf 'installed on %s (%s repositories): %s\n' "$account" "$selection" \
+      "$(github_app_api GET "/installation/repositories?per_page=100" "$token" "" | jq -r '[.repositories[].full_name] | join(", ")')"
+  done < <(github_app_api GET /app/installations "$jwt" "" | jq -r '.[] | [.id, .account.login, .repository_selection] | @tsv')
+  printf 'enforced repositories:\n'
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     installation=$(agent_installation "$repo")
