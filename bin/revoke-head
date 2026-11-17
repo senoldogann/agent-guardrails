@@ -10,14 +10,16 @@ source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
 source "$kit/bin/pr-target.sh"
 require_args 1 $# "revoke-head <pr-link-or-number>"
 
-[[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} && -z ${GH_CONFIG_DIR:-} ]] ||
-  die "GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR is set: this looks like the agent's environment. Run revoke-head in your own shell."
-
+source "$kit/bin/guardrails-lib.sh"
+require_owner_environment revoke-head
 [[ -t 0 ]] || die "revoke-head needs an interactive terminal"
+# Like approve-head: this posts statuses and dismisses reviews with the owner's credentials.
+require_reviewed_kit
 
-read -r repo pr < <(pr_target "$1")
-sha=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid)
-owner=$(gh api user --jq .login)
+target=$(pr_target "$1") || exit 1
+read -r repo pr <<<"$target"
+sha=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid) || die "cannot read PR #$pr of $repo"
+owner=$(gh api user --jq .login) || die "cannot read your GitHub login (gh auth status)"
 
 # Posted in both modes: the newest status of a context wins, and in review mode it is not required (harmless).
 gh api -X POST "repos/$repo/statuses/$sha" -f state=failure -f context=merge-approval \

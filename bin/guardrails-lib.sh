@@ -53,6 +53,19 @@ kit_local_changes() {
   kit_git ls-files -v | awk '$1 != "H" { sub(/^[^ ]+ /, ""); print "not watched by git: " $0 }'
 }
 
+# Succeeds when the workflow on stdin lets its token write check runs or commit statuses (and so could fake a
+# required check or an approval): `checks: write`, `statuses: write` or `write-all`.
+grants_check_or_status_writes() {
+  grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null
+}
+
+# Dies in the agent's environment: the agent's sessions set a GitHub token or point gh at the agent App's
+# config. The owner's commands run only in the owner's own shell. Argument: the command's name.
+require_owner_environment() {
+  [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} && -z ${GH_CONFIG_DIR:-} ]] ||
+    die "GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR is set: this looks like the agent's environment. Run $1 in your own shell."
+}
+
 # Dies unless the kit install is exactly the reviewed main of its origin: no local changes, HEAD equal to
 # origin's main. The owner's commands and the template they compare against come from this checkout, so
 # a change an agent made there must not silently become the reference.
@@ -317,6 +330,44 @@ review_ruleset() {
       required_review_thread_resolution: true, allowed_merge_methods: ["squash"]}}]}'
 }
 
+# Prints the repository's own ruleset with the given name (GET /repos/{r}/rulesets/{id}), nothing when it has
+# none. Dies when GitHub cannot be read, so a failed lookup never reads as "no ruleset". It runs inside $(...),
+# where `set -e` does not apply: callers write `x=$(ruleset_by_name ...) || exit 1`. Arguments: owner/repo, name.
+ruleset_by_name() {
+  local repo=$1 name=$2 id
+  id=$(gh api --paginate "repos/$repo/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$name\") | .id") ||
+    die "cannot list the rulesets of $repo"
+  id=${id%%$'\n'*}
+  [[ -z $id ]] || gh api "repos/$repo/rulesets/$id" || die "cannot read ruleset $name of $repo"
+}
+
+# Prints the enforcement of the repository's ruleset with the given name (active, evaluate, disabled), or
+# "missing". Arguments: owner/repo, name.
+ruleset_enforcement() {
+  local ruleset
+  ruleset=$(ruleset_by_name "$1" "$2") || exit 1
+  if [[ -z $ruleset ]]; then printf 'missing\n'; else jq -r .enforcement <<<"$ruleset"; fi
+}
+
+# Prints "review", "status" or "-": how the live rulesets of a repository expect the owner's approval. Status
+# mode needs the branch ruleset agent-guardrails to be active and require merge-approval; review mode needs it
+# active next to the review ruleset agent-guardrails-review with every review setting on. Argument: owner/repo.
+approval_mode() {
+  local branch review
+  branch=$(ruleset_by_name "$1" agent-guardrails) || exit 1
+  if [[ -n $branch && $(ruleset_approval_mode <<<"$branch") == status ]]; then
+    printf 'status\n'
+    return 0
+  fi
+  review=$(ruleset_by_name "$1" agent-guardrails-review) || exit 1
+  if [[ -n $branch && $(jq -r .enforcement <<<"$branch") == active && -n $review &&
+    $(ruleset_approval_mode <<<"$review") == review ]]; then
+    printf 'review\n'
+    return 0
+  fi
+  printf -- '-\n'
+}
+
 # Reads a live ruleset (GET /repos/{r}/rulesets/{id}) and prints its approval mode for the default branch:
 # "status" when it is active and requires merge-approval, "review" when it is an active review ruleset as
 # review_ruleset builds it (all four review settings on), "-" otherwise.
@@ -378,4 +429,55 @@ codeowners_problems() {
       if (owners == "") printf "%s: \"%s\" names no owner, so its paths need no code owner review\n", file, pattern
     }
     END { if (rules == 0) printf "%s: no rules; its first line must be \"* %s\"\n", file, login }'
+}
+
+# Asks for a typed confirmation on the terminal (never stdin, which a caller could pipe) and dies unless it is
+# exactly the expected text. Announces the step to the app first. Arguments: step, expected text, prompt.
+confirm() {
+  local step=$1 expected=$2 prompt=$3 typed
+  emit_event "$(jq -n -c --arg step "$step" --arg expect "$expected" '{event: "confirm", step: $step, expect: $expect}')"
+  read -r -p "$prompt" typed </dev/tty
+  [[ $typed == "$expected" ]] || die "confirmation did not match; nothing changed"
+}
+
+# Prints a file of the kit install at a commit, or "unknown" when that commit has no such file.
+kit_file_at() {
+  kit_git show "$1:$2" 2>/dev/null || printf 'unknown\n'
+}
+
+# Fast-forwards the kit install to its origin's main after the owner confirms the exact new commit, then runs
+# install.sh again and, on macOS with the app installed, rebuilds the app. Refuses local changes, a branch
+# other than main, and an origin main that does not contain the installed commit.
+kit_update() {
+  local current target commits from_version to_version
+  [[ -z $(kit_local_changes) ]] ||
+    die "the kit install at $kit has local changes, so it cannot be fast-forwarded. Inspect them with: git -C $kit status"
+  [[ $(kit_git symbolic-ref --quiet --short HEAD) == main ]] ||
+    die "the kit install at $kit is not on main. Switch it with: git -C $kit switch main"
+  kit_git fetch --quiet origin main || die "cannot fetch main from $(kit_git remote get-url origin)"
+  current=$(kit_git rev-parse HEAD)
+  target=$(kit_git rev-parse FETCH_HEAD)
+  if [[ $current == "$target" ]]; then
+    printf 'the kit install is up to date (%s)\n' "${current:0:7}"
+    return 0
+  fi
+  kit_git merge-base --is-ancestor "$current" "$target" ||
+    die "main of the kit origin does not contain the installed commit ${current:0:7}; inspect it before updating"
+  # Commit subjects come from the kit repository, where agents work too: no control characters reach the terminal.
+  commits=$(kit_git log --format='%h %s' "$current..$target" | LC_ALL=C tr -d '\000-\010\013-\037\177')
+  from_version=$(kit_file_at "$current" VERSION)
+  to_version=$(kit_file_at "$target" VERSION)
+  printf '\nUpdate the kit install at %s\nfrom %s (version %s) to %s (version %s):\n%s\n\n' "$kit" \
+    "${current:0:7}" "$from_version" "${target:0:7}" "$to_version" "  ${commits//$'\n'/$'\n'  }"
+  emit_event "$(jq -n -c --arg from "$current" --arg to "$target" \
+    --arg fromVersion "$from_version" --arg toVersion "$to_version" --arg commits "$commits" \
+    '{event: "plan", action: "update", from: $from, to: $to, fromVersion: $fromVersion, toVersion: $toVersion,
+      commits: ($commits | split("\n") | map(select(length > 0)))}')"
+  confirm commit "${target:0:7}" "Type ${target:0:7} to update the kit install to exactly this commit: "
+  kit_git merge --quiet --ff-only "$target"
+  "$kit/install.sh"
+  if [[ $(uname) == Darwin && -d $HOME/Applications/Guardrails.app ]]; then
+    "$kit/app/build.sh"
+  fi
+  printf 'updated the kit install to %s (version %s)\n' "${target:0:7}" "$to_version"
 }

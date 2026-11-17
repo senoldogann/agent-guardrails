@@ -42,9 +42,19 @@ check "identity hook renews tokens before Bash" 'grep -Fx "$kit/hooks-global/age
 check "identity hook starts sessions" '[[ $(jq -r ".hooks.SessionStart[].hooks[].command" "$home/.claude/settings.json") == "$kit/hooks-global/agent-identity.sh" ]]'
 out=$(run_install)
 check "second run changes nothing" '! grep -E "^(linked|moved|registered)" <<<"$out" >/dev/null'
+check "agent-guardrails is the same command" '[[ $(readlink "$home/.local/bin/agent-guardrails") == "$kit/bin/guardrails" ]]'
 rm "$home/.local/bin/revoke-head"
 printf 'mine\n' >"$home/.local/bin/revoke-head"
 check "a foreign file is not replaced" '! run_install >/dev/null 2>&1'
+
+# A foreign file in the way stops a fresh install before any link or hook exists.
+fresh_home="$work/fresh-home"
+mkdir -p "$fresh_home/.local/bin"
+printf 'mine\n' >"$fresh_home/.local/bin/agent-guardrails"
+fresh_out=$(HOME="$fresh_home" PATH="$fresh_home/.local/bin:$PATH" "$kit/install.sh" 2>&1) && fresh_status=0 || fresh_status=$?
+check "a foreign file stops the install" '[[ $fresh_status -ne 0 ]] && grep -F "$fresh_home/.local/bin/agent-guardrails" <<<"$fresh_out" >/dev/null'
+check "a foreign file leaves no link and no hook" '[[ ! -e $fresh_home/.claude/skills && ! -e $fresh_home/.local/bin/guardrails ]] &&
+  [[ $(jq -c . "$fresh_home/.claude/settings.json") == "{}" ]]'
 
 # Without jq and gh on PATH the install stops before touching anything.
 bare_home="$work/bare-home"

@@ -38,8 +38,20 @@ public final class TerminalSession {
 
     public init(command: [String], environment: [String: String]) throws {
         let input = try makePipe(command: command)
-        let terminal = try makePipe(command: command)
-        let events = try makePipe(command: command)
+        let terminal: (read: Int32, write: Int32)
+        let events: (read: Int32, write: Int32)
+        do {
+            terminal = try makePipe(command: command)
+        } catch {
+            closeAll([input.read, input.write])
+            throw error
+        }
+        do {
+            events = try makePipe(command: command)
+        } catch {
+            closeAll([input.read, input.write, terminal.read, terminal.write])
+            throw error
+        }
 
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
@@ -128,11 +140,12 @@ public final class TerminalSession {
         guard inputDescriptor >= 0 else {
             throw SpawnError(call: "write (input already closed)", code: EBADF, command: [])
         }
-        var bytes = Array(text.utf8)
+        let bytes = Array(text.utf8)
         var offset = 0
         while offset < bytes.count {
-            let written = bytes.withUnsafeMutableBytes { buffer in
-                write(inputDescriptor, buffer.baseAddress! + offset, buffer.count - offset)
+            let written = bytes.withUnsafeBytes { buffer -> Int in
+                guard let base = buffer.baseAddress else { return 0 }
+                return write(inputDescriptor, base + offset, buffer.count - offset)
             }
             if written < 0 {
                 if errno == EINTR { continue }
@@ -179,4 +192,9 @@ private func readChunks(from descriptor: Int32, handle: (Data) -> Void) {
 public func exitCode(fromWaitStatus status: Int32) -> Int32 {
     let signal = status & 0x7f
     return signal == 0 ? (status >> 8) & 0xff : 128 + signal
+}
+
+/// Closes descriptors of a session that could not be started.
+private func closeAll(_ descriptors: [Int32]) {
+    for descriptor in descriptors { close(descriptor) }
 }

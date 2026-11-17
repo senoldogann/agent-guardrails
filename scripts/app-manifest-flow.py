@@ -14,9 +14,13 @@ import http.server
 import json
 import secrets
 import sys
+import time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
+
+# How long the owner has to click "Create GitHub App" in the browser.
+FLOW_SECONDS = 600
 
 
 @dataclass(frozen=True)
@@ -77,12 +81,8 @@ def run_flow(manifest_template: str, registration_url: str) -> FlowResult:
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002 (signature of the base class)
             return
 
-    class Server(http.server.HTTPServer):
-        def handle_timeout(self) -> None:
-            errors.append("timed out after ten minutes waiting for GitHub")
-
-    server = Server(("127.0.0.1", 0), Handler)
-    server.timeout = 600
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    deadline = time.monotonic() + FLOW_SECONDS
     port = server.server_address[1]
     manifest_object = json.loads(manifest_template)
     manifest_object["redirect_url"] = f"http://127.0.0.1:{port}/callback"
@@ -92,6 +92,11 @@ def run_flow(manifest_template: str, registration_url: str) -> FlowResult:
     webbrowser.open(start)
     try:
         while not received:
+            # One overall deadline: every request (the page, a favicon, a reload) would restart a per-request timeout.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ManifestFlowError("timed out after ten minutes waiting for GitHub")
+            server.timeout = remaining
             server.handle_request()
             if errors:
                 raise ManifestFlowError(errors[-1])

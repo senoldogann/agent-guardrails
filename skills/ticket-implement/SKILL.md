@@ -30,8 +30,9 @@ disable-model-invocation: true
    Do not push after asking for approval unless asked: a push invalidates it.
 5. Post a PR comment for the owner, in plain language (`gh pr comment --body-file`). If the session start
    said gh runs as the agent App's bot (review mode): `Ready for your review: approve it on GitHub, or in
-   your own terminal run: approve-head <PR URL>`. Otherwise: `Ready for your approval. In your own terminal
-   (not the agent's) run: approve-head <PR URL>`. The owner's `guardrails` inbox lists the PR as well.
+   your own terminal run: guardrails approve <PR URL>`. Otherwise: `Ready for your approval: Review in the
+   Guardrails app, or in your own terminal (not the agent's) run: guardrails approve <PR URL>`. The owner's
+   `guardrails` inbox lists the PR as well.
 
 ## When the mutation gate fails
 

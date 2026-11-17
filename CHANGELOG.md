@@ -6,7 +6,20 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- GitHub errors no longer read as answers: an unreadable ruleset, PR list, topic search or App installation
+  list now stops `guardrails`, `inbox`, `status`, `on` and the Projects window with the call that failed,
+  instead of reporting a missing ruleset, an empty inbox or an App installed nowhere.
+- `install.sh` checks every link it will make before changing anything, so a file in the way leaves no half
+  install.
+- `revoke` refuses an unreviewed kit install and the agent's environment, like `approve`.
+- The agent's prompt reminder no longer says it always works with the owner's GitHub identity.
+- The agent App registration waits ten minutes in total, not ten minutes per browser request.
+
 ### Added
+
+- `agent-guardrails` is installed as a second name of `guardrails`, which other tools also use.
 
 - `guardrails update` and the app's **Update** button: show the new commits of the kit's main, confirm the
   exact commit with Touch ID, fast-forward the install, run `install.sh` and rebuild and restart the app.

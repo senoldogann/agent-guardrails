@@ -111,7 +111,7 @@ split_commands() {
 # (script, xargs, find -exec, bash -c, git difftool/bisect/submodule and similar). Readers lose that
 # status when the text can still execute: command substitution, rg --pre, or anything in the same
 # command line that runs a shell or interpreter (which could read the "text" from a pipe).
-owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])guardrails[[:space:]]+(on|off|approve|revoke|update|agent[[:space:]]+create)([[:space:]]|$)'
+owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])(agent-)?guardrails[[:space:]]+(on|off|approve|revoke|update|agent[[:space:]]+create)([[:space:]]|$)'
 segments=$(split_commands <<<"$raw")
 interpreter=0
 if grep -Eq '^[[:space:]]*([^[:space:]]*/)?(sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|deno|bun|perl|ruby|php|osascript|xargs|eval|source|\.|env|exec|script|expect|unbuffer|nohup|time|sudo)([[:space:]]|$)' <<<"$segments"; then
@@ -172,7 +172,7 @@ while IFS= read -r call; do
       [[ " $rest " != *" --base "* && " $rest " != *" -B "* ]] || deny "retargeting a PR's base branch"
       ;;
     "pr merge")
-      # Kit repositories enforce merge-approval server-side (ruleset), so a plain merge is refused there;
+      # Kit repositories require the owner's approval server-side (ruleset), so a plain merge is refused there;
       # only an admin merge could bypass it.
       [[ " $rest " != *" --admin "* ]] || deny "admin merge bypasses protection"
       ;;

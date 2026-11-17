@@ -10,9 +10,9 @@
 #    PreToolUse Bash -> hooks-global/bash-guard.sh, UserPromptSubmit -> hooks-global/prompt-reminder.sh,
 #    SessionStart and PreToolUse Bash -> hooks-global/agent-identity.sh.
 #    A backup of settings.json is written next to it before any change.
-# 3. Links the owner-only commands guardrails, approve-head and revoke-head into the first writable
-#    directory on PATH among ~/.local/bin, /opt/homebrew/bin and /usr/local/bin.
-# Refuses to replace anything that is not a link into a kit checkout.
+# 3. Links the owner-only commands guardrails (also as agent-guardrails), approve-head and revoke-head into
+#    the first writable directory on PATH among ~/.local/bin, /opt/homebrew/bin and /usr/local/bin.
+# Refuses, before changing anything, to replace a file that is not a link into a kit checkout.
 set -euo pipefail
 kit=$(cd "$(dirname "$0")" && pwd -P)
 
@@ -44,8 +44,44 @@ jq empty "$settings" || {
   exit 1
 }
 
-# Links <link> to $kit/<relative>, replacing a link into another kit checkout (one that has
-# hooks-global/bash-guard.sh) and refusing anything else.
+# Every link the install makes, as "<path in this kit> <link>" lines. `guardrails` is also linked as
+# `agent-guardrails`, a name that does not clash with other tools called guardrails.
+planned_links() {
+  local skill name
+  for skill in "$kit"/skills/*/; do
+    name=$(basename "$skill")
+    printf '%s %s\n' "skills/$name" "$skills_dir/$name"
+  done
+  for name in guardrails approve-head revoke-head; do
+    printf '%s %s\n' "bin/$name" "$bin_dir/$name"
+  done
+  printf '%s %s\n' "bin/guardrails" "$bin_dir/agent-guardrails"
+}
+
+# Succeeds when <link> may be (re)created: absent, already a link to $kit/<relative>, or a link into another
+# kit checkout (one that has hooks-global/bash-guard.sh).
+link_allowed() {
+  local relative=$1 link=$2 old_root
+  [[ -e $link || -L $link ]] || return 0
+  [[ -L $link ]] || return 1
+  [[ $(readlink "$link") == "$kit/$relative" ]] && return 0
+  old_root=$(readlink "$link")
+  old_root=${old_root%/"$relative"}
+  [[ -f "$old_root/hooks-global/bash-guard.sh" ]]
+}
+
+skills_dir="$HOME/.claude/skills"
+# Checked before anything changes, so a foreign file in the way leaves no half install.
+blocked=""
+while read -r relative link; do
+  link_allowed "$relative" "$link" || blocked="$blocked $link"
+done < <(planned_links)
+[[ -z $blocked ]] || {
+  printf 'error: these already exist and do not point into a kit checkout; move them away first:%s\n' "$blocked" >&2
+  exit 1
+}
+
+# Links <link> to $kit/<relative>, replacing a link into another kit checkout (link_allowed checked it).
 link_into_kit() {
   local relative=$1 link=$2 target old_root
   target="$kit/$relative"
@@ -71,7 +107,6 @@ link_into_kit() {
   printf 'linked: %s -> %s\n' "$link" "$target"
 }
 
-skills_dir="$HOME/.claude/skills"
 mkdir -p "$skills_dir"
 for skill in "$kit"/skills/*/; do
   name=$(basename "$skill")
@@ -105,6 +140,7 @@ fi
 for command in guardrails approve-head revoke-head; do
   link_into_kit "bin/$command" "$bin_dir/$command"
 done
+link_into_kit bin/guardrails "$bin_dir/agent-guardrails"
 
 if [[ $(uname) == Darwin ]]; then
   printf 'Optional menu bar app for approvals and turning repos on or off: make -C %s app\n' "$kit"

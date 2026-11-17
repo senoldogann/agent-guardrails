@@ -31,7 +31,7 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   commands also write their plan and each expected confirmation as JSON lines to that descriptor.
 - `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): lists what waits for the owner, a
   Projects window with every repo's state and open PRs, set-up of new projects (clone check, then Terminal with
-  `claude "/guardrails-init"`), and runs `guardrails approve|on|off` inside a pseudo-terminal (`script -q /dev/null`). It shows the CLI's plan
+  `claude "/guardrails-init"`), and runs `guardrails approve|on|off|update|agent create` inside a pseudo-terminal (`script -q /dev/null`). It shows the CLI's plan
   event, checks every confirmation against that plan and asks for Touch ID before typing it. The CLI stays
   the authority. The app is a convenience, not a boundary against an agent running as the same user.
   `GuardrailsCore` holds the testable parts; `app/build.sh` writes the kit path into Info.plist and installs
