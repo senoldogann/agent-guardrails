@@ -6,6 +6,10 @@ import SwiftUI
 struct GuardrailsApp: App {
     @State private var model = AppModel(configuration: AppConfiguration.fromMainBundle())
 
+    init() {
+        DockPresence.observeWindowClosing()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuView(model: model)
@@ -62,20 +66,55 @@ struct MenuBarLabel: View {
     }
 }
 
-/// Brings the app forward when it opens a window from the menu bar (the app has no Dock icon).
+/// Brings the app forward when it opens a window from the menu bar.
 @MainActor
 func activateApp() {
     NSApp.activate()
 }
 
-/// Called when a window appears: the app activates only once the window exists, otherwise a menu bar app's
-/// new window can open behind the frontmost app.
+/// Called when a window appears: the app shows its Dock icon and activates only once the window exists,
+/// otherwise a menu bar app's new window can open behind the frontmost app.
 @MainActor
 func bringWindowsForward() {
     Task { @MainActor in
+        DockPresence.show()
         NSApp.activate()
         for window in NSApp.windows where window.isVisible && window.canBecomeKey {
             window.orderFrontRegardless()
         }
+    }
+}
+
+/// The app lives in the menu bar (LSUIElement), but while the Projects or a Review window is open it is a
+/// regular app: a Dock icon and a place in Cmd-Tab, so a window that went behind others can be found again.
+/// The icon goes away with the last of those windows; a minimized one keeps it.
+@MainActor
+enum DockPresence {
+    static func show() {
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    /// Registered once at launch; hides the Dock icon when the closing window was the last app window.
+    static func observeWindowClosing() {
+        _ = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { notification in
+            let closing = notification.object as? NSWindow
+            MainActor.assumeIsolated { hideIfLastWindow(closing: closing) }
+        }
+    }
+
+    private static func hideIfLastWindow(closing: NSWindow?) {
+        let remaining = NSApp.windows.filter { window in
+            window !== closing && isAppWindow(window) && (window.isVisible || window.isMiniaturized)
+        }
+        if remaining.isEmpty {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Titled windows the app opened (Projects, Review), not the menu bar panel.
+    private static func isAppWindow(_ window: NSWindow) -> Bool {
+        window.styleMask.contains(.titled) && !(window is NSPanel)
     }
 }

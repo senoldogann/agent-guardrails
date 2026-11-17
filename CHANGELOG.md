@@ -8,6 +8,9 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- While the Projects window or a Review window is open, the app has a Dock icon and a place in Cmd-Tab, so a
+  window that went behind other apps can be brought back; with the last window closed it is a menu bar item
+  again.
 - bash-guard no longer blocks every command that mentions topics together with a path or repository named
   `agent-guardrails` (such as a search in the kit's own clone, or setting the kit repository's topics); it
   still blocks adding, removing or searching the `agent-guardrails` topic itself.
