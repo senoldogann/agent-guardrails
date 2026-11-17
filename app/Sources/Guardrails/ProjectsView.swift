@@ -38,13 +38,16 @@ struct ProjectsView: View {
         while !Task.isCancelled {
             await projects.loadProjects()
             do {
-                try await Task.sleep(for: .seconds(900))
+                try await Task.sleep(for: projectsRefreshInterval)
             } catch {
                 return
             }
         }
     }
 }
+
+/// The Projects window reloads this often while it stays open; the toolbar's Refresh reloads at once.
+private let projectsRefreshInterval = Duration.seconds(15 * 60)
 
 struct ProjectSidebar: View {
     let projects: ProjectsModel

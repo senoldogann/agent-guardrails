@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Owner's command for the agent-guardrails kit. Run it in your own terminal, never through an agent
-# (the agent's bash-guard blocks on, off, approve and revoke).
+# Owner's command for the agent-guardrails kit, also installed as agent-guardrails. Run it in your own terminal
+# or through the Guardrails app, never through an agent (bash-guard blocks the state-changing subcommands).
 #
 #   guardrails                         what waits for you (same as `guardrails inbox`; --json for the app)
 #   guardrails on <bootstrap PR link>  check, merge and enforce a /guardrails-init PR
@@ -41,27 +41,20 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-  sed -n '5,17p' "$0" | sed 's/^# \{0,1\}//' >&2
+  # The command list is the header's lines that start with "#   guardrails".
+  awk '/^#   guardrails/ { sub(/^# /, ""); print }' "$0" >&2
   exit 1
 }
 
 # Dies outside the owner's own interactive shell (the agent's environment sets a GitHub token or gh config).
 require_owner_shell() {
-  [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} && -z ${GH_CONFIG_DIR:-} ]] ||
-    die "GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR is set: this looks like the agent's environment. Run guardrails in your own shell."
+  require_owner_environment "guardrails $1"
   [[ -t 0 && -t 1 ]] || die "guardrails $1 needs an interactive terminal (typed confirmation)"
 }
 
 require_owner_terminal() {
   require_owner_shell "$1"
   require_reviewed_kit
-}
-
-confirm() {
-  local step=$1 expected=$2 prompt=$3 typed
-  emit_event "$(jq -n -c --arg step "$step" --arg expect "$expected" '{event: "confirm", step: $step, expect: $expect}')"
-  read -r -p "$prompt" typed </dev/tty
-  [[ $typed == "$expected" ]] || die "confirmation did not match; nothing changed"
 }
 
 # Agent-written text (titles) loses control characters before it reaches the terminal.
@@ -86,36 +79,10 @@ unregister() {
   mv "$registry.tmp" "$registry"
 }
 
-# Prints the live ruleset with the given name, or nothing when the repository has none. Arguments: owner/repo, name.
-live_ruleset() {
-  local ruleset_id
-  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$2\") | .id")
-  [[ -z $ruleset_id ]] || gh api "repos/$1/rulesets/$ruleset_id"
-}
-
-# Prints "review", "status" or "-": how the active rulesets expect the owner's approval. Status mode needs the
-# branch ruleset to require merge-approval, review mode an active review ruleset as review_ruleset builds it.
-approval_mode() {
-  local branch review
-  branch=$(live_ruleset "$1" "$ruleset_name")
-  if [[ -n $branch && $(ruleset_approval_mode <<<"$branch") == status ]]; then
-    printf 'status\n'
-    return 0
-  fi
-  review=$(live_ruleset "$1" "$review_ruleset_name")
-  if [[ -n $branch && $(jq -r .enforcement <<<"$branch") == active && -n $review &&
-    $(ruleset_approval_mode <<<"$review") == review ]]; then
-    printf 'review\n'
-    return 0
-  fi
-  printf -- '-\n'
-}
-
-# Prints the branch ruleset's enforcement (active, evaluate, disabled) or "missing".
+# Prints the branch ruleset's enforcement (active, evaluate, disabled) or "missing"; dies when GitHub cannot be
+# read. Argument: owner/repo.
 ruleset_state() {
-  local state
-  state=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$ruleset_name\") | .enforcement")
-  printf '%s\n' "${state:-missing}"
+  ruleset_enforcement "$1" "$ruleset_name"
 }
 
 # Clones a repo into a new temporary directory at the given ref (a branch or a PR's head SHA). Always over
@@ -147,7 +114,7 @@ require_no_status_rights() {
   local workflow
   for workflow in "$1"/.github/workflows/*.yml "$1"/.github/workflows/*.yaml; do
     [[ -e $workflow ]] || continue
-    if grep -Ei '(checks|statuses):[[:space:]]*write|write-all' "$workflow" >/dev/null; then
+    if grants_check_or_status_writes <"$workflow"; then
       die "${workflow#"$1"/} lets its token write checks or statuses (could fake an approval); remove that first"
     fi
   done
@@ -155,10 +122,10 @@ require_no_status_rights() {
 
 # Creates or replaces the ruleset with the given name. Arguments: owner/repo, name, ruleset JSON.
 put_ruleset() {
-  local repo=$1 name=$2 ruleset=$3 ruleset_id
-  ruleset_id=$(gh api "repos/$repo/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$name\") | .id")
-  if [[ -n $ruleset_id ]]; then
-    gh api -X PUT "repos/$repo/rulesets/$ruleset_id" --input - <<<"$ruleset" >/dev/null
+  local repo=$1 name=$2 ruleset=$3 live
+  live=$(ruleset_by_name "$repo" "$name") || exit 1
+  if [[ -n $live ]]; then
+    gh api -X PUT "repos/$repo/rulesets/$(jq -r .id <<<"$live")" --input - <<<"$ruleset" >/dev/null
   else
     gh api -X POST "repos/$repo/rulesets" --input - <<<"$ruleset" >/dev/null
   fi
@@ -166,9 +133,9 @@ put_ruleset() {
 
 # Deletes the ruleset with the given name if the repository has it. Arguments: owner/repo, name.
 delete_ruleset() {
-  local ruleset_id
-  ruleset_id=$(gh api "repos/$1/rulesets?includes_parents=false" --jq ".[] | select(.name == \"$2\") | .id")
-  [[ -z $ruleset_id ]] || gh api -X DELETE "repos/$1/rulesets/$ruleset_id" >/dev/null
+  local live
+  live=$(ruleset_by_name "$1" "$2") || exit 1
+  [[ -z $live ]] || gh api -X DELETE "repos/$1/rulesets/$(jq -r .id <<<"$live")" >/dev/null
 }
 
 # Succeeds when review mode applies: the agent App is installed on the repository, on selected repositories
@@ -177,13 +144,14 @@ delete_ruleset() {
 # Dies when the App is installed but a precondition is missing, and when the lookup itself fails, so an error
 # never quietly turns into status mode. Arguments: owner/repo, checkout of the default branch.
 review_mode_ready() {
-  local repo=$1 dir=$2 installation problems errors
+  local repo=$1 dir=$2 installation owner problems errors
   agent_app_registered || return 1
   installation=$(agent_installation "$repo") || die "cannot tell whether the agent App is installed on $repo; nothing changed"
   [[ -n $installation ]] || return 1
+  owner=$(login) || exit 1
   problems=$({
     installation_problems <<<"$installation"
-    codeowners_problems "$dir" "$(login)"
+    codeowners_problems "$dir" "$owner"
   })
   errors=$(gh api "repos/$repo/codeowners/errors" --jq '.errors[] | "CODEOWNERS line \(.line): \(.message | split("\n")[0])"') ||
     die "cannot read CODEOWNERS errors of $repo from GitHub; nothing changed"
@@ -224,16 +192,18 @@ enforce() {
 }
 
 on_pr() {
-  local repo pr pr_json sha base default_branch dir files file marker title url marked="" extra_workflows=""
-  read -r repo pr < <(pr_target "$1")
+  local repo pr target pr_json sha base default_branch dir files file marker title url state marked="" extra_workflows=""
+  target=$(pr_target "$1") || exit 1
+  read -r repo pr <<<"$target"
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft,state)
   sha=$(jq -r .headRefOid <<<"$pr_json")
   base=$(jq -r .baseRefName <<<"$pr_json")
   [[ $(jq -r .state <<<"$pr_json") == OPEN ]] || die "PR #$pr is not open"
   [[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
-  [[ $(ruleset_state "$repo") == missing ]] ||
-    die "$repo already has the $ruleset_name ruleset; approve kit PRs there with: approve-head $(jq -r .url <<<"$pr_json")"
+  state=$(ruleset_state "$repo") || exit 1
+  [[ $state == missing ]] ||
+    die "$repo already has the $ruleset_name ruleset; approve kit PRs there with: guardrails approve $(jq -r .url <<<"$pr_json")"
 
   dir=$(clone_at "$repo" "$sha") || exit 1
   tmp_dirs+=" $dir"
@@ -351,24 +321,31 @@ off_repo() {
   printf 'off: %s. Pull the default branch in your local clones so their .agent/ disappears too.\n' "$repo"
 }
 
-# Prints the tab-separated inbox items (see classify_prs) of one repo.
+# Prints the tab-separated inbox items (see classify_prs) of one repo; dies when GitHub cannot list its PRs.
 repo_items() {
-  gh pr list -R "$1" --state open --limit 100 \
-    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision | classify_prs
+  local prs
+  prs=$(gh pr list -R "$1" --state open --limit 100 \
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision) ||
+    die "cannot list the open PRs of $1"
+  classify_prs <<<"$prs"
 }
 
 login() {
-  gh api user --jq .login
+  gh api user --jq .login || die "cannot read your GitHub login (gh auth status)"
 }
 
 # Repos tagged on GitHub as enforced but missing from this machine's list (the list lost an entry).
 topic_alarms() {
-  gh search repos --owner "$(login)" --topic "$topic" --limit 100 --json fullName --jq '.[].fullName' |
-    while IFS= read -r repo; do
-      registered_repos | grep -Fxi -- "$repo" >/dev/null ||
-        printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
-          "$repo" "$repo" "$topic" "$registry" "$repo"
-    done
+  local owner tagged repo
+  owner=$(login) || exit 1
+  tagged=$(gh search repos --owner "$owner" --topic "$topic" --limit 100 --json fullName --jq '.[].fullName') ||
+    die "cannot search your repositories for the $topic topic"
+  while IFS= read -r repo; do
+    [[ -n $repo ]] || continue
+    registered_repos | grep -Fxi -- "$repo" >/dev/null ||
+      printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
+        "$repo" "$repo" "$topic" "$registry" "$repo"
+  done <<<"$tagged"
 }
 
 kit_install_alarm() {
@@ -386,48 +363,56 @@ kit_install_alarm() {
 
 # Prints "turn-on" items: open /guardrails-init PRs in repos that are not enforced yet.
 bootstrap_items() {
-  local owner
-  owner=$(login)
+  local owner prs repo url title
+  owner=$(login) || exit 1
   # Only the owner's PRs: anyone can open a PR from a branch of that name, from a fork too. `on` still compares
   # the kit files with this install before it merges anything.
-  gh search prs --owner "$owner" --author "$owner" --head chore/agent-guardrails --state open --limit 50 \
-    --json url,title,repository --jq '.[] | [.repository.nameWithOwner, .url, .title] | @tsv' |
-    while IFS=$'\t' read -r repo url title; do
-      registered_repos | grep -Fxi -- "$repo" >/dev/null ||
-        printf 'turn-on\037%s\037%s\037%s\037\n' "$repo" "$url" "$(clean "$title")"
-    done
+  prs=$(gh search prs --owner "$owner" --author "$owner" --head chore/agent-guardrails --state open --limit 50 \
+    --json url,title,repository --jq '.[] | [.repository.nameWithOwner, .url, .title] | @tsv') ||
+    die "cannot search your open bootstrap PRs"
+  while IFS=$'\t' read -r repo url title; do
+    [[ -n $repo ]] || continue
+    registered_repos | grep -Fxi -- "$repo" >/dev/null ||
+      printf 'turn-on\037%s\037%s\037%s\037\n' "$repo" "$url" "$(clean "$title")"
+  done <<<"$prs"
 }
 
 # Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
 # by the ASCII unit separator (\037), so empty fields survive `read`.
 # Kinds: alarm, note, repo (an enforced repo; note = its ruleset state), answer, approve, wait, blocked
 # (see classify_prs) and turn-on (a /guardrails-init PR in a repo that is not enforced yet).
+# Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state kind url title note
+  local repo state items kind url title note
   kit_install_alarm
-  topic_alarms
+  topic_alarms || exit 1
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    state=$(ruleset_state "$repo")
+    state=$(ruleset_state "$repo") || exit 1
     printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
     [[ $state == active ]] ||
       printf 'alarm\037%s\037\037\037%s: ruleset %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
         "$repo" "$repo" "$state" "$repo"
-    repo_items "$repo" | while IFS=$'\t' read -r kind url title note; do
+    items=$(repo_items "$repo") || exit 1
+    while IFS=$'\t' read -r kind url title note; do
+      [[ -n $kind ]] || continue
       printf '%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note"
-    done
+    done <<<"$items"
   done < <(registered_repos)
-  bootstrap_items
+  bootstrap_items || exit 1
 }
 
 # One JSON object per line with the fields of inbox_items, for the Guardrails app.
 inbox_json() {
-  inbox_items | jq -R -c 'split("\u001f") | {kind: .[0], repo: .[1], url: .[2], title: .[3], note: .[4]}'
+  local items
+  items=$(inbox_items) || exit 1
+  [[ -z $items ]] ||
+    jq -R -c 'split("\u001f") | {kind: .[0], repo: .[1], url: .[2], title: .[3], note: .[4]}' <<<"$items"
 }
 
 inbox() {
   local items kind repo url title note current="" any=0 turn_on=""
-  items=$(inbox_items)
+  items=$(inbox_items) || exit 1
   while IFS=$'\037' read -r kind repo url title note; do
     case $kind in
       alarm) printf 'ALARM  %s\n' "$note" ;;
@@ -444,7 +429,7 @@ inbox() {
     esac
     case $kind in
       answer) printf '  answer   %s\n           %s (%s)\n' "$title" "$url" "$note" ;;
-      approve) printf '  approve  %s (%s)\n           approve-head %s\n' "$title" "$note" "$url" ;;
+      approve) printf '  approve  %s (%s)\n           guardrails approve %s\n' "$title" "$note" "$url" ;;
       wait) printf '  wait     %s (%s)\n' "$title" "$note" ;;
       blocked) printf '  blocked  %s (%s)\n' "$title" "$note" ;;
       turn-on) turn_on+="  turn on  $title"$'\n'"           guardrails on $url"$'\n' ;;
@@ -485,7 +470,7 @@ projects_json() {
   local owner app installed
   owner=$(login)
   if agent_app_registered; then app=registered; else app=none; fi
-  installed=$(agent_installed_repos)
+  installed=$(agent_installed_repos) || exit 1
   graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]' |
     project_states "$owner" "$(registered_repos)" "$app" "$installed"
 }
@@ -515,69 +500,29 @@ approve_pick() {
 }
 
 status() {
-  local repo default_branch dir drift mode owners
+  local repo default_branch dir drift mode owners state tags login_name
   kit_install_alarm
   printf 'kit install: %s at %s\n' "$kit" "$(kit_git rev-parse --short HEAD)"
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
+    default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name) ||
+      die "cannot read the default branch of $repo"
     dir=$(clone_at "$repo" "$default_branch") || exit 1
     tmp_dirs+=" $dir"
     drift=$(kit_drift "$dir")
-    mode=$(approval_mode "$repo")
-    printf '%-45s ruleset %-8s approval %-6s tags %-8s kit files %s\n' "$repo" "$(ruleset_state "$repo")" \
-      "$mode" "$(gh api "repos/$repo/rulesets?includes_parents=false" \
-        --jq "[.[] | select(.name == \"$tag_ruleset_name\") | .enforcement] | first // \"missing\"")" \
+    mode=$(approval_mode "$repo") || exit 1
+    state=$(ruleset_state "$repo") || exit 1
+    tags=$(ruleset_enforcement "$repo" "$tag_ruleset_name") || exit 1
+    printf '%-45s ruleset %-8s approval %-6s tags %-8s kit files %s\n' "$repo" "$state" "$mode" "$tags" \
       "$([[ -z $drift ]] && printf 'same as installed kit' || printf 'differ from installed kit (kit update PR needed)')"
     # A CODEOWNERS change merged after `on` could leave paths without a human code owner.
     if [[ $mode == review ]]; then
-      owners=$(codeowners_problems "$dir" "$(login)")
+      login_name=$(login) || exit 1
+      owners=$(codeowners_problems "$dir" "$login_name")
       [[ -z $owners ]] || printf '  ALARM %s\n' "${owners//$'\n'/$'\n'  ALARM }"
     fi
   done < <(registered_repos)
   [[ -s $registry ]] || printf 'no enforced repos\n'
-}
-
-# Prints a file of the kit install at a commit, or "unknown" when that commit has no such file.
-kit_file_at() {
-  kit_git show "$1:$2" 2>/dev/null || printf 'unknown\n'
-}
-
-# Fast-forwards the kit install to its origin's main after the owner confirms the exact new commit, then runs
-# install.sh again and, on macOS with the app installed, rebuilds the app. Refuses local changes, a branch
-# other than main, and an origin main that does not contain the installed commit.
-kit_update() {
-  local current target commits
-  [[ -z $(kit_local_changes) ]] ||
-    die "the kit install at $kit has local changes, so it cannot be fast-forwarded. Inspect them with: git -C $kit status"
-  [[ $(kit_git symbolic-ref --quiet --short HEAD) == main ]] ||
-    die "the kit install at $kit is not on main. Switch it with: git -C $kit switch main"
-  kit_git fetch --quiet origin main || die "cannot fetch main from $(kit_git remote get-url origin)"
-  current=$(kit_git rev-parse HEAD)
-  target=$(kit_git rev-parse FETCH_HEAD)
-  if [[ $current == "$target" ]]; then
-    printf 'the kit install is up to date (%s)\n' "${current:0:7}"
-    return 0
-  fi
-  kit_git merge-base --is-ancestor "$current" "$target" ||
-    die "main of the kit origin does not contain the installed commit ${current:0:7}; inspect it before updating"
-  # Commit subjects come from the kit repository, where agents work too: no control characters reach the terminal.
-  commits=$(kit_git log --format='%h %s' "$current..$target" | LC_ALL=C tr -d '\000-\010\013-\037\177')
-  printf '\nUpdate the kit install at %s\nfrom %s (version %s) to %s (version %s):\n%s\n\n' "$kit" \
-    "${current:0:7}" "$(kit_file_at "$current" VERSION)" "${target:0:7}" "$(kit_file_at "$target" VERSION)" \
-    "  ${commits//$'\n'/$'\n'  }"
-  emit_event "$(jq -n -c --arg from "$current" --arg to "$target" \
-    --arg fromVersion "$(kit_file_at "$current" VERSION)" --arg toVersion "$(kit_file_at "$target" VERSION)" \
-    --arg commits "$commits" \
-    '{event: "plan", action: "update", from: $from, to: $to, fromVersion: $fromVersion, toVersion: $toVersion,
-      commits: ($commits | split("\n") | map(select(length > 0)))}')"
-  confirm commit "${target:0:7}" "Type ${target:0:7} to update the kit install to exactly this commit: "
-  kit_git merge --quiet --ff-only "$target"
-  "$kit/install.sh"
-  if [[ $(uname) == Darwin && -d $HOME/Applications/Guardrails.app ]]; then
-    "$kit/app/build.sh"
-  fi
-  printf 'updated the kit install to %s (version %s)\n' "${target:0:7}" "$(kit_file_at "$target" VERSION)"
 }
 
 # Registers the agent's GitHub App through the manifest flow (the owner clicks "Create" in the browser) and
@@ -618,24 +563,19 @@ agent_create() {
 
 # Prints the agent App and, for every enforced repository, whether it is installed there safely.
 agent_status() {
-  local dir repo installation problems jwt id account selection token
+  local dir repo installation problems installed
   dir=$(agent_dir)
   if ! agent_app_registered; then
     printf 'no agent App registered on this machine: the agent works with your GitHub login (run guardrails agent create)\n'
     return 0
   fi
   printf 'agent App: %s (%s[bot])\n' "$(jq -r .html_url "$dir/app.json")" "$(jq -r .slug "$dir/app.json")"
-  jwt=$(app_jwt "$(jq -r .client_id "$dir/app.json")" "$dir/private-key.pem" "$(date +%s)")
-  while IFS=$'\t' read -r id account selection; do
-    [[ -n $id ]] || continue
-    token=$(github_app_api POST "/app/installations/$id/access_tokens" "$jwt" '{"permissions":{"metadata":"read"}}' | jq -r .token)
-    printf 'installed on %s (%s repositories): %s\n' "$account" "$selection" \
-      "$(github_app_api GET "/installation/repositories?per_page=100" "$token" "" | jq -r '[.repositories[].full_name] | join(", ")')"
-  done < <(github_app_api GET /app/installations "$jwt" "" | jq -r '.[] | [.id, .account.login, .repository_selection] | @tsv')
+  installed=$(agent_installed_repos) || exit 1
+  printf 'installed on: %s\n' "$(tr '\n' ' ' <<<"$installed")"
   printf 'enforced repositories:\n'
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    installation=$(agent_installation "$repo")
+    installation=$(agent_installation "$repo") || exit 1
     if [[ -z $installation ]]; then
       printf '%-45s not installed: the agent uses your login here\n' "$repo"
       continue

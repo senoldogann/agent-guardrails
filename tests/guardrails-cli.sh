@@ -177,8 +177,11 @@ args="$*"
 case $args in
   "api user --jq .login") echo owner ;;
   "search repos "*) printf 'acme/shop\nacme/lost\n' ;;
-  "api repos/acme/shop/rulesets"*) echo active ;;
-  "api repos/acme/off/rulesets"*) echo "" ;;
+  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
+  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*) echo "" ;;
+  "api repos/acme/shop/rulesets/7") echo '{"id":7,"name":"agent-guardrails","enforcement":"active","rules":[]}' ;;
+  "api --paginate repos/acme/off/rulesets"* | "api --paginate repos/acme/broken/rulesets"*) echo "" ;;
+  "pr list -R acme/broken "*) echo "HTTP 502" >&2; exit 1 ;;
   "pr list -R acme/shop "*) cat "$FAKE_PRS" ;;
   "pr list -R acme/off "*) echo '[]' ;;
   "search prs "*) printf 'acme/new\thttps://github.com/acme/new/pull/1\tchore: install the kit\n' ;;
@@ -202,11 +205,11 @@ acme/shop
   answer   spec(A-1): x
            u1 (the agent is waiting for your decision)
   approve  feat(A-3): ready (checks running)
-           approve-head u3
+           guardrails approve u3
   blocked  feat(A-5): bad (guard failed: the agent has to fix the PR)
   wait     feat(A-6): new (guard is running)
   approve  feat(A-7): revoked (checks green)
-           approve-head u7
+           guardrails approve u7
 
 Not enforced yet
   turn on  chore: install the kit
@@ -222,6 +225,15 @@ expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"
 {"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing"}
 {"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: ruleset missing. If you did not change it, check the audit log; restore with: guardrails on acme/off"}
 {"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":""}'
+
+broken_home="$work/broken-home"
+mkdir -p "$broken_home/.config/agent-guardrails"
+printf 'acme/shop\nacme/broken\n' >"$broken_home/.config/agent-guardrails/repos"
+if broken=$(HOME=$broken_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" inbox --json 2>&1); then
+  fail "an unreadable repository must fail the inbox, not shorten it: $broken"
+else
+  expect_eq "the inbox names what it could not read" "$(tail -1 <<<"$broken")" "error: cannot list the open PRs of acme/broken"
+fi
 
 echo "pr_files"
 expect_eq "plain file names pass" "$(PATH="$fake_bin:$PATH" pr_files acme/shop 1)" "src/a.ts"

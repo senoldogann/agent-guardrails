@@ -78,7 +78,8 @@ github_app_call() {
     -H "Authorization: Bearer $bearer" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
   [[ -z $body ]] || args+=(--data "$body")
   while :; do
-    out=$(curl "${args[@]}" 2>&1) || out=$'\n000'
+    # On a network failure curl prints its error (stderr) and 000 as the status; both are kept for the message.
+    out=$(curl "${args[@]}" 2>&1) || [[ ${out##*$'\n'} =~ ^[0-9]{3}$ ]] || out+=$'\n000'
     status=${out##*$'\n'}
     if [[ ($status == 000 || $status == 5*) && $attempt -lt 3 ]]; then
       printf 'warning: GitHub API %s %s failed (attempt %d of 3, status %s), retrying in %ds\n' \
@@ -96,7 +97,7 @@ github_app_call() {
 # answer is 2xx.
 github_app_api() {
   local out status
-  out=$(github_app_call "$@")
+  out=$(github_app_call "$@") || exit 1
   status=${out%%$'\n'*}
   [[ $status == 2* ]] || die "GitHub API $1 $2 answered $status: $(sed 1d <<<"$out" | tr '\n' ' ' | cut -c1-400)"
   sed 1d <<<"$out"
@@ -109,12 +110,19 @@ agent_app_registered() {
   [[ -f $dir/app.json && -f $dir/private-key.pem ]]
 }
 
+# Prints a fresh JWT of the agent App registered on this machine.
+agent_jwt() {
+  local dir client_id
+  dir=$(agent_dir)
+  client_id=$(jq -r .client_id "$dir/app.json") || die "cannot read $dir/app.json"
+  app_jwt "$client_id" "$dir/private-key.pem" "$(date +%s)" || die "cannot sign a JWT with the agent App's private key"
+}
+
 # Prints the installation JSON of the agent App for owner/repo, or nothing when the App is not installed there.
 agent_installation() {
-  local repo=$1 dir jwt out status
-  dir=$(agent_dir)
-  jwt=$(app_jwt "$(jq -r .client_id "$dir/app.json")" "$dir/private-key.pem" "$(date +%s)")
-  out=$(github_app_call GET "/repos/$repo/installation" "$jwt" "")
+  local repo=$1 jwt out status
+  jwt=$(agent_jwt) || exit 1
+  out=$(github_app_call GET "/repos/$repo/installation" "$jwt" "") || exit 1
   status=${out%%$'\n'*}
   case $status in
     200) sed 1d <<<"$out" ;;
@@ -126,13 +134,14 @@ agent_installation() {
 # Writes a fresh token for one repository into its gh config directory and prints that directory. The token
 # is limited to that repository and to the agent's permissions. Arguments: owner/repo, installation ID.
 agent_session_token() {
-  local repo=$1 installation=$2 dir session jwt request token slug
+  local repo=$1 installation=$2 dir session jwt request answer token slug
   dir=$(agent_dir)
   session="$dir/sessions/${repo/\//__}"
-  jwt=$(app_jwt "$(jq -r .client_id "$dir/app.json")" "$dir/private-key.pem" "$(date +%s)")
+  jwt=$(agent_jwt) || exit 1
   request=$(jq -c -n --arg name "${repo#*/}" --argjson permissions "$(agent_permissions_json)" \
     '{repositories: [$name], permissions: $permissions}')
-  token=$(github_app_api POST "/app/installations/$installation/access_tokens" "$jwt" "$request" | jq -r .token)
+  answer=$(github_app_api POST "/app/installations/$installation/access_tokens" "$jwt" "$request") || exit 1
+  token=$(jq -r .token <<<"$answer")
   [[ -n $token && $token != null ]] || die "GitHub returned no installation token for $repo"
   slug=$(jq -r .slug "$dir/app.json")
   (
@@ -159,14 +168,24 @@ agent_env_exports() {
 }
 
 # Prints owner/repo of every repository the agent App is installed on, one per line (lowercase); nothing when
-# no App is registered here.
+# no App is registered here. Dies when GitHub cannot be read, so an error never reads as "installed nowhere".
 agent_installed_repos() {
-  local dir jwt id token
+  local jwt installations id token page answer total
   agent_app_registered || return 0
-  dir=$(agent_dir)
-  jwt=$(app_jwt "$(jq -r .client_id "$dir/app.json")" "$dir/private-key.pem" "$(date +%s)")
-  for id in $(github_app_api GET /app/installations "$jwt" "" | jq -r '.[].id'); do
-    token=$(github_app_api POST "/app/installations/$id/access_tokens" "$jwt" '{"permissions":{"metadata":"read"}}' | jq -r .token)
-    github_app_api GET "/installation/repositories?per_page=100" "$token" "" | jq -r '.repositories[].full_name | ascii_downcase'
+  jwt=$(agent_jwt) || exit 1
+  # One App per owner or organization has a handful of installations; 100 per page is the API maximum.
+  installations=$(github_app_api GET "/app/installations?per_page=100" "$jwt" "") || exit 1
+  [[ $(jq length <<<"$installations") -lt 100 ]] || die "the agent App has 100 or more installations; this is not supported"
+  for id in $(jq -r '.[].id' <<<"$installations"); do
+    answer=$(github_app_api POST "/app/installations/$id/access_tokens" "$jwt" '{"permissions":{"metadata":"read"}}') || exit 1
+    token=$(jq -r .token <<<"$answer")
+    page=1
+    while :; do
+      answer=$(github_app_api GET "/installation/repositories?per_page=100&page=$page" "$token" "") || exit 1
+      jq -r '.repositories[].full_name | ascii_downcase' <<<"$answer"
+      total=$(jq .total_count <<<"$answer")
+      [[ $((page * 100)) -lt $total ]] || break
+      page=$((page + 1))
+    done
   done
 }

@@ -4,7 +4,7 @@ import GuardrailsCore
 import LocalAuthentication
 import Observation
 
-/// One run of `guardrails approve|on|off` in a pseudo-terminal. The review screen shows the plan the CLI
+/// One run of `guardrails approve|on|off|update|agent create` in a pseudo-terminal. The review screen shows the plan the CLI
 /// announced; each confirmation is checked against that plan and needs Touch ID (or the login password).
 @MainActor
 @Observable
@@ -99,7 +99,7 @@ final class ActionModel {
         let session = session
         Task {
             do {
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: cancelGracePeriod)
             } catch {
                 return
             }
@@ -130,7 +130,8 @@ final class ActionModel {
     private func relaunchAfterUpdate() {
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "sleep 2; exec /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        // The new copy starts after this one has quit (relaunchDelay > quitDelay), so macOS opens a fresh process.
+        relaunch.arguments = ["-c", "sleep \(relaunchDelaySeconds); exec /usr/bin/open \"$0\"", Bundle.main.bundlePath]
         do {
             try relaunch.run()
         } catch {
@@ -139,7 +140,7 @@ final class ActionModel {
         }
         Task {
             do {
-                try await Task.sleep(for: .seconds(1))
+                try await Task.sleep(for: quitDelay)
             } catch {
                 return
             }
@@ -159,6 +160,12 @@ private func lastLines(of log: String) -> String {
     let lines = log.split(whereSeparator: \.isNewline).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     return lines.suffix(6).joined(separator: "\n")
 }
+
+/// After Cancel the CLI gets this long to stop on its own (its input is closed) before it is terminated.
+private let cancelGracePeriod = Duration.seconds(2)
+/// After an update this copy quits after quitDelay; the rebuilt copy is opened after relaunchDelaySeconds.
+private let quitDelay = Duration.seconds(1)
+private let relaunchDelaySeconds = 2
 
 /// Touch ID, or the login password where Touch ID is not available. A new context per check, with no
 /// reuse window, so one touch never covers a second step.
