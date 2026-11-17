@@ -46,7 +46,11 @@ matches() {
 matches 'merge-approval' && deny "merge approval (owner-only commit status)"
 if matches '\.config' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
 if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit install"; fi
-if matches 'topic' && matches 'agent-guardrails'; then deny "the agent-guardrails topic marks enforced repositories (owner-only)"; fi
+# The topic is matched as a value (`--add-topic agent-guardrails`, `names[]=…`, `topic:…`), not as a path or
+# repository name (`~/src/agent-guardrails`, `owner/agent-guardrails`), so topics of the kit's own repository
+# and commands run from its clone stay possible.
+marker_topic='(^|[^/[:alnum:]_.-])agent-guardrails($|[^/[:alnum:]_.-])'
+if matches 'topic' && matches "$marker_topic"; then deny "the agent-guardrails topic marks enforced repositories (owner-only)"; fi
 if matches '(^|[^[:alnum:]_])gh[[:space:]]+api[[:space:]]+graphql' && matches 'ruleset|commitstatus|statuses'; then
   deny "rulesets or statuses through GraphQL (owner-only)"
 fi

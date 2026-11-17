@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- bash-guard no longer blocks every command that mentions topics together with a path or repository named
+  `agent-guardrails` (such as a search in the kit's own clone, or setting the kit repository's topics); it
+  still blocks adding, removing or searching the `agent-guardrails` topic itself.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
