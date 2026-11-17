@@ -51,8 +51,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   ordinary GitHub reviews. Run `install.sh` again to register the hook.
 - Review mode: `guardrails on` on a repository where the agent App is installed requires a code owner's
   GitHub review instead of the `merge-approval` status (stale reviews dismissed on push, last push approved by
-  someone else). The review lives in its own ruleset that admins may bypass through a PR; the checks never
-  can be. It refuses without a CODEOWNERS whose first rule is `* @<owner>` or with errors GitHub reports.
+  someone else). The review lives in its own ruleset that admins may bypass through a PR; nobody can bypass
+  the checks. It refuses without a CODEOWNERS whose first rule is `* @<owner>` or with errors GitHub reports.
   `guardrails approve` submits that review pinned to the reviewed commit; `guardrails revoke`
   dismisses it. `/guardrails-init` adds `.github/CODEOWNERS`.
 - Every enforced repository gets a tag ruleset: only admins create, move or delete tags.
@@ -80,5 +80,9 @@ First versioned release of the kit as it is used today.
 
 ### Fixed
 
-- The Projects list no longer fails with "invalid character '<'" when GitHub needs long for the repository query:
+- The Projects list no longer fails with "invalid character '<'" when GitHub takes long to answer the repository query:
   smaller pages and retries with backoff.
+
+[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/senoldogann/agent-guardrails/releases/tag/v0.1.0

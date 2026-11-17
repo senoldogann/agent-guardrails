@@ -148,7 +148,7 @@ nodes=$(
 )
 expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' none '' <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
   "acme/on on Acme/Disabled alarm acme/tagged alarm acme/unlisted alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
-expect_eq "a ready project carries its set-up PR" \
+expect_eq "a ready project carries its bootstrap PR" \
   "$(project_states owner '' none '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
 review_nodes=$(
   node acme/reviewed ADMIN '[{"name":"agent-guardrails","enforcement":"ACTIVE"},{"name":"agent-guardrails-review","enforcement":"ACTIVE"}]' '[]' '[]'

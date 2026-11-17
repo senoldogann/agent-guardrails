@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in the kit, the guardrails command or the app does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands you ran or buttons you pressed, and their output.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Output of `guardrails version`
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Approval mode of the repository
+      options: [status mode, review mode, not enforced yet, not sure]
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: OS, agent and project language
+      placeholder: macOS 26.1, Claude Code 2.1, TypeScript

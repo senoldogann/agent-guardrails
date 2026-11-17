@@ -1,6 +1,6 @@
 ---
 name: guardrails-init
-description: Install the agent guardrail kit into the current repository (Makefile command contract, .agent scripts, write-guard and stop-check hooks, base-branch CI guard with per-HEAD merge approval, AGENTS.md section). Use when the user asks to set up agent guardrails, spec-first ticket workflow, or "kontrol altyapısı" in a project.
+description: Install the agent guardrail kit into the current repository (Makefile command contract, .agent scripts, write-guard and stop-check hooks, base-branch CI guard with per-HEAD merge approval, AGENTS.md section). Use when the user asks to set up agent guardrails or a spec-first ticket workflow in a project.
 disable-model-invocation: true
 ---
 

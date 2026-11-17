@@ -13,7 +13,7 @@ final class ProjectsModel {
     private(set) var lastError: String?
     private(set) var lastUpdated: Date?
     private(set) var pullRequests: [String: PullRequestList] = [:]
-    /// Set-ups started from this app, by repo: shown as "Setting up…" until the set-up PR appears.
+    /// Set-ups started from this app, by repo: shown as "Setting up…" until the bootstrap PR appears.
     private(set) var setupsStarted: [String: Date] = [:]
     /// The owner's agent App on this Mac, from `guardrails agent status --json`.
     private(set) var agent: AgentInfo?

@@ -29,4 +29,12 @@ jobs:
             exit 0
           fi
           scripts/release-notes.sh "$version" CHANGELOG.md >notes.md
+          {
+            echo
+            echo "**Updating:** press Update in the Guardrails menu bar app, or run \`guardrails update\`."
+          } >>notes.md
+          # The first release has no previous one to compare with.
+          if previous=$(gh release view -R "$REPO" --json tagName --jq .tagName 2>/dev/null); then
+            echo "**All changes:** https://github.com/$REPO/compare/$previous...$tag" >>notes.md
+          fi
           gh release create "$tag" -R "$REPO" --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md

@@ -8,7 +8,7 @@ struct ProjectsTests {
     private let output = """
         {"repo":"acme/shop","state":"on","note":"ruleset active","private":true,"fork":false,"branch":"main","pushed":"2026-11-05T10:00:00Z","openPRs":3,"setupURL":"","setupTitle":""}
         {"repo":"acme/billing","state":"alarm","note":"ruleset disabled","private":true,"fork":false,"branch":"main","pushed":"2026-11-04T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
-        {"repo":"acme/mobile","state":"ready","note":"set-up PR open","private":false,"fork":false,"branch":"main","pushed":"2026-11-03T10:00:00Z","openPRs":1,"setupURL":"https://github.com/acme/mobile/pull/2","setupTitle":"chore: install"}
+        {"repo":"acme/mobile","state":"ready","note":"bootstrap PR open","private":false,"fork":false,"branch":"main","pushed":"2026-11-03T10:00:00Z","openPRs":1,"setupURL":"https://github.com/acme/mobile/pull/2","setupTitle":"chore: install"}
         {"repo":"acme/site","state":"off","note":"","private":false,"fork":false,"branch":"main","pushed":"2026-11-02T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
         {"repo":"acme/vendored","state":"no-admin","note":"","private":false,"fork":true,"branch":"main","pushed":"2026-11-01T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
         """
