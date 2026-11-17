@@ -18,6 +18,11 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `off` deletes the ruleset and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
   and `bin/revoke-head` (approval of a PR's exact HEAD as the commit status `merge-approval`). Enforced repos
   are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
+  `agent create` registers the agent's own GitHub App through the manifest flow (`scripts/app-manifest-flow.py`,
+  standard library only) and keeps its ID and private key in `~/.config/agent-guardrails/agent/`;
+  `agent status` shows where it is installed. `bin/agent-app-lib.sh` signs App JWTs with openssl and mints
+  installation tokens limited to one repository and the agent's permissions (contents and pull requests write,
+  no workflows).
   For the Guardrails app, `inbox --json`, `projects --json` (the owner's repos with their state, one GraphQL
   query) and `prs <owner/repo> --json` are read-only and print one item per line, and with `GUARDRAILS_EVENTS_FD=<3-9>` the
   commands also write their plan and each expected confirmation as JSON lines to that descriptor.
