@@ -1,18 +1,58 @@
 # agent-guardrails
 
-Makes AI coding agents' work verifiable. You write the spec first: types, property tests and acceptance
-scenarios. The agent then works only inside that locked spec, deterministic checks (local hooks and CI)
-decide when the work is done, and nothing merges until you approve the exact commit.
+[![ci](https://github.com/senoldogann/agent-guardrails/actions/workflows/ci.yml/badge.svg)](https://github.com/senoldogann/agent-guardrails/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/senoldogann/agent-guardrails)](https://github.com/senoldogann/agent-guardrails/releases)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-The kit acts only in projects you turn it on for. Everywhere else your agents work as before.
+Spec-first guardrails for [Claude Code](https://claude.com/claude-code) on GitHub. A human writes the contract
+for a ticket (types, property tests, acceptance scenarios) before any code exists. The agent implements only
+inside that locked spec. Deterministic checks decide when the work is done, and nothing merges until the
+human approves the exact commit.
+
+**Why.** A coding agent that grades its own work will sometimes weaken a test, skip a check or declare a task
+done that is not. Reviewing every line afterwards does not scale. This kit moves the human's effort to the
+front (deciding what "correct" means) and lets machines enforce it: locked tests, a guard that runs from the
+default branch so a PR cannot change the rules that judge it, mutation testing to show the tests have teeth,
+and a per-commit approval that a new push invalidates.
+
+**Status:** 0.x, used daily by its author on macOS. Expect changes between minor versions; see
+[CHANGELOG.md](CHANGELOG.md).
+
+## How it works
+
+```mermaid
+flowchart LR
+  T[Ticket] --> S["/ticket-spec<br/>types, property tests,<br/>Gherkin, open questions"]
+  S --> D{Owner answers<br/>and locks the spec}
+  D --> I["/ticket-implement<br/>only write-allowed files"]
+  I --> C["CI: ci-guard from the default branch,<br/>language checks, mutation testing"]
+  C --> A{Owner approves<br/>the exact commit}
+  A --> M[Squash merge]
+  I -. new push .-> C
+```
+
+- **Spec phase:** the agent writes branded contract types with stubs, property tests and acceptance tests named
+  after the acceptance criteria, plus open questions, each with a recommended answer. It writes no
+  implementation. The owner answers the questions; the spec and the test IDs are then locked by hash.
+- **Implement phase:** a local write-guard lets the agent change only the files listed in the ticket's
+  `write-allow`, and a stop hook keeps it working until `make check` passes.
+- **CI:** `ci-guard` runs from the default branch through `pull_request_target`, reads the PR only as data and
+  fails it for changed locked files, tests or CI configuration, merge commits, symlinks and similar.
+  Language checks run the type checker, linter, tests and a mutation gate on the changed code.
+- **Approval:** a ruleset requires the guard, the checks and the owner's approval of the PR's current HEAD. A
+  push after the approval needs a new one.
+
+Supported languages: TypeScript and JavaScript (Vitest, fast-check, Stryker), Python (pytest, Hypothesis,
+mutmut), Rust (proptest, cargo-mutants) and Swift packages (swift-testing; no mutation gate).
 
 ## Requirements
 
-- macOS or Linux with `git`, `jq` and the GitHub CLI `gh`, signed in (`gh auth login`).
+- macOS or Linux with `git`, `jq`, `curl`, `openssl` and the GitHub CLI `gh`, signed in (`gh auth login`).
 - [Claude Code](https://claude.com/claude-code), which runs the skills and hooks.
 - A writable directory on `PATH`: `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`.
+- `python3` for registering the agent's GitHub App (`guardrails agent create`).
 - For the menu bar app: macOS 26 and Xcode 26 or newer.
-- For `make check`: `shellcheck`.
+- Repository rulesets on private repositories need GitHub Pro, Team or Enterprise.
 
 ## Install
 
@@ -25,55 +65,91 @@ git clone https://github.com/senoldogann/agent-guardrails ~/.local/share/agent-g
 make -C ~/.local/share/agent-guardrails app   # optional, macOS: installs ~/Applications/Guardrails.app
 ```
 
-`install.sh` links the skills into `~/.claude/skills`, registers the global hooks in `~/.claude/settings.json`
-(after backing it up) and links the `guardrails` command onto `PATH`. It checks everything it needs before
-changing anything. To update, press **Update** in the menu bar app when it offers one, or run
-`guardrails update`: it shows the new commits, asks you to confirm the exact one, fast-forwards the clone,
-runs `install.sh` again and rebuilds the app.
-`make app` signs the app with your "Developer ID Application" identity when the keychain has one (ad hoc
-otherwise, for this Mac only). `make app-release` builds a notarized copy for other Macs and attaches it to
-the GitHub release of `VERSION`; it needs `xcrun notarytool store-credentials guardrails-notary` once. A
-downloaded app expects the kit at `~/.local/share/agent-guardrails`.
-`guardrails version` shows the installed version; what changed between versions is in
-[CHANGELOG.md](CHANGELOG.md) and on the releases page.
+`install.sh` checks everything first, then links the skills into `~/.claude/skills`, registers the global hooks
+in `~/.claude/settings.json` (after backing it up) and links the owner command onto `PATH` as both `guardrails`
+and `agent-guardrails` (other tools also install a `guardrails` command; use the longer name if one does).
+
+To update, press **Update** in the menu bar app when it offers one, or run `guardrails update`. It shows the
+new commits, asks you to confirm the exact one, fast-forwards the clone, runs `install.sh` again and rebuilds
+the app. `guardrails version` shows what is installed.
 
 ## Daily use
 
-1. In a project, ask Claude for `/guardrails-init`. It opens a set-up PR. In the app you can do the same from
-   the Projects window with **Set up…**.
-2. Turn the project on once you have read that PR: `guardrails on <PR URL>`, or **Turn on** in the app.
-3. Work ticket by ticket: `/ticket-spec` writes the spec and its open questions, you answer and lock it, and
-   `/ticket-implement` builds against it.
-4. When CI is green, approve the PR's exact HEAD with `guardrails approve <PR URL>` or **Review** in the app.
-   Approving takes a typed confirmation, and in the app also Touch ID. In review mode (below) an approving
-   review on github.com or GitHub Mobile works too.
+1. In a project, ask Claude for `/guardrails-init`. It opens a bootstrap PR with the kit's files, the project's
+   `Makefile` and `AGENTS.md`. In the app: **Set up…** in the Projects window.
+2. Read that PR, then turn the project on: **Turn on** in the app, or `guardrails on <PR URL>`.
+3. Work ticket by ticket: `/ticket-spec <ID>`, answer the open questions, lock the spec, `/ticket-implement <ID>`.
+4. When CI is green, approve: **Review** in the app (Touch ID), or `guardrails approve <PR URL>` (typed
+   confirmation of the commit).
 
-Run `guardrails` with no arguments to see what waits for you. `guardrails off <owner/repo>` turns a project
-off again.
+`guardrails` without arguments, or the menu bar app, lists what waits for you: questions from the agent, PRs
+to approve, bootstrap PRs to turn on, and alarms.
 
-## The agent's own GitHub identity (review mode)
+## The agent's own GitHub identity
 
-Without it the agent works with your GitHub login. GitHub does not let you approve your own pull requests, so
-the kit records your approval as a commit status (status mode). With an agent App the agent pushes and opens
-PRs as the App's bot, and you approve them like any teammate's PR (review mode):
+By default the agent works with your GitHub login. GitHub does not let you approve your own pull requests, so
+the kit records your approval as the commit status `merge-approval` (**status mode**). With an agent App the
+agent pushes and opens PRs as the App's bot, and you approve them with an ordinary GitHub review, also from
+github.com or GitHub Mobile (**review mode**):
 
-1. **Create…** under Agent identity in the app's Projects window (or `guardrails agent create`) registers a
+1. **Create…** under Agent identity in the app's Projects window, or `guardrails agent create`, registers a
    private GitHub App in your browser. It may write contents and pull requests only: no workflows,
    administration or statuses.
 2. Install it with **Only select repositories** on the projects the agent works in (**Manage** in the app).
-3. Make sure each project has `.github/CODEOWNERS` whose first line is `* @<you>` (new set-up PRs add it).
-4. Press **Switch to review mode** on the project in the app (or run `guardrails on <owner/repo>` again). A
-   code owner's review is then required, and GitHub dismisses it on every new push. **Review** on your own
-   PR merges it with your admin bypass, which skips the review but never the checks.
+3. Each project needs `.github/CODEOWNERS` whose first line is `* @<you>` (new bootstrap PRs add it).
+4. **Switch to review mode** on the project in the app, or `guardrails on <owner/repo>`. A code owner's review
+   is then required, and GitHub dismisses it when a push changes the PR. **Review** on your own PR merges it
+   with your admin bypass, which skips the review but never the checks.
 
-`guardrails agent status` shows where the App is installed; `guardrails status` shows each project's mode.
-While the agent runs as your computer user it can still reach your own login, so the identity separates
-whose work is whose (and makes reviews possible); it is not a security boundary against the agent itself.
+## What it changes on GitHub
 
-## How it is enforced
+`guardrails on` sets, for that repository: the `agent-guardrails` ruleset on the default branch (no deletion,
+no force push, linear history, squash-merged PRs with resolved threads, the required checks, and in status
+mode `merge-approval`); in review mode the `agent-guardrails-review` ruleset (one code owner review, dismissed
+on push, last push approved by someone else, admins may bypass it through a PR); the `agent-guardrails-tags`
+ruleset (only admins create, move or delete tags); squash merge only with auto-merge and branch deletion;
+read-only workflow tokens that cannot approve PRs; SHA-pinned actions; the label `needs-decision`; and the
+topic `agent-guardrails`. `guardrails off <owner/repo>` deletes the three rulesets, removes the topic and
+merges a PR that removes the kit's files; the repository settings stay.
 
-Hooks and the app are conveniences: an agent running as your user could get around them. The boundary is
-on GitHub: a ruleset on the default branch, and a `ci-guard` job that runs from the base branch and checks
-every PR against the locked spec. Only you can change either.
+## Security model and limits
 
-For the repository layout and the contributor commands, see [AGENTS.md](AGENTS.md).
+- **The boundary is on GitHub.** Rulesets and `ci-guard` (which runs from the default branch, so a PR cannot
+  change the guard that judges it) decide what merges. Local hooks and the app make the right path easy; they
+  are not a boundary.
+- **Status mode does not stop a hostile agent.** The agent runs with your login, which can change rulesets.
+  `bash-guard` blocks owner-only commands, credential reads and settings changes by matching command text,
+  which a deliberately disguised command can evade. It stops mistakes and shortcuts, not an adversary.
+- **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
+  computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a
+  container or in CI with only the App's token.
+- Other administrators of a repository can change or remove its rulesets; the inbox raises an alarm when the
+  rulesets or the list of enforced repositories stop matching.
+
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+
+## Uninstall
+
+Turn each project off first (`guardrails off <owner/repo>`). Then remove the links `guardrails`,
+`agent-guardrails`, `approve-head` and `revoke-head` from your `PATH` directory, the skill links in
+`~/.claude/skills` that point into the kit, the hooks in `~/.claude/settings.json` whose command points into
+the kit (`bash-guard.sh`, `prompt-reminder.sh`, `agent-identity.sh`), `~/Applications/Guardrails.app`,
+`~/.config/agent-guardrails` and the kit clone.
+
+## Glossary
+
+- **Owner:** the human who decides and approves; the only one who runs the `guardrails` state-changing
+  commands.
+- **Kit:** this repository's files that `/guardrails-init` copies into a project (`.agent/`, hooks, workflows).
+- **Bootstrap PR:** the PR that adds the kit to a project; turning the project on merges it.
+- **Locked spec:** the ticket's contracts, tests and test IDs, fixed by hash once the owner has answered the
+  open questions.
+- **HEAD:** the PR's latest commit. Approvals are for one exact HEAD.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The repository layout and commands are in [AGENTS.md](AGENTS.md).
+
+## License
+
+[MIT](LICENSE)

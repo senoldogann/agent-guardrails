@@ -2,7 +2,7 @@ import GuardrailsCore
 import SwiftUI
 
 /// Sets a project up: finds or clones it into the projects folder, then opens Terminal with Claude Code
-/// running /guardrails-init. Nothing is enforced yet; the owner turns it on after the set-up PR appears.
+/// running /guardrails-init. Nothing is enforced yet; the owner turns it on after the bootstrap PR appears.
 struct SetupSheet: View {
     let project: Project
     let onLaunched: () -> Void
@@ -12,7 +12,7 @@ struct SetupSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Set up \(project.name)").font(.displayTitle).tracking(-0.3)
-            Text("Claude adds the guardrails kit in Terminal and opens a set-up PR. You stay in control: it runs with its normal permission prompts, and nothing is enforced until you turn it on.")
+            Text("Claude adds the guardrails kit in Terminal and opens a bootstrap PR. You stay in control: it runs with its normal permission prompts, and nothing is enforced until you turn it on.")
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

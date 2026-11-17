@@ -13,29 +13,32 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks
   (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too);
   `template/.github/workflows/agent-guard.yml` base-branch guard.
-- `bin/guardrails`: the owner's command. Without arguments it lists what waits for the owner across enforced
-  repos; `on` checks a bootstrap PR's kit files against this install, merges it and applies the ruleset;
-  `off` deletes the rulesets and merges a PR that removes the kit; `approve`/`revoke` wrap `bin/approve-head`
-  and `bin/revoke-head` (approval of a PR's exact HEAD). `on` picks the mode: review mode when the agent App is
-  installed on the repo (a code owner's GitHub review pinned to the commit, CODEOWNERS required; the review
-  sits in its own ruleset that admins may bypass through a PR, while the branch ruleset with the checks has no
-  bypass), status mode otherwise (the commit status `merge-approval`); both add a tag ruleset (admins only). Rulesets are built by pure functions in `bin/guardrails-lib.sh`. Enforced repos
-  are listed in `~/.config/agent-guardrails/repos`. Offline-testable parts live in `bin/guardrails-lib.sh`.
-  `agent create` registers the agent's own GitHub App through the manifest flow (`scripts/app-manifest-flow.py`,
-  standard library only) and keeps its ID and private key in `~/.config/agent-guardrails/agent/`;
-  `agent status` shows where it is installed. `bin/agent-app-lib.sh` signs App JWTs with openssl and mints
-  installation tokens limited to one repository and the agent's permissions (contents and pull requests write,
-  no workflows).
-  For the Guardrails app, `inbox --json`, `projects --json` (the owner's repos with their state, one GraphQL
-  query) and `prs <owner/repo> --json` are read-only and print one item per line, and with `GUARDRAILS_EVENTS_FD=<3-9>` the
-  commands also write their plan and each expected confirmation as JSON lines to that descriptor.
-- `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): lists what waits for the owner, a
-  Projects window with every repo's state and open PRs, set-up of new projects (clone check, then Terminal with
-  `claude "/guardrails-init"`), and runs `guardrails approve|on|off|update|agent create` inside a pseudo-terminal (`script -q /dev/null`). It shows the CLI's plan
-  event, checks every confirmation against that plan and asks for Touch ID before typing it. The CLI stays
-  the authority. The app is a convenience, not a boundary against an agent running as the same user.
-  `GuardrailsCore` holds the testable parts; `app/build.sh` writes the kit path into Info.plist and installs
-  `~/Applications/Guardrails.app`.
+- `bin/guardrails` (also linked as `agent-guardrails`): the owner's command. Enforced repos are listed in
+  `~/.config/agent-guardrails/repos`. Offline-testable parts (rulesets, PR and project states, CODEOWNERS
+  checks, `update`) live in `bin/guardrails-lib.sh` as functions over their inputs.
+  - Without arguments it lists what waits for the owner across enforced repos.
+  - `on` checks a bootstrap PR's kit files against this install, merges it and applies the rulesets; it picks
+    review mode when the agent App is installed on the repo (a code owner's GitHub review pinned to the
+    commit, CODEOWNERS required, in its own ruleset that admins may bypass through a PR) and status mode
+    otherwise (the commit status `merge-approval`). Nobody bypasses the branch ruleset with the checks; only
+    admins create, move or delete tags. `off` deletes the rulesets and merges a PR that removes the kit.
+  - `approve`/`revoke` wrap `bin/approve-head` and `bin/revoke-head` (approval of a PR's exact HEAD).
+  - `update` fast-forwards this install to its origin's main, reinstalls it and rebuilds the app.
+  - `agent create` registers the agent's own GitHub App through the manifest flow
+    (`scripts/app-manifest-flow.py`, standard library only) and keeps its ID and private key in
+    `~/.config/agent-guardrails/agent/`; `agent status` shows where it is installed. `bin/agent-app-lib.sh`
+    signs App JWTs with openssl and mints installation tokens limited to one repository and the agent's
+    permissions (contents and pull requests write, no workflows).
+  - For the app, `inbox --json`, `projects --json`, `prs <owner/repo> --json` and `agent status --json` are
+    read-only and print one item per line; with `GUARDRAILS_EVENTS_FD=<3-9>` the state-changing commands
+    also write their plan and each expected confirmation as JSON lines to that descriptor.
+- `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): what waits for the owner, a Projects
+  window with every repo's state and open PRs, set-up of new projects (clone check, then Terminal with
+  `claude "/guardrails-init"`), and `guardrails approve|on|off|update|agent create` run inside a pseudo-terminal
+  (`script -q /dev/null`). It shows the CLI's plan event, checks every confirmation against that plan and asks
+  for Touch ID before typing it. The CLI stays the authority; the app is a convenience, not a boundary against
+  an agent running as the same user. `GuardrailsCore` holds the testable parts; `app/build.sh` writes the kit
+  path into Info.plist, signs and installs `~/Applications/Guardrails.app`.
 - `hooks-global/` user-level hooks installed into `~/.claude/settings.json`. They act only in kit
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`

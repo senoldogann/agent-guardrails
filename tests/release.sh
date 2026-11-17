@@ -19,10 +19,11 @@ echo "release"
 version=$(<"$kit/VERSION")
 check "VERSION is a semantic version" '[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]'
 check "CHANGELOG has notes for VERSION" '"$kit/scripts/release-notes.sh" "$version" "$kit/CHANGELOG.md" >/dev/null'
-printf '# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-01-02\n\n### Added\n\n- b\n\n## [1.0.0] - 2026-01-01\n\n- a\n' \
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-01-02\n\n### Added\n\n- b\n\n## [1.0.0] - 2026-01-01\n\n- a\n\n[1.1.0]: https://example.invalid/c\n[1.0.0]: https://example.invalid/t\n' \
   >"$work/CHANGELOG.md"
 notes=$("$kit/scripts/release-notes.sh" 1.1.0 "$work/CHANGELOG.md")
 check "one section, no heading, no blank edges" '[[ $notes == $'"'"'### Added\n\n- b'"'"' ]]'
+check "the oldest section stops before the link definitions" '[[ $("$kit/scripts/release-notes.sh" 1.0.0 "$work/CHANGELOG.md") == "- a" ]]'
 check "a missing version fails" '! "$kit/scripts/release-notes.sh" 2.0.0 "$work/CHANGELOG.md" 2>/dev/null'
 check "an empty section fails" '! "$kit/scripts/release-notes.sh" Unreleased "$work/CHANGELOG.md" 2>/dev/null'
 

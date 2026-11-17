@@ -33,7 +33,7 @@ public func setupScript(clonePath: String, repo: String) -> String {
     """
     #!/bin/bash
     cd -- \(shellQuote(clonePath)) || exit 1
-    printf '%s\\n' \(shellQuote("Setting up agent guardrails in \(repo). Claude runs /guardrails-init and opens a set-up PR; it then shows up in Guardrails as Ready to turn on."))
+    printf '%s\\n' \(shellQuote("Setting up agent guardrails in \(repo). Claude runs /guardrails-init and opens a bootstrap PR; it then shows up in Guardrails as Ready to turn on."))
     exec claude '/guardrails-init'
 
     """
@@ -56,7 +56,7 @@ public func judgeClone(origin: String?, statusPorcelain: String, branch: String,
         return .problem("The folder's origin is \(origin), not github.com/\(repo).")
     }
     guard statusPorcelain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        return .problem("The clone has uncommitted changes. Commit or stash them first, so the set-up PR holds only the kit.")
+        return .problem("The clone has uncommitted changes. Commit or stash them first, so the bootstrap PR holds only the kit.")
     }
     guard branch == defaultBranch else {
         return .problem("The clone is on \(branch). Switch it to \(defaultBranch) first.")

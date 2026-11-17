@@ -160,7 +160,7 @@ struct ProjectStateCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Explainer(
                         symbol: "shippingbox", color: Palette.warning, title: "Ready to turn on",
-                        text: "The set-up PR is open. Turning on checks its kit files against your installed kit, merges exactly the commit you confirm and applies the ruleset.")
+                        text: "The bootstrap PR is open. Turning on checks its kit files against your installed kit, merges exactly the commit you confirm and applies the ruleset.")
                     HStack {
                         Text(displaySafe(project.setupTitle)).font(.system(size: 13, weight: .medium))
                         Spacer()
@@ -195,11 +195,11 @@ struct OffCard: View {
             if let setupStarted {
                 Explainer(
                     symbol: "hourglass", color: Palette.warning, title: "Setting up…",
-                    text: "Started \(setupStarted.formatted(date: .omitted, time: .shortened)) in Terminal. When Claude opens the set-up PR, this project moves to Ready to turn on. Refresh to check; if Terminal closed early, set it up again.")
+                    text: "Started \(setupStarted.formatted(date: .omitted, time: .shortened)) in Terminal. When Claude opens the bootstrap PR, this project moves to Ready to turn on. Refresh to check; if Terminal closed early, set it up again.")
             } else {
                 Explainer(
                     symbol: "shield.slash", color: Palette.textSecondary, title: "Guardrails are off",
-                    text: "Agents work here as they normally do. Set up adds the kit with Claude in Terminal: it opens a set-up PR, and you turn it on from here once you have looked at it.")
+                    text: "Agents work here as they normally do. Set up adds the kit with Claude in Terminal: it opens a bootstrap PR, and you turn it on from here once you have looked at it.")
             }
         }
     }
