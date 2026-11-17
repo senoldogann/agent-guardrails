@@ -1,0 +1,32 @@
+# Publishes a GitHub release when main carries a VERSION that has no tag yet. The notes are that version's
+# section of CHANGELOG.md; a missing section fails the run, so no release goes out without notes.
+name: release
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Release VERSION if it is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          version=$(<VERSION)
+          tag="v$version"
+          if gh release view "$tag" -R "$REPO" >/dev/null 2>&1; then
+            echo "$tag is already released"
+            exit 0
+          fi
+          scripts/release-notes.sh "$version" CHANGELOG.md >notes.md
+          gh release create "$tag" -R "$REPO" --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md

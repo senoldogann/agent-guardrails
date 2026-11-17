@@ -9,6 +9,7 @@
 #   guardrails approve [PR link]       approve a PR's HEAD; without a link, pick from the waiting PRs
 #   guardrails revoke <PR link>        withdraw an approval
 #   guardrails status                  every enforced repo: ruleset and kit files, plus this kit install
+#   guardrails version                 the kit version (VERSION) and the commit of this kit install
 #   guardrails projects --json         your repositories with their state (read-only, for the app)
 #   guardrails prs <owner/repo> --json the open PRs of one repository (read-only, for the app)
 #
@@ -34,7 +35,7 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-  sed -n '5,13p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 1
 }
 
@@ -468,6 +469,10 @@ case $command in
   status)
     require_args 0 $# "guardrails status"
     status
+    ;;
+  version | --version)
+    require_args 0 $# "guardrails version"
+    printf 'agent-guardrails %s (%s)\n' "$(<"$kit/VERSION")" "$(kit_git rev-parse --short HEAD)"
     ;;
   projects)
     [[ $# -eq 1 && $1 == --json ]] || die "usage: guardrails projects --json"

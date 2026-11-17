@@ -28,6 +28,8 @@ make -C ~/.local/share/agent-guardrails app   # optional, macOS: installs ~/Appl
 `install.sh` links the skills into `~/.claude/skills`, registers two hooks in `~/.claude/settings.json`
 (after backing it up) and links the `guardrails` command onto `PATH`. It checks everything it needs before
 changing anything. To update, run `git pull --ff-only` in the clone, then `install.sh` and `make app` again.
+`guardrails version` shows the installed version; what changed between versions is in
+[CHANGELOG.md](CHANGELOG.md) and on the releases page.
 
 ## Daily use
 

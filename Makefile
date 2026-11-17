@@ -3,7 +3,7 @@
 check: lint test
 
 lint:
-	shellcheck -x install.sh app/build.sh bin/* tests/*.sh tests/lang/*.sh hooks-global/*.sh skills/guardrails-init/template/.agent/hooks/*.sh \
+	shellcheck -x install.sh app/build.sh scripts/*.sh bin/* tests/*.sh tests/lang/*.sh hooks-global/*.sh skills/guardrails-init/template/.agent/hooks/*.sh \
 		$$(find skills/guardrails-init/template/.agent/bin -type f)
 
 test:
@@ -13,6 +13,7 @@ test:
 	tests/install.sh
 	tests/human-owned.sh
 	tests/smoke.sh
+	tests/release.sh
 
 ## Slow: real TS/Python/Rust/Swift mini projects (needs pnpm, uv, cargo, swift).
 test-lang:

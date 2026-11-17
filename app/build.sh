@@ -29,6 +29,7 @@ xml_escape() {
   printf '%s' "$text"
 }
 version=$(git -C "$kit" rev-parse --short HEAD)
+release=$(<"$kit/VERSION")
 cat >"$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,7 +41,7 @@ cat >"$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>Guardrails</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>$(xml_escape "$release")</string>
   <key>CFBundleVersion</key><string>$(xml_escape "$version")</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><true/>
@@ -56,4 +57,4 @@ codesign --force --sign - "$bundle"
 mkdir -p "$dest"
 rm -rf "$dest/Guardrails.app"
 cp -R "$bundle" "$dest/Guardrails.app"
-printf 'Installed %s/Guardrails.app (kit %s at %s). Open it once; it lives in the menu bar.\n' "$dest" "$kit" "$version"
+printf 'Installed %s/Guardrails.app (kit %s %s at %s). Open it once; it lives in the menu bar.\n' "$dest" "$kit" "$release" "$version"
