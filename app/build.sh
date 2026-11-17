@@ -2,11 +2,25 @@
 # Usage: app/build.sh
 # Builds Guardrails.app from this kit and installs it into ~/Applications (GUARDRAILS_APP_DIR overrides).
 # Run it from the kit install the owner's commands run from: the app calls bin/guardrails of the kit it was
-# built from (the path is written into its Info.plist), never a command found on PATH.
+# built from (the path is written into its Info.plist; GUARDRAILS_APP_KIT_PATH overrides it, and a leading ~
+# is expanded when the app starts), never a command found on PATH.
+# Signing: GUARDRAILS_SIGN_IDENTITY names the codesign identity. Unset, the keychain's "Developer ID
+# Application" identity is used (hardened runtime, secure timestamp); with none the app is signed ad hoc and
+# runs on this Mac only. Two Developer ID identities need GUARDRAILS_SIGN_IDENTITY to pick one.
 set -euo pipefail
 app_dir=$(cd "$(dirname "$0")" && pwd -P)
 kit=$(cd "$app_dir/.." && pwd -P)
 dest=${GUARDRAILS_APP_DIR:-$HOME/Applications}
+app_kit_path=${GUARDRAILS_APP_KIT_PATH:-$kit}
+identity=${GUARDRAILS_SIGN_IDENTITY:-}
+if [[ -z $identity ]]; then
+  identities=$(security find-identity -v -p codesigning | sed -nE 's/^ *[0-9]+\) [0-9A-F]{40} "(Developer ID Application: [^"]+)"$/\1/p')
+  if [[ $(grep -c . <<<"$identities") -gt 1 ]]; then
+    printf 'error: several Developer ID Application identities; set GUARDRAILS_SIGN_IDENTITY to one of:\n%s\n' "$identities" >&2
+    exit 1
+  fi
+  identity=$identities
+fi
 
 swift build -c release --package-path "$app_dir"
 bin=$(swift build -c release --package-path "$app_dir" --show-bin-path)
@@ -47,14 +61,22 @@ cat >"$bundle/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSAccentColorName</key><string>AccentColor</string>
   <key>NSHumanReadableCopyright</key><string>agent-guardrails</string>
-  <key>GuardrailsKitPath</key><string>$(xml_escape "$kit")</string>
+  <key>GuardrailsKitPath</key><string>$(xml_escape "$app_kit_path")</string>
 </dict>
 </plist>
 PLIST
 plutil -lint "$bundle/Contents/Info.plist" >/dev/null
-codesign --force --sign - "$bundle"
+if [[ -n $identity ]]; then
+  codesign --force --options runtime --timestamp --sign "$identity" "$bundle"
+  signed_with=$identity
+else
+  codesign --force --sign - "$bundle"
+  signed_with="ad hoc (no Developer ID Application identity in the keychain; runs on this Mac only)"
+fi
+codesign --verify --strict "$bundle"
 
 mkdir -p "$dest"
 rm -rf "$dest/Guardrails.app"
 cp -R "$bundle" "$dest/Guardrails.app"
-printf 'Installed %s/Guardrails.app (kit %s %s at %s). Open it once; it lives in the menu bar.\n' "$dest" "$kit" "$release" "$version"
+printf 'Installed %s/Guardrails.app (kit %s %s at %s, signed %s). Open it once; it lives in the menu bar.\n' \
+  "$dest" "$app_kit_path" "$release" "$version" "$signed_with"

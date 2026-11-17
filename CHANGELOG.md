@@ -16,6 +16,9 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   where the agent App is installed, a link to add a repository to the App, and an Agent identity panel that
   creates the App or opens its repository settings. `guardrails projects --json` reports `mode` and
   `agentApp`; `guardrails agent status --json` describes the App without network calls.
+- `make app` signs the app with the keychain's Developer ID Application identity (hardened runtime, secure
+  timestamp) and verifies the signature; `make app-release` notarizes and staples a copy for other Macs and
+  attaches it to the GitHub release.
 
 ## [0.2.0] - 2026-11-17
 
