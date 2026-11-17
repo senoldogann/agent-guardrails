@@ -250,6 +250,26 @@ run_shim() {
   printf '%s' $?
   set -e
 }
+echo "graphql_with_retry"
+# A fake gh fails as GitHub does on a timed-out query until $FLAKY_FAILS calls have failed.
+flaky_bin="$work/flaky-bin"
+mkdir -p "$flaky_bin"
+# shellcheck disable=SC2016 # the lines are the fake's source and expand when it runs
+printf '%s\n' '#!/usr/bin/env bash' \
+  'n=$(($(cat "$FLAKY_COUNT") + 1)); echo "$n" >"$FLAKY_COUNT"' \
+  'if [[ $n -le $FLAKY_FAILS ]]; then echo "invalid character '"'<'"' looking for beginning of value" >&2; exit 1; fi' \
+  'printf "{\"a\":1}\n{\"a\":2}\n"' >"$flaky_bin/gh"
+chmod +x "$flaky_bin/gh"
+flaky() {
+  echo 0 >"$work/flaky-count"
+  (PATH="$flaky_bin:$PATH" FLAKY_COUNT="$work/flaky-count" FLAKY_FAILS=$1 graphql_with_retry 3 0 'query' '.') 2>"$work/flaky-err"
+}
+expect_eq "a failed attempt is retried" "$(flaky 2)" $'{"a":1}\n{"a":2}'
+expect_eq "one warning per failed attempt" "$(grep -c '^warning: ' "$work/flaky-err")" 2
+if flaky 3 >/dev/null; then fail "three failures stop the query"; else ok; fi
+expect_eq "the final error names the attempts and the last error" "$(tail -1 "$work/flaky-err")" \
+  "error: GitHub did not answer the GraphQL query after 3 attempts. Last error: invalid character '<' looking for beginning of value"
+
 bare_home="$work/bare-home"
 mkdir -p "$bare_home"
 expect_eq "no kit: gh is blocked" "$(run_shim "$bare_home" 'gh pr create --title x')" 2
