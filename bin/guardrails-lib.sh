@@ -293,7 +293,9 @@ status_mode_ruleset() {
 # owner's bypass for their own PRs skips the review and nothing else (checks, history, deletion stay). It needs
 # one approving review from a code owner; bots cannot be code owners. A push that changes the diff or the
 # merge base dismisses it, and the last push must be approved by someone other than its pusher. Admins may
-# bypass it only by merging a PR, never by pushing. Argument: ruleset name.
+# bypass it only by merging a PR, never by pushing. Repository role 5 is "admin" (not in GitHub's docs; checked
+# on a real repository: the owner's admin merge skipped the review but was refused while a check failed).
+# Argument: ruleset name.
 review_ruleset() {
   jq -c -n --arg name "$1" '{
     name: $name, target: "branch", enforcement: "active",

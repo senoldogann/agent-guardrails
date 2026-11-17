@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-17
+
 ### Fixed
 
 - `guardrails on`, `off` and `status` clone over HTTPS with gh's credentials, so they work when gh prefers
@@ -23,7 +25,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - Review mode: `guardrails on` on a repository where the agent App is installed requires a code owner's
   GitHub review instead of the `merge-approval` status (stale reviews dismissed on push, last push approved by
   someone else). The review lives in its own ruleset that admins may bypass through a PR; the checks never
-  can be. It refuses without a CODEOWNERS whose first rule is `* @<owner>` or with errors GitHub reports. `guardrails approve` submits that review pinned to the reviewed commit; `guardrails revoke`
+  can be. It refuses without a CODEOWNERS whose first rule is `* @<owner>` or with errors GitHub reports.
+  `guardrails approve` submits that review pinned to the reviewed commit; `guardrails revoke`
   dismisses it. `/guardrails-init` adds `.github/CODEOWNERS`.
 - Every enforced repository gets a tag ruleset: only admins create, move or delete tags.
 - `guardrails status` shows each repository's approval mode and tag protection; `guardrails agent status`
