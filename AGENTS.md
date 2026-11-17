@@ -43,6 +43,9 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   `approve-head`) refuse to run from a clone with local changes or not at its origin's main.
 - Check: `make check` (= shellcheck + the offline tests in `tests/`).
 - Language adapters: `make test-lang` (slow; real mini projects per language).
+- Release: raise `VERSION` (semver) and move the `Unreleased` entries of `CHANGELOG.md` under that version in
+  the same PR; after the merge `.github/workflows/release.yml` tags `v<VERSION>` and publishes the section as the
+  release notes. Changes worth a note go under `Unreleased` in their own PR.
 - App: `make app-test` (core tests), `make app` (build and install from the kit install; needs Xcode 26+).
   Rebuild the app after a kit change that touches `app/`.
 
