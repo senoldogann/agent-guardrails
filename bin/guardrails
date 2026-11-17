@@ -384,10 +384,12 @@ inbox() {
 }
 
 # The owner's repositories (not archived, newest push first) with what the app needs to show their state.
+# 25 per page: with rulesets and PR counts a page of 100 takes GitHub 6-9 s, close to its 10 s GraphQL
+# limit, and an overrun comes back as an HTML error page instead of JSON.
 # shellcheck disable=SC2016 # $endCursor is a GraphQL variable, filled in by gh --paginate
 projects_query='query($endCursor: String) {
   viewer {
-    repositories(first: 100, after: $endCursor, ownerAffiliations: OWNER, isArchived: false,
+    repositories(first: 25, after: $endCursor, ownerAffiliations: OWNER, isArchived: false,
                  orderBy: {field: PUSHED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -406,7 +408,7 @@ projects_query='query($endCursor: String) {
 projects_json() {
   local owner
   owner=$(login)
-  gh api graphql --paginate -f query="$projects_query" --jq '.data.viewer.repositories.nodes[]' |
+  graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]' |
     project_states "$owner" "$(registered_repos)"
 }
 

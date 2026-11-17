@@ -94,6 +94,9 @@ func describeCommandFailure(_ result: CommandResult, command: String) -> String 
     if message.contains("API rate limit") {
         return "GitHub's API rate limit is reached. Try again in a few minutes."
     }
+    if message.contains("GitHub did not answer") {
+        return "GitHub did not answer in time, three tries in a row. Refresh to try again."
+    }
     return message.isEmpty ? "\(command) exited with status \(result.status)" : message
 }
 

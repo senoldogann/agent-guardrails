@@ -229,3 +229,29 @@ project_states() {
        branch: (.defaultBranchRef.name // ""), pushed: (.pushedAt // ""), openPRs: .pullRequests.totalCount,
        setupURL: ($bootstrap.url // ""), setupTitle: (($bootstrap.title // "") | clean)}'
 }
+
+# Runs a read-only, paginated GraphQL query and prints its --jq output. A query GitHub cannot finish in time
+# comes back as an HTML error page, which gh reports as "invalid character '<' looking for beginning of
+# value"; the same call is then retried after $2, 2*$2, ... seconds with a warning per failed attempt. The
+# output is buffered, so a failed attempt never prints part of a list.
+# Arguments: attempts, base delay in seconds, query, jq filter.
+graphql_with_retry() {
+  local attempts=$1 delay=$2 query=$3 filter=$4 attempt=1 out err err_file
+  err_file=$(mktemp)
+  while :; do
+    if out=$(gh api graphql --paginate -f query="$query" --jq "$filter" 2>"$err_file"); then
+      rm -f "$err_file"
+      [[ -z $out ]] || printf '%s\n' "$out"
+      return 0
+    fi
+    err=$(<"$err_file")
+    err=${err//$'\n'/ }
+    [[ $attempt -lt $attempts ]] || break
+    printf 'warning: GitHub GraphQL query failed (attempt %d of %d, retrying in %ds): %s\n' \
+      "$attempt" "$attempts" $((attempt * delay)) "$err" >&2
+    sleep $((attempt * delay))
+    attempt=$((attempt + 1))
+  done
+  rm -f "$err_file"
+  die "GitHub did not answer the GraphQL query after $attempts attempts. Last error: $err"
+}
