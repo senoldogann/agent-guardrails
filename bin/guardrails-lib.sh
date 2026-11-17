@@ -162,10 +162,11 @@ remove_agents_section() {
   rm -f "$file.tmp"
 }
 
-# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup[,author,updatedAt]` on
-# stdin and prints one compact JSON object per PR: {number, url, title, kind, note, sha, draft, author, updated}.
-# Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's work in progress),
-# approved (HEAD already approved), wait (guard running), blocked (guard failed), approve (guard passed,
+# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision
+# [,author,updatedAt]` on stdin and prints one compact JSON object per PR: {number, url, title, kind, note, sha,
+# draft, author, updated}. Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's
+# work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
+# review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
 # HEAD not approved yet). Any failed run named guard wins over a later success, because a workflow added by
 # the PR could report a run of that name (approve-head checks the real guard run). Titles are written by
 # the agent, so control characters are replaced before they reach a terminal or the app.
@@ -187,7 +188,7 @@ pr_states() {
        else "checks failing" end) as $checks_note
     | (if any(.labels[]?; .name == "needs-decision") then ["answer", "the agent is waiting for your decision"]
        elif .isDraft then ["draft", "the agent is working on it"]
-       elif ($approval.state // "") == "SUCCESS" then ["approved", "approved; merges when checks pass"]
+       elif ($approval.state // "") == "SUCCESS" or .reviewDecision == "APPROVED" then ["approved", "approved; merges when checks pass"]
        elif $guard == null or $guard.status != "COMPLETED" then ["wait", "guard is running"]
        elif $guard.conclusion != "SUCCESS" then ["blocked", "guard failed: the agent has to fix the PR"]
        else ["approve", $checks_note] end) as $state
@@ -254,4 +255,84 @@ graphql_with_retry() {
   done
   rm -f "$err_file"
   die "GitHub did not answer the GraphQL query after $attempts attempts. Last error: $err"
+}
+
+# The required checks of a kit repository as ruleset entries: guard and each checks-<lang> job, pinned to
+# GitHub Actions (integration 15368) so no other App can report them. Argument: job names, one per line.
+pinned_checks() {
+  jq -c -n --arg jobs "$1" '["guard"] + ($jobs | split("\n") | map(select(length > 0)))
+    | map({context: ., integration_id: 15368})'
+}
+
+# The default-branch ruleset of status mode: the agent works with the owner's login, so GitHub reviews cannot
+# express the owner's approval; the owner's commit status merge-approval on the exact HEAD does.
+# Arguments: ruleset name, pinned checks (JSON array).
+status_mode_ruleset() {
+  jq -c -n --arg name "$1" --argjson checks "$2" '{
+    name: $name, target: "branch", enforcement: "active", bypass_actors: [],
+    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+    rules: [
+      {type: "deletion"}, {type: "non_fast_forward"}, {type: "required_linear_history"},
+      {type: "pull_request", parameters: {
+        required_approving_review_count: 0, require_code_owner_review: false,
+        dismiss_stale_reviews_on_push: false, require_last_push_approval: false,
+        required_review_thread_resolution: true, allowed_merge_methods: ["squash"]}},
+      {type: "required_status_checks", parameters: {
+        strict_required_status_checks_policy: false, required_status_checks: ($checks + [{context: "merge-approval"}])}}
+    ]}'
+}
+
+# The default-branch ruleset of review mode: the agent pushes as its App's bot, so a code owner's GitHub review
+# is the approval. A push after it dismisses it (diff or merge base changed), and the last push must be
+# approved by someone else than its pusher. Bots cannot be code owners, so no bot approval counts. Repository
+# admins (the owner) may bypass the rules for their own pull requests, never by pushing directly.
+# Arguments: ruleset name, pinned checks (JSON array).
+review_mode_ruleset() {
+  jq -c -n --arg name "$1" --argjson checks "$2" '{
+    name: $name, target: "branch", enforcement: "active",
+    bypass_actors: [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}],
+    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+    rules: [
+      {type: "deletion"}, {type: "non_fast_forward"}, {type: "required_linear_history"},
+      {type: "pull_request", parameters: {
+        required_approving_review_count: 1, require_code_owner_review: true,
+        dismiss_stale_reviews_on_push: true, require_last_push_approval: true,
+        required_review_thread_resolution: true, allowed_merge_methods: ["squash"]}},
+      {type: "required_status_checks", parameters: {
+        strict_required_status_checks_policy: false, required_status_checks: $checks}}
+    ]}'
+}
+
+# Tags are created, moved and deleted by repository admins only: a release workflow cannot be triggered by
+# a tag the agent made. Argument: ruleset name.
+tag_ruleset() {
+  jq -c -n --arg name "$1" '{
+    name: $name, target: "tag", enforcement: "active",
+    bypass_actors: [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}],
+    conditions: {ref_name: {include: ["~ALL"], exclude: []}},
+    rules: [{type: "creation"}, {type: "update"}, {type: "deletion"}]}'
+}
+
+# Prints one line per problem with a checkout's CODEOWNERS for review mode, nothing when it is usable. GitHub
+# uses the first of .github/CODEOWNERS, CODEOWNERS and docs/CODEOWNERS. Its first rule must be `*` owned by
+# the given login (so every path has a human code owner), and every rule must name at least one owner (a rule
+# without owners leaves its paths without a code owner). Arguments: checkout directory, owner login.
+codeowners_problems() {
+  local dir=$1 login=$2 file="" candidate first
+  for candidate in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+    if [[ -f $dir/$candidate ]]; then
+      file=$candidate
+      break
+    fi
+  done
+  if [[ -z $file ]]; then
+    printf 'no CODEOWNERS file; add .github/CODEOWNERS whose first line is: * @%s\n' "$login"
+    return 0
+  fi
+  first=$(awk 'NF > 0 && $1 !~ /^#/ { print; exit }' "$dir/$file")
+  awk '{ print $1 }' <<<"$first" | grep -Fx '*' >/dev/null &&
+    awk '{ for (i = 2; i <= NF; i++) print tolower($i) }' <<<"$first" | grep -Fx "@$(tr '[:upper:]' '[:lower:]' <<<"$login")" >/dev/null ||
+    printf '%s: the first rule must be "* @%s" (found "%s")\n' "$file" "$login" "$first"
+  awk -v file="$file" 'NF == 1 && $1 !~ /^#/ { printf "%s: \"%s\" names no owner, so its paths need no code owner review\n", file, $1 }' \
+    "$dir/$file"
 }

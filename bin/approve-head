@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 # Usage: approve-head <pr-link-or-number>   (run by the HUMAN owner in their own terminal)
 # With a PR link it works from any directory; a bare number uses the current directory's repository.
-# Gives the owner's merge approval for the exact current HEAD of a PR by posting the commit status
-# `merge-approval` = success. The ruleset requires that context, so a new push needs a new approval.
+# Gives the owner's merge approval for the exact current HEAD of a PR. In status mode (the agent works with
+# the owner's login) it posts the commit status `merge-approval` = success, which the ruleset requires. In
+# review mode (the agent pushes as its App's bot) it submits an approving GitHub review pinned to that commit
+# (commit_id), which the ruleset requires from a code owner; GitHub dismisses it when a push changes the PR.
+# Either way a new push needs a new approval.
 # Lives in the kit install directory, outside every project, so an agent cannot edit the copy you run.
-# Refuses when GH_TOKEN/GITHUB_TOKEN is set (that is the agent's environment, whose token must not
-# be able to write commit statuses) and when the PR is not ready: base must be the default branch,
-# the `guard` check run for that SHA must have succeeded, no workflow may grant `statuses: write`.
+# Refuses in the agent's environment (GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR set) and when the PR is not
+# ready: base must be the default branch, the `guard` run for that SHA must have succeeded, no workflow may
+# grant `statuses: write` or `checks: write`.
 set -euo pipefail
 kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
 source "$kit/bin/pr-target.sh"
 require_args 1 $# "approve-head <pr-link-or-number>"
 
-[[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]] ||
-  die "GH_TOKEN/GITHUB_TOKEN is set: this looks like the agent's environment. Run approve-head in your own shell."
+[[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} && -z ${GH_CONFIG_DIR:-} ]] ||
+  die "GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR is set: this looks like the agent's environment. Run approve-head in your own shell."
 [[ -t 0 ]] || die "approve-head needs an interactive terminal (typed confirmation)"
 source "$kit/bin/guardrails-lib.sh"
 require_reviewed_kit
 
 read -r repo pr < <(pr_target "$1")
 default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
-pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft)
+pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft,author)
 sha=$(jq -r .headRefOid <<<"$pr_json")
 base=$(jq -r .baseRefName <<<"$pr_json")
 
@@ -30,12 +33,22 @@ base=$(jq -r .baseRefName <<<"$pr_json")
 
 ruleset_id=$(gh api "repos/$repo/rulesets" --jq '.[] | select(.name == "agent-guardrails" and .enforcement == "active") | .id')
 required=""
+code_owner_review=""
 if [[ -n $ruleset_id ]]; then
-  required=$(gh api "repos/$repo/rulesets/$ruleset_id" \
-    --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context')
+  ruleset=$(gh api "repos/$repo/rulesets/$ruleset_id")
+  required=$(jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' <<<"$ruleset")
+  code_owner_review=$(jq -r '.rules[] | select(.type == "pull_request") | .parameters.require_code_owner_review' <<<"$ruleset")
 fi
-grep -Fx merge-approval <<<"$required" >/dev/null ||
-  die "the agent-guardrails ruleset on $repo is not active or does not require merge-approval, so an approval would not protect anything. Check the audit log, then restore it with: guardrails on $repo"
+if grep -Fx merge-approval <<<"$required" >/dev/null; then
+  mode=status
+elif [[ $code_owner_review == true ]]; then
+  mode=review
+  owner=$(gh api user --jq .login)
+  [[ $(jq -r .author.login <<<"$pr_json") != "$owner" ]] ||
+    die "PR #$pr is your own, and GitHub does not let you approve it. As a repository admin you may merge it yourself: gh pr merge $(jq -r .url <<<"$pr_json") --squash --admin"
+else
+  die "the agent-guardrails ruleset on $repo is not active or requires neither merge-approval nor a code owner review, so an approval would not protect anything. Check the audit log, then restore it with: guardrails on $repo"
+fi
 
 # The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
 # from any check run named "guard": a workflow added by the PR could report a check run of that name.
@@ -85,6 +98,16 @@ if [[ -n $workflow_changes ]]; then
   [[ $typed == workflows ]] || die "workflow confirmation missing; nothing approved"
 fi
 
-gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=merge-approval \
-  -f description="Approved by owner for PR #$pr" >/dev/null
-printf 'merge-approval: success on %s (PR #%s)\n' "$sha" "$pr"
+if [[ $mode == status ]]; then
+  gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=merge-approval \
+    -f description="Approved by owner for PR #$pr" >/dev/null
+  printf 'merge-approval: success on %s (PR #%s)\n' "$sha" "$pr"
+  exit 0
+fi
+# The review names the commit the owner saw, so a push between showing and approving cannot receive it.
+gh api -X POST "repos/$repo/pulls/$pr/reviews" -f commit_id="$sha" -f event=APPROVE \
+  -f body="Approved by the owner for $sha after the agent-guardrails checks." >/dev/null
+now=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid)
+[[ $now == "$sha" ]] ||
+  die "PR #$pr moved to ${now:0:7} while you approved ${sha:0:7}; your review covers ${sha:0:7} only and GitHub will not count it. Review the new head."
+printf 'approved %s with a GitHub review (PR #%s)\n' "$sha" "$pr"
