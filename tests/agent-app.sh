@@ -64,6 +64,39 @@ expect_eq "reading an extra permission is reported" \
 
 expect_eq "gh hosts.yml" "$(gh_hosts_yml ghs_x 'bot[bot]')" $'github.com:\n    oauth_token: ghs_x\n    user: bot[bot]\n    git_protocol: https'
 
+# The session exports, as git sees them: SSH remotes become HTTPS and gh is the only GitHub credential helper.
+(
+  export HOME="$work/git-home"
+  mkdir -p "$HOME"
+  # The owner's stored password would answer first without the reset.
+  git config --global credential.helper store
+  printf 'https://owner:owner-token@github.com\n' >"$HOME/.git-credentials"
+  printf '#!/usr/bin/env bash\n[[ "$*" == "auth git-credential get" ]] && printf "username=x-access-token\\npassword=bot-token\\n"\n' \
+    >"$work/fake-gh"
+  chmod +x "$work/fake-gh"
+  eval "$(agent_env_exports "$work/agent gh" "$work/fake-gh")"
+  expect_eq "gh config directory" "$GH_CONFIG_DIR" "$work/agent gh"
+  expect_eq "SSH remote rewritten" "$(git ls-remote --get-url git@github.com:acme/shop.git)" "https://github.com/acme/shop.git"
+  expect_eq "SSH URL rewritten" "$(git ls-remote --get-url ssh://git@github.com/acme/shop.git)" "https://github.com/acme/shop.git"
+  expect_eq "git gets the bot token, not the owner's stored password" \
+    "$(printf 'protocol=https\nhost=github.com\npath=acme/shop.git\n\n' | git credential fill | grep '^password=')" \
+    "password=bot-token"
+  printf '%s %s\n' "$passed" "$failed" >"$work/counts"
+)
+read -r passed failed <"$work/counts"
+
+# Without a registered App the identity hook leaves a kit repository's session alone.
+kit_repo="$work/kit-repo"
+mkdir -p "$kit_repo/.agent/bin"
+git -C "$kit_repo" init -q
+printf '#!/usr/bin/env bash\n' >"$kit_repo/.agent/bin/ci-guard"
+chmod +x "$kit_repo/.agent/bin/ci-guard"
+mkdir -p "$work/empty-home"
+identity_out=$(jq -n --arg d "$kit_repo" '{cwd: $d, hook_event_name: "SessionStart"}' |
+  HOME="$work/empty-home" CLAUDE_ENV_FILE="$work/env-file" "$kit/hooks-global/agent-identity.sh" 2>&1) &&
+  identity_status=0 || identity_status=$?
+expect_eq "no App: no output, no exports" "$identity_status [$identity_out] $(cat "$work/env-file" 2>/dev/null | wc -l | tr -d ' ')" "0 [] 0"
+
 # The registration flow without a browser: the local page posts the manifest with this server as the redirect
 # and the state GitHub must echo; the callback with that state prints the code, another state fails.
 flow() {

@@ -10,7 +10,10 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 - `guardrails agent create` registers the agent's own GitHub App from a manifest (contents and pull requests
   write, no workflows or administration); `guardrails agent status` shows where it is installed and flags an
-  install on all repositories or extra permissions. The agent does not use it yet.
+  install on all repositories or extra permissions.
+- In a kit repository where that App is installed, a new global hook gives each agent session a one-hour token of
+  the App limited to that repository: gh and git push run as the App's bot, so its PRs can be approved with
+  ordinary GitHub reviews. Run `install.sh` again to register the hook.
 
 ## [0.1.0] - 2026-11-17
 

@@ -38,6 +38,8 @@ commands=$(jq -r '.hooks.PreToolUse[].hooks[].command' "$home/.claude/settings.j
 check "unrelated hook kept" 'grep -Fx "rtk hook claude" <<<"$commands" >/dev/null'
 check "old kit hook removed" '! grep -F "$old" <<<"$commands" >/dev/null'
 check "new kit hook registered" 'grep -Fx "$kit/hooks-global/bash-guard.sh" <<<"$commands" >/dev/null'
+check "identity hook renews tokens before Bash" 'grep -Fx "$kit/hooks-global/agent-identity.sh" <<<"$commands" >/dev/null'
+check "identity hook starts sessions" '[[ $(jq -r ".hooks.SessionStart[].hooks[].command" "$home/.claude/settings.json") == "$kit/hooks-global/agent-identity.sh" ]]'
 out=$(run_install)
 check "second run changes nothing" '! grep -E "^(linked|moved|registered)" <<<"$out" >/dev/null'
 rm "$home/.local/bin/revoke-head"
