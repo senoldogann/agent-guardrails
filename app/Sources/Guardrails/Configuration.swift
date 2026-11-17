@@ -40,10 +40,14 @@ struct ActionRequest: Codable, Hashable {
         case turnOn
         case turnOnRepo
         case turnOff
+        /// Fast-forward the kit install to its origin main, reinstall it and rebuild this app.
+        case update
+        /// Register the agent's own GitHub App in the browser.
+        case agentCreate
     }
 
     let kind: Kind
-    /// A PR link (approve, turnOn) or owner/repo (turnOnRepo, turnOff).
+    /// A PR link (approve, turnOn), owner/repo (turnOnRepo, turnOff), or "" (update, agentCreate).
     let target: String
     let label: String
 
@@ -52,6 +56,8 @@ struct ActionRequest: Codable, Hashable {
         case .approve: ["approve", target]
         case .turnOn, .turnOnRepo: ["on", target]
         case .turnOff: ["off", target]
+        case .update: ["update"]
+        case .agentCreate: ["agent", "create"]
         }
     }
 
@@ -67,6 +73,8 @@ struct ActionRequest: Codable, Hashable {
         case .approve: "Review and approve"
         case .turnOn, .turnOnRepo: "Turn guardrails on"
         case .turnOff: "Turn guardrails off"
+        case .update: "Update the kit"
+        case .agentCreate: "Create the agent's GitHub App"
         }
     }
 }

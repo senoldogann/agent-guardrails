@@ -21,6 +21,17 @@ struct ProjectsTests {
         #expect(groups.off.map(\.repo) == ["acme/site", "acme/vendored"])
     }
 
+    @Test func readsModeAndAgentAppWhenPresent() throws {
+        let projects = try parseProjects("""
+            {"repo":"acme/a","state":"on","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":"status","agentApp":"installed"}
+            {"repo":"acme/b","state":"on","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":"review","agentApp":"installed"}
+            {"repo":"acme/c","state":"off","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":null,"agentApp":"none"}
+            """)
+        #expect(projects.map(\.canSwitchToReviewMode) == [true, false, false])
+        #expect(projects.map(\.mode) == [.status, .review, nil])
+        #expect(try parseProjects(output).allSatisfy { $0.mode == nil && $0.agentApp == nil })
+    }
+
     @Test func searchMatchesOwnerAndName() throws {
         let groups = groupProjects(try parseProjects(output), matching: " SHO ")
         #expect(groups.on.map(\.repo) == ["acme/shop"])

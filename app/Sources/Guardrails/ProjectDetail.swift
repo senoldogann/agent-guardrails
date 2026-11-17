@@ -18,11 +18,11 @@ struct ProjectDetail: View {
                 if model.snapshot.hasKitInstallAlarm {
                     StatusPanel(
                         symbol: "lock", title: "Actions are locked",
-                        message: "The kit install has an alarm (see the menu bar). On, off and approve refuse until it is fixed.")
+                        message: "The kit install needs attention: use Update in the menu bar, or fix the alarm shown there. On, off and approve refuse until then.")
                 }
                 ProjectStateCard(
-                    project: project, setupStarted: projects.setupsStarted[project.repo], open: open,
-                    startSetup: { showsSetup = true })
+                    project: project, setupStarted: projects.setupsStarted[project.repo], agent: projects.agent,
+                    actionsLocked: model.snapshot.hasKitInstallAlarm, open: open, startSetup: { showsSetup = true })
                 if project.state == .on || project.state == .alarm {
                     PullRequestSection(
                         repo: project.repo, projects: projects, approvalsLocked: model.snapshot.hasKitInstallAlarm,
@@ -139,17 +139,15 @@ struct HeaderActions: View {
 struct ProjectStateCard: View {
     let project: Project
     let setupStarted: Date?
+    let agent: AgentInfo?
+    let actionsLocked: Bool
     let open: (ActionRequest) -> Void
     let startSetup: () -> Void
 
     var body: some View {
         switch project.state {
         case .on:
-            Card {
-                Explainer(
-                    symbol: "checkmark.shield.fill", color: Palette.success, title: "Guardrails are on",
-                    text: "Agents work only within locked specs here, and every merge waits for the checks and your approval of the exact commit.")
-            }
+            OnCard(project: project, agent: agent, actionsLocked: actionsLocked, open: open)
         case .alarm:
             VStack(alignment: .leading, spacing: 10) {
                 AlarmBanner(text: "\(project.repo): \(project.note)")
@@ -282,4 +280,62 @@ private func formatRelative(_ iso: String, style: RelativeDateTimeFormatter.Unit
     formatter.locale = Locale(identifier: "en_US")
     formatter.unitsStyle = style
     return formatter.localizedString(for: date, relativeTo: now)
+}
+
+/// An enforced repository: how approvals work here, and the step to review mode when it is one click away.
+struct OnCard: View {
+    let project: Project
+    let agent: AgentInfo?
+    let actionsLocked: Bool
+    let open: (ActionRequest) -> Void
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Explainer(symbol: "checkmark.shield.fill", color: Palette.success, title: title, text: text)
+                if project.canSwitchToReviewMode {
+                    HStack {
+                        Text("The agent App is installed here.").font(.caption).foregroundStyle(Palette.textSecondary)
+                        Spacer()
+                        Button("Switch to review mode") {
+                            open(ActionRequest(kind: .turnOnRepo, target: project.repo, label: project.repo))
+                        }
+                        .buttonStyle(PrimaryPillStyle())
+                        .disabled(actionsLocked)
+                    }
+                } else if project.mode == .status, project.agentApp == .missing, let installURL = agent?.installURL {
+                    HStack {
+                        Text("Add this repository to the agent App to approve its PRs with GitHub reviews.")
+                            .font(.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button {
+                            openInBrowser(installURL)
+                        } label: {
+                            GitHubLabel(title: "Add to agent App")
+                        }
+                        .buttonStyle(SecondaryPillStyle())
+                    }
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        switch project.mode {
+        case .review: "Guardrails are on · review mode"
+        case .status: "Guardrails are on · status mode"
+        case nil: "Guardrails are on"
+        }
+    }
+
+    private var text: String {
+        switch project.mode {
+        case .review:
+            "The agent pushes as its own GitHub App. Approve its PRs with Review here, on github.com or in GitHub Mobile; every new push needs a new approval. Review merges your own PRs."
+        case .status, nil:
+            "Agents work only within locked specs here, and every merge waits for the checks and your approval of the exact commit."
+        }
+    }
 }

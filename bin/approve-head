@@ -66,8 +66,11 @@ while IFS= read -r workflow; do
   fi
 done <<<"$workflows"
 
+# GitHub does not let the owner approve their own PR. In review mode the owner, as admin, may bypass the review
+# ruleset for it (never the checks), so "approving" their own PR merges it at exactly the confirmed commit.
+own_merge=false
 if [[ $mode == review && $(jq -r .author.login <<<"$pr_json") == "$(gh api user --jq .login)" ]]; then
-  die "PR #$pr is your own, and GitHub does not let you approve it. Its checks passed; as a repository admin you may merge it yourself: gh pr merge $(jq -r .url <<<"$pr_json") --squash --admin"
+  own_merge=true
 fi
 
 files=$(pr_files "$repo" "$pr")
@@ -93,10 +96,14 @@ printf '\n(! human-owned, !! workflow: can change what CI enforces)\n'
 
 short=${sha:0:7}
 emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
-  --argjson files "$(files_json <<<"$marked")" \
-  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files}')"
+  --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" \
+  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files, merge: $merge}')"
 emit_event "$(jq -n -c --arg expect "$short" '{event: "confirm", step: "commit", expect: $expect}')"
-read -r -p "Type $short to approve merging exactly this commit: " typed </dev/tty
+if [[ $own_merge == true ]]; then
+  read -r -p "This is your own PR. Type $short to merge exactly this commit now (your admin bypass skips the review, not the checks): " typed </dev/tty
+else
+  read -r -p "Type $short to approve merging exactly this commit: " typed </dev/tty
+fi
 [[ $typed == "$short" ]] || die "confirmation did not match; nothing approved"
 if [[ -n $workflow_changes ]]; then
   emit_event '{"event":"confirm","step":"workflows","expect":"workflows"}'
@@ -108,6 +115,11 @@ if [[ $mode == status ]]; then
   gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=merge-approval \
     -f description="Approved by owner for PR #$pr" >/dev/null
   printf 'merge-approval: success on %s (PR #%s)\n' "$sha" "$pr"
+  exit 0
+fi
+if [[ $own_merge == true ]]; then
+  gh pr merge "$pr" -R "$repo" --squash --admin --delete-branch --match-head-commit "$sha" >/dev/null
+  printf 'merged your own PR #%s at %s\n' "$pr" "$sha"
   exit 0
 fi
 # The review names the commit the owner saw, so a push between showing and approving cannot receive it.

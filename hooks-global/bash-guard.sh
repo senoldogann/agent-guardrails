@@ -4,7 +4,7 @@
 # owner's list of enforced repositories) and to any command that names an enforced repository, from any
 # directory. Everywhere else the agent works as if the kit did not exist, with one exception that protects
 # the kit repositories themselves: nothing may run the owner's commands (approve-head, revoke-head,
-# guardrails on/off/approve/revoke/agent create), post a `merge-approval` status or touch the list of enforced repositories.
+# guardrails on/off/approve/revoke/update/agent create), post a `merge-approval` status or touch the list of enforced repositories.
 # In kit repositories the agent works with the owner's GitHub identity unless agent-identity.sh switched the
 # session to the agent App's bot, and the owner's login stays reachable either way, so actions reserved for
 # the human must be blocked before they run: approving or admin-merging PRs, approving deployments,
@@ -111,7 +111,7 @@ split_commands() {
 # (script, xargs, find -exec, bash -c, git difftool/bisect/submodule and similar). Readers lose that
 # status when the text can still execute: command substitution, rg --pre, or anything in the same
 # command line that runs a shell or interpreter (which could read the "text" from a pipe).
-owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])guardrails[[:space:]]+(on|off|approve|revoke|agent[[:space:]]+create)([[:space:]]|$)'
+owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])guardrails[[:space:]]+(on|off|approve|revoke|update|agent[[:space:]]+create)([[:space:]]|$)'
 segments=$(split_commands <<<"$raw")
 interpreter=0
 if grep -Eq '^[[:space:]]*([^[:space:]]*/)?(sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|deno|bun|perl|ruby|php|osascript|xargs|eval|source|\.|env|exec|script|expect|unbuffer|nohup|time|sudo)([[:space:]]|$)' <<<"$segments"; then
@@ -129,7 +129,7 @@ while IFS= read -r segment; do
     fi
   fi
   [[ $reader -eq 1 ]] && continue
-  deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke/agent create)"
+  deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke/update/agent create)"
 done <<<"$segments"
 
 # Everything below applies inside kit repositories, to commands that name an enforced repository, and to

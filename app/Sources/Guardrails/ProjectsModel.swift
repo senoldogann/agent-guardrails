@@ -15,6 +15,8 @@ final class ProjectsModel {
     private(set) var pullRequests: [String: PullRequestList] = [:]
     /// Set-ups started from this app, by repo: shown as "Setting up…" until the set-up PR appears.
     private(set) var setupsStarted: [String: Date] = [:]
+    /// The owner's agent App on this Mac, from `guardrails agent status --json`.
+    private(set) var agent: AgentInfo?
     private let configuration: AppConfiguration
 
     struct PullRequestList: Equatable {
@@ -44,6 +46,12 @@ final class ProjectsModel {
             for project in projects where project.state != .off {
                 setupsStarted[project.repo] = nil
             }
+            let agentResult = try await runGuardrails(["agent", "status", "--json"])
+            guard agentResult.status == 0 else {
+                lastError = describeCommandFailure(agentResult, command: "guardrails agent status")
+                return
+            }
+            agent = try parseAgentInfo(agentResult.standardOutput)
             lastError = nil
             lastUpdated = Date()
         } catch {

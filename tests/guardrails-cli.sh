@@ -146,10 +146,20 @@ nodes=$(
   node acme/stranger ADMIN '[]' '[]' "$stranger_setup"
   node acme/readonly WRITE '[]' '[]' '[]'
 )
-expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
+expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' none '' <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
   "acme/on on Acme/Disabled alarm acme/tagged alarm acme/unlisted alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
 expect_eq "a ready project carries its set-up PR" \
-  "$(project_states owner '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
+  "$(project_states owner '' none '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
+review_nodes=$(
+  node acme/reviewed ADMIN '[{"name":"agent-guardrails","enforcement":"ACTIVE"},{"name":"agent-guardrails-review","enforcement":"ACTIVE"}]' '[]' '[]'
+  node acme/status ADMIN "$active" '[]' '[]'
+  node acme/plain ADMIN '[]' '[]' '[]'
+)
+expect_eq "mode and agent App per project" \
+  "$(project_states owner $'acme/reviewed\nacme/status' registered $'Acme/Reviewed\nacme/plain' <<<"$review_nodes" |
+    jq -r '"\(.repo) \(.mode) \(.agentApp)"' | tr '\n' ' ')" \
+  "acme/reviewed review installed acme/status status missing acme/plain null installed "
+expect_eq "no agent App on this Mac" "$(project_states owner acme/status none '' <<<"$review_nodes" | jq -r .agentApp | sort -u)" "none"
 
 echo "events for the app"
 expect_eq "no events without the descriptor" "$(GUARDRAILS_EVENTS_FD='' emit_event '{"event":"x"}' 3>&1)" ""

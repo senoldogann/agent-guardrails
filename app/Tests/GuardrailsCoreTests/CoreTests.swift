@@ -5,10 +5,10 @@ import Testing
 
 private let approvePlan = PullRequestPlan(
     repo: "acme/shop", pr: 7, url: "https://github.com/acme/shop/pull/7", title: "feat(A-1): x",
-    sha: "abc1234def5678", files: [PlannedFile(path: "src/a.ts", marker: "")])
+    sha: "abc1234def5678", files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil)
 private let workflowPlan = PullRequestPlan(
     repo: "acme/shop", pr: 8, url: "https://github.com/acme/shop/pull/8", title: "ci: y",
-    sha: "0123456789abcdef", files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")])
+    sha: "0123456789abcdef", files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil)
 
 @Suite("inbox")
 struct InboxTests {
@@ -83,6 +83,37 @@ struct ConfirmationTests {
         #expect(throws: ConfirmationError.self) {
             try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/shop"), plan: .approve(approvePlan))
         }
+    }
+
+    @Test func updatesOnlyToThePlannedCommit() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"update","from":"1111111aaaa","to":"2222222bbbb","fromVersion":"0.1.0","toVersion":"0.2.0","commits":["2222222 feat: x"]}"#)
+        guard case .plan(.update(let update)) = event else {
+            Issue.record("expected an update plan, got \(event)")
+            return
+        }
+        #expect(update.shortTo == "2222222" && update.commits == ["2222222 feat: x"])
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "2222222"), plan: .update(update)) == "2222222")
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "1111111"), plan: .update(update))
+        }
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/shop"), plan: .update(update))
+        }
+        #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "2222222"), plan: .update(update))
+            == "update the kit install to commit 2222222 (version 0.2.0)")
+    }
+
+    @Test func namesTheMergeOfTheOwnersOwnPR() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":9,"url":"u","title":"t","sha":"abc1234ffff","files":[],"merge":true}"#)
+        guard case .plan(.approve(let pr)) = event else {
+            Issue.record("expected an approve plan, got \(event)")
+            return
+        }
+        #expect(pr.isOwnMerge && !approvePlan.isOwnMerge)
+        #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr))
+            == "merge your own acme/shop PR #9 at commit abc1234")
     }
 
     @Test func knowsTheFinalStep() {

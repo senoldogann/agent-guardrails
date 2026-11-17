@@ -209,13 +209,18 @@ classify_prs() {
 #   ready     an open /guardrails-init PR from this repo (not a fork), authored by the owner
 #   no-admin  the owner cannot apply rulesets here
 #   off       none of the above
-# Arguments: the owner's login and the enforced-repo list (one owner/repo per line).
+# mode is "review" for an enforced repo whose agent-guardrails-review ruleset is active, "status" for another
+# enforced repo, null otherwise. agentApp is "installed" or "missing" for the agent App on this Mac, "none" when
+# no App is registered here.
+# Arguments: the owner's login, the enforced-repo list (one owner/repo per line), "registered" or "none" for
+# the agent App, and the repositories it is installed on (one owner/repo per line).
 project_states() {
-  jq -c --arg login "$1" --arg listed "$2" '
+  jq -c --arg login "$1" --arg listed "$2" --arg app "$3" --arg installed "$4" '
     def clean: gsub("[[:cntrl:]]"; "?");
     ($listed | ascii_downcase | split("\n") | map(select(length > 0))) as $registry
     | (.nameWithOwner | ascii_downcase) as $key
     | ($registry | index($key) != null) as $registered
+    | ($installed | ascii_downcase | split("\n") | map(select(length > 0))) as $agent_repos
     | ([.rulesets.nodes[]? | select(.name == "agent-guardrails") | .enforcement | ascii_downcase] | first // "missing") as $ruleset
     | any(.repositoryTopics.nodes[]?; .topic.name == "agent-guardrails") as $tagged
     | ([.bootstrap.nodes[]? | select((.isCrossRepository | not) and .author.login == $login)] | first) as $bootstrap
@@ -228,7 +233,12 @@ project_states() {
        else ["off", ""] end) as $state
     | {repo: .nameWithOwner, state: $state[0], note: $state[1], private: .isPrivate, fork: .isFork,
        branch: (.defaultBranchRef.name // ""), pushed: (.pushedAt // ""), openPRs: .pullRequests.totalCount,
-       setupURL: ($bootstrap.url // ""), setupTitle: (($bootstrap.title // "") | clean)}'
+       setupURL: ($bootstrap.url // ""), setupTitle: (($bootstrap.title // "") | clean),
+       mode: (if $state[0] != "on" then null
+              elif any(.rulesets.nodes[]?; .name == "agent-guardrails-review" and (.enforcement | ascii_downcase) == "active")
+              then "review" else "status" end),
+       agentApp: (if $app != "registered" then "none" elif ($agent_repos | index($key)) != null then "installed"
+                  else "missing" end)}'
 }
 
 # Runs a read-only, paginated GraphQL query and prints its --jq output. A query GitHub cannot finish in time

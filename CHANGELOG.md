@@ -6,6 +6,17 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Added
+
+- `guardrails update` and the app's **Update** button: show the new commits of the kit's main, confirm the
+  exact commit with Touch ID, fast-forward the install, run `install.sh` and rebuild and restart the app.
+- In review mode, approving your own PR merges it with your admin bypass at exactly the confirmed commit
+  (the review is skipped, the checks are not), so **Review** works for every PR.
+- The Projects window shows each enforced repository's approval mode, a **Switch to review mode** button
+  where the agent App is installed, a link to add a repository to the App, and an Agent identity panel that
+  creates the App or opens its repository settings. `guardrails projects --json` reports `mode` and
+  `agentApp`; `guardrails agent status --json` describes the App without network calls.
+
 ## [0.2.0] - 2026-11-17
 
 ### Fixed

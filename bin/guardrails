@@ -9,9 +9,10 @@
 #   guardrails approve [PR link]       approve a PR's HEAD; without a link, pick from the waiting PRs
 #   guardrails revoke <PR link>        withdraw an approval
 #   guardrails status                  every enforced repo: ruleset and kit files, plus this kit install
+#   guardrails update                  fast-forward this kit install to its origin main, reinstall, rebuild the app
 #   guardrails version                 the kit version (VERSION) and the commit of this kit install
 #   guardrails agent create [--org O]  register the agent's own GitHub App (opens the browser)
-#   guardrails agent status            the agent App and where it is installed (read-only)
+#   guardrails agent status [--json]   the agent App and where it is installed (read-only)
 #   guardrails projects --json         your repositories with their state (read-only, for the app)
 #   guardrails prs <owner/repo> --json the open PRs of one repository (read-only, for the app)
 #
@@ -40,14 +41,19 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-  sed -n '5,16p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,17p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 1
 }
 
-require_owner_terminal() {
+# Dies outside the owner's own interactive shell (the agent's environment sets a GitHub token or gh config).
+require_owner_shell() {
   [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} && -z ${GH_CONFIG_DIR:-} ]] ||
     die "GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR is set: this looks like the agent's environment. Run guardrails in your own shell."
   [[ -t 0 && -t 1 ]] || die "guardrails $1 needs an interactive terminal (typed confirmation)"
+}
+
+require_owner_terminal() {
+  require_owner_shell "$1"
   require_reviewed_kit
 }
 
@@ -373,7 +379,8 @@ kit_install_alarm() {
   if ! remote_sha=$(kit_git ls-remote origin refs/heads/main 2>/dev/null | cut -f1) || [[ -z $remote_sha ]]; then
     printf 'note\037\037\037\037could not reach the kit origin to compare the install with its main\n'
   elif [[ $local_sha != "$remote_sha" ]]; then
-    printf 'alarm\037\037\037\037the kit install is not at its origin main: on, off and approve refuse until it is (git -C %s pull --ff-only)\n' "$kit"
+    # The title "update" tells the app to offer its Update button for this alarm.
+    printf 'alarm\037\037\037update\037the kit install is not at its origin main: on, off and approve refuse until you update it (Update, or guardrails update)\n'
   fi
 }
 
@@ -475,10 +482,12 @@ projects_query='query($endCursor: String) {
 }'
 
 projects_json() {
-  local owner
+  local owner app installed
   owner=$(login)
+  if agent_app_registered; then app=registered; else app=none; fi
+  installed=$(agent_installed_repos)
   graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]' |
-    project_states "$owner" "$(registered_repos)"
+    project_states "$owner" "$(registered_repos)" "$app" "$installed"
 }
 
 prs_json() {
@@ -527,6 +536,48 @@ status() {
     fi
   done < <(registered_repos)
   [[ -s $registry ]] || printf 'no enforced repos\n'
+}
+
+# Prints a file of the kit install at a commit, or "unknown" when that commit has no such file.
+kit_file_at() {
+  kit_git show "$1:$2" 2>/dev/null || printf 'unknown\n'
+}
+
+# Fast-forwards the kit install to its origin's main after the owner confirms the exact new commit, then runs
+# install.sh again and, on macOS with the app installed, rebuilds the app. Refuses local changes, a branch
+# other than main, and an origin main that does not contain the installed commit.
+kit_update() {
+  local current target commits
+  [[ -z $(kit_local_changes) ]] ||
+    die "the kit install at $kit has local changes, so it cannot be fast-forwarded. Inspect them with: git -C $kit status"
+  [[ $(kit_git symbolic-ref --quiet --short HEAD) == main ]] ||
+    die "the kit install at $kit is not on main. Switch it with: git -C $kit switch main"
+  kit_git fetch --quiet origin main || die "cannot fetch main from $(kit_git remote get-url origin)"
+  current=$(kit_git rev-parse HEAD)
+  target=$(kit_git rev-parse FETCH_HEAD)
+  if [[ $current == "$target" ]]; then
+    printf 'the kit install is up to date (%s)\n' "${current:0:7}"
+    return 0
+  fi
+  kit_git merge-base --is-ancestor "$current" "$target" ||
+    die "main of the kit origin does not contain the installed commit ${current:0:7}; inspect it before updating"
+  # Commit subjects come from the kit repository, where agents work too: no control characters reach the terminal.
+  commits=$(kit_git log --format='%h %s' "$current..$target" | LC_ALL=C tr -d '\000-\010\013-\037\177')
+  printf '\nUpdate the kit install at %s\nfrom %s (version %s) to %s (version %s):\n%s\n\n' "$kit" \
+    "${current:0:7}" "$(kit_file_at "$current" VERSION)" "${target:0:7}" "$(kit_file_at "$target" VERSION)" \
+    "  ${commits//$'\n'/$'\n'  }"
+  emit_event "$(jq -n -c --arg from "$current" --arg to "$target" \
+    --arg fromVersion "$(kit_file_at "$current" VERSION)" --arg toVersion "$(kit_file_at "$target" VERSION)" \
+    --arg commits "$commits" \
+    '{event: "plan", action: "update", from: $from, to: $to, fromVersion: $fromVersion, toVersion: $toVersion,
+      commits: ($commits | split("\n") | map(select(length > 0)))}')"
+  confirm commit "${target:0:7}" "Type ${target:0:7} to update the kit install to exactly this commit: "
+  kit_git merge --quiet --ff-only "$target"
+  "$kit/install.sh"
+  if [[ $(uname) == Darwin && -d $HOME/Applications/Guardrails.app ]]; then
+    "$kit/app/build.sh"
+  fi
+  printf 'updated the kit install to %s (version %s)\n' "${target:0:7}" "$(kit_file_at "$target" VERSION)"
 }
 
 # Registers the agent's GitHub App through the manifest flow (the owner clicks "Create" in the browser) and
@@ -624,8 +675,22 @@ case $command in
         agent_create "$3"
         ;;
       "status ") agent_status ;;
-      *) die "usage: guardrails agent create [--org <organization>] | guardrails agent status" ;;
+      "status --json")
+        # For the app, without network calls: whether an App is registered here and where to manage it.
+        if agent_app_registered; then
+          jq -c '{registered: true, slug, url: .html_url,
+            installURL: "https://github.com/apps/\(.slug)/installations/new"}' "$(agent_dir)/app.json"
+        else
+          printf '{"registered":false}\n'
+        fi
+        ;;
+      *) die "usage: guardrails agent create [--org <organization>] | guardrails agent status [--json]" ;;
     esac
+    ;;
+  update)
+    require_args 0 $# "guardrails update"
+    require_owner_shell update
+    kit_update
     ;;
   version | --version)
     require_args 0 $# "guardrails version"
