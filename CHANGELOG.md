@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- `guardrails on`, `off` and `status` clone over HTTPS with gh's credentials, so they work when gh prefers
+  SSH but the machine has no GitHub SSH key, and they stop at a failed clone instead of reporting the kit
+  files as missing.
+
 ### Added
 
 - `guardrails agent create` registers the agent's own GitHub App from a manifest (contents and pull requests
