@@ -22,17 +22,22 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     public let title: String
     public let sha: String
     public let files: [PlannedFile]
+    /// True when `approve` merges the owner's own PR (review mode: GitHub does not take their review, their
+    /// admin bypass skips the review but not the checks). Absent in `on` plans.
+    public let merge: Bool?
 
-    public init(repo: String, pr: Int, url: String, title: String, sha: String, files: [PlannedFile]) {
+    public init(repo: String, pr: Int, url: String, title: String, sha: String, files: [PlannedFile], merge: Bool?) {
         self.repo = repo
         self.pr = pr
         self.url = url
         self.title = title
         self.sha = sha
         self.files = files
+        self.merge = merge
     }
 
     public var shortSHA: String { String(sha.prefix(7)) }
+    public var isOwnMerge: Bool { merge == true }
     public var hasWorkflowChanges: Bool { files.contains(where: \.isWorkflow) }
     /// Workflow or human-owned files change: the owner opens the diff before the app lets them confirm.
     public var needsDiffReview: Bool { files.contains { $0.isWorkflow || $0.isHumanOwned } }
@@ -52,25 +57,48 @@ public struct RemovalPlan: Codable, Sendable, Equatable {
     public let notes: [String]
 }
 
+/// What `guardrails update` is about to do to the kit install: fast-forward it from one commit to another.
+public struct UpdatePlan: Codable, Sendable, Equatable {
+    public let from: String
+    public let to: String
+    public let fromVersion: String
+    public let toVersion: String
+    /// "<short sha> <subject>" per new commit, newest first. Subjects come from the kit repository.
+    public let commits: [String]
+
+    public init(from: String, to: String, fromVersion: String, toVersion: String, commits: [String]) {
+        self.from = from
+        self.to = to
+        self.fromVersion = fromVersion
+        self.toVersion = toVersion
+        self.commits = commits
+    }
+
+    public var shortTo: String { String(to.prefix(7)) }
+}
+
 /// The plan event the CLI writes before its first confirmation.
 public enum Plan: Sendable, Equatable {
     case approve(PullRequestPlan)
     case turnOn(PullRequestPlan)
     case turnOnRepo(RepoPlan)
     case turnOff(RemovalPlan)
+    case update(UpdatePlan)
 
+    /// The repository the plan acts on; "the kit install" for an update.
     public var repo: String {
         switch self {
         case .approve(let plan), .turnOn(let plan): plan.repo
         case .turnOnRepo(let plan): plan.repo
         case .turnOff(let plan): plan.repo
+        case .update: "the kit install"
         }
     }
 
     public var pullRequest: PullRequestPlan? {
         switch self {
         case .approve(let plan), .turnOn(let plan): plan
-        case .turnOnRepo, .turnOff: nil
+        case .turnOnRepo, .turnOff, .update: nil
         }
     }
 }
@@ -126,6 +154,8 @@ public func parseEvent(_ line: String) throws -> CLIEvent {
             return .plan(.turnOnRepo(try decoder.decode(RepoPlan.self, from: data)))
         case ("plan", "off"):
             return .plan(.turnOff(try decoder.decode(RemovalPlan.self, from: data)))
+        case ("plan", "update"):
+            return .plan(.update(try decoder.decode(UpdatePlan.self, from: data)))
         default:
             throw EventParseError(line: line, reason: "unknown event \(header.event) \(header.action ?? "")")
         }

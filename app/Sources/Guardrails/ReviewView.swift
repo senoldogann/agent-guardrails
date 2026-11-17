@@ -44,6 +44,8 @@ struct ReviewView: View {
     @ViewBuilder
     private func planSection(_ model: ActionModel) -> some View {
         switch model.plan {
+        case .none where request.kind == .agentCreate:
+            if model.isRunning { AgentCreateCard() }
         case .none:
             Card {
                 HStack(spacing: 10) {
@@ -51,6 +53,8 @@ struct ReviewView: View {
                     Text("Checking \(request.label) with guardrails…").font(.system(size: 13))
                 }
             }
+        case .update(let update):
+            UpdatePlanCard(update: update)
         case .approve(let pr), .turnOn(let pr):
             pullRequestPlan(pr, model: model)
         case .turnOnRepo(let repoPlan):
@@ -87,6 +91,12 @@ struct ReviewView: View {
                         Label("Kit files match your installed kit", systemImage: "checkmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(Palette.success)
+                    }
+                    if pr.isOwnMerge {
+                        Label("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", systemImage: "arrow.triangle.merge")
+                            .font(.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -128,7 +138,9 @@ struct ReviewView: View {
                 }
             }
         case .succeeded:
-            ResultCard(symbol: "checkmark.circle.fill", color: Palette.success, title: successTitle, message: successMessage)
+            ResultCard(
+                symbol: "checkmark.circle.fill", color: Palette.success, title: successTitle(model),
+                message: successMessage(model))
         case .failed(let message):
             ResultCard(symbol: "xmark.octagon.fill", color: Palette.danger, title: "Stopped", message: message)
         case .cancelled:
@@ -156,19 +168,26 @@ struct ReviewView: View {
         .foregroundStyle(Palette.textSecondary)
     }
 
-    private var successTitle: String {
+    private func successTitle(_ model: ActionModel) -> String {
         switch request.kind {
-        case .approve: "Approved"
+        case .approve: model.plan?.pullRequest?.isOwnMerge == true ? "Merged" : "Approved"
         case .turnOn, .turnOnRepo: "Guardrails are on"
         case .turnOff: "Guardrails are off"
+        case .update: "Kit updated"
+        case .agentCreate: "Agent App registered"
         }
     }
 
-    private var successMessage: String {
+    private func successMessage(_ model: ActionModel) -> String {
         switch request.kind {
+        case .approve where model.plan?.pullRequest?.isOwnMerge == true:
+            "Your PR is merged at exactly the commit you confirmed."
         case .approve: "The PR merges by itself once its checks pass. A new push needs a new approval."
         case .turnOn, .turnOnRepo: "Ask your agent for /ticket-spec <ID> in this repository."
         case .turnOff: "Pull the default branch in your local clones so their .agent/ disappears too."
+        case .update: "Guardrails restarts with the new version in a moment."
+        case .agentCreate:
+            "Install it with \"Only select repositories\" on your projects (Details has the link), then turn each one on again to switch it to review mode."
         }
     }
 
@@ -212,7 +231,7 @@ struct ReviewView: View {
             Button {
                 Task { await model.confirm() }
             } label: {
-                Label(confirmTitle(pending), systemImage: "touchid")
+                Label(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), systemImage: "touchid")
             }
             .buttonStyle(.glassProminent)
             .tint(request.kind == .turnOff ? Palette.dangerFill : Palette.textPrimary)
@@ -224,12 +243,14 @@ struct ReviewView: View {
         }
     }
 
-    private func confirmTitle(_ pending: ConfirmRequest) -> String {
+    private func confirmTitle(_ pending: ConfirmRequest, ownMerge: Bool) -> String {
         switch (pending.step, request.kind) {
         case (.workflows, _): "I reviewed the workflows"
-        case (_, .approve): "Approve \(pending.expect)"
+        case (_, .approve): ownMerge ? "Merge \(pending.expect)" : "Approve \(pending.expect)"
         case (_, .turnOn), (_, .turnOnRepo): "Turn on"
         case (_, .turnOff): "Turn off"
+        case (_, .update): "Update to \(pending.expect)"
+        case (_, .agentCreate): "Continue"
         }
     }
 }
@@ -327,6 +348,50 @@ struct Bullet: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("•").foregroundStyle(Palette.textSecondary)
             Text(text).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// What an update brings: versions and the new commits of the kit repository.
+struct UpdatePlanCard: View {
+    let update: UpdatePlan
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Version \(update.fromVersion) → \(update.toVersion)").font(.system(size: 15, weight: .medium))
+                HStack(spacing: 8) {
+                    SHABadge(sha: update.shortTo)
+                    Text("exactly this commit of the kit's main").font(.caption).foregroundStyle(Palette.textSecondary)
+                }
+                Text("Updates the kit install, registers its skills and hooks again and rebuilds this app.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(update.commits, id: \.self) { commit in
+                        Text(displaySafe(commit)).font(.mono).lineLimit(1).truncationMode(.tail)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The agent App is registered in the browser; the app only shows what happens there.
+struct AgentCreateCard: View {
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for GitHub in your browser…").font(.system(size: 13, weight: .medium))
+                }
+                Text("Click \"Create GitHub App\" there, then come back. The App may write contents and pull requests only: no workflows, administration or statuses.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

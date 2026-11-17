@@ -9,6 +9,22 @@ public enum ProjectState: String, Codable, Sendable, CaseIterable {
     case noAdmin = "no-admin"
 }
 
+/// How an enforced repository expects the owner's approval.
+public enum ApprovalMode: String, Codable, Sendable {
+    /// The agent App is installed: a code owner's GitHub review.
+    case review
+    /// The agent works with the owner's login: the owner's commit status.
+    case status
+}
+
+/// The owner's agent App relative to one repository.
+public enum AgentAppState: String, Codable, Sendable {
+    case installed
+    case missing
+    /// No agent App is registered on this Mac.
+    case none
+}
+
 /// One line of `guardrails projects --json`.
 public struct Project: Codable, Sendable, Hashable, Identifiable {
     public let repo: String
@@ -21,11 +37,15 @@ public struct Project: Codable, Sendable, Hashable, Identifiable {
     public let openPRs: Int
     public let setupURL: String
     public let setupTitle: String
+    /// Only for enforced repositories; older CLIs leave it out.
+    public let mode: ApprovalMode?
+    /// Older CLIs leave it out.
+    public let agentApp: AgentAppState?
 
     public init(
         repo: String, state: ProjectState, note: String, private: Bool, fork: Bool, branch: String, pushed: String,
         openPRs: Int,
-        setupURL: String, setupTitle: String
+        setupURL: String, setupTitle: String, mode: ApprovalMode?, agentApp: AgentAppState?
     ) {
         self.repo = repo
         self.state = state
@@ -37,7 +57,12 @@ public struct Project: Codable, Sendable, Hashable, Identifiable {
         self.openPRs = openPRs
         self.setupURL = setupURL
         self.setupTitle = setupTitle
+        self.mode = mode
+        self.agentApp = agentApp
     }
+
+    /// Enforced in status mode while the agent App is installed: `guardrails on` again switches to review mode.
+    public var canSwitchToReviewMode: Bool { state == .on && mode == .status && agentApp == .installed }
 
     public var id: String { repo }
     public var name: String { repo.split(separator: "/").last.map(String.init) ?? repo }
@@ -120,4 +145,30 @@ public func parsePullRequests(_ output: String) throws -> [PullRequestItem] {
 /// agent wrote, so a title cannot render differently from what it says.
 public func displaySafe(_ text: String) -> String {
     String(String.UnicodeScalarView(text.unicodeScalars.filter { $0.properties.generalCategory != .format }))
+}
+
+/// `guardrails agent status --json`: whether the owner's agent App is registered on this Mac.
+public struct AgentInfo: Codable, Sendable, Equatable {
+    public let registered: Bool
+    public let slug: String?
+    public let url: String?
+    /// Where the owner adds repositories to the App's installation.
+    public let installURL: String?
+
+    public init(registered: Bool, slug: String?, url: String?, installURL: String?) {
+        self.registered = registered
+        self.slug = slug
+        self.url = url
+        self.installURL = installURL
+    }
+}
+
+/// Parses the one line of `guardrails agent status --json`.
+public func parseAgentInfo(_ output: String) throws -> AgentInfo {
+    let line = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    do {
+        return try JSONDecoder().decode(AgentInfo.self, from: Data(line.utf8))
+    } catch {
+        throw JSONLinesError(source: "guardrails agent status", lineNumber: 1, line: line, reason: String(describing: error))
+    }
 }

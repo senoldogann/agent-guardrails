@@ -51,6 +51,7 @@ struct ProjectSidebar: View {
     @Binding var selection: String?
     let search: String
     @State private var showsOff = true
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let groups = groupProjects(projects.projects, matching: search)
@@ -68,6 +69,51 @@ struct ProjectSidebar: View {
         .overlay {
             SidebarOverlay(isLoading: projects.isLoading, isEmpty: projects.projects.isEmpty, error: projects.lastError)
         }
+        .safeAreaInset(edge: .bottom) {
+            if let agent = projects.agent {
+                AgentPanel(agent: agent) {
+                    openWindow(id: WindowID.review, value: ActionRequest(kind: .agentCreate, target: "", label: "the agent App"))
+                    activateApp()
+                }
+            }
+        }
+    }
+}
+
+/// Who the agent is on GitHub: its own App (review mode possible) or the owner's login.
+struct AgentPanel: View {
+    let agent: AgentInfo
+    let create: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: agent.registered ? "person.badge.shield.checkmark" : "person.crop.circle.badge.questionmark")
+                .font(.system(size: 16))
+                .foregroundStyle(Palette.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.registered ? "Agent App" : "Agent identity").font(.system(size: 12, weight: .semibold))
+                Text(agent.registered ? (agent.slug ?? "") : "The agent uses your GitHub login")
+                    .font(.caption)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            if agent.registered, let installURL = agent.installURL {
+                Button("Manage") { openInBrowser(installURL) }
+                    .buttonStyle(SecondaryPillStyle())
+                    .fixedSize()
+                    .help("Choose which repositories the agent App may work in")
+            } else if !agent.registered {
+                Button("Create…", action: create)
+                    .buttonStyle(PrimaryPillStyle())
+                    .fixedSize()
+                    .help("Register the agent's own GitHub App, so you can approve its PRs with GitHub reviews")
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surfaceMuted))
+        .padding(10)
     }
 }
 

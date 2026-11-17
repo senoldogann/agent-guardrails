@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GuardrailsCore
 import LocalAuthentication
@@ -121,6 +122,28 @@ final class ActionModel {
             case .cancelled, .failed: return
             default: phase = code == 0 ? .succeeded : .failed(lastLines(of: log))
             }
+            if code == 0, request.kind == .update { relaunchAfterUpdate() }
+        }
+    }
+
+    /// The update rebuilt and replaced this app on disk; start the new copy and quit this one.
+    private func relaunchAfterUpdate() {
+        let relaunch = Process()
+        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunch.arguments = ["-c", "sleep 2; exec /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        do {
+            try relaunch.run()
+        } catch {
+            phase = .failed("Updated, but could not restart Guardrails (\(error)). Quit and open it again.")
+            return
+        }
+        Task {
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            NSApplication.shared.terminate(nil)
         }
     }
 

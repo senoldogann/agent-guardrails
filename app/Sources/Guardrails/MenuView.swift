@@ -115,7 +115,9 @@ struct InboxList: View {
     var body: some View {
         let snapshot = model.snapshot
         VStack(alignment: .leading, spacing: 12) {
-            InboxProblems(error: model.lastError, alarms: snapshot.alarms)
+            InboxProblems(error: model.lastError, alarms: snapshot.alarms) {
+                open(ActionRequest(kind: .update, target: "", label: "the kit install"))
+            }
             ItemSection(title: "Approve", items: snapshot.approvals, actionTitle: "Review", disabled: snapshot.hasKitInstallAlarm) {
                 open(ActionRequest(kind: .approve, target: $0.url, label: $0.title))
             }
@@ -136,12 +138,46 @@ struct InboxList: View {
 struct InboxProblems: View {
     let error: String?
     let alarms: [InboxItem]
+    let update: () -> Void
 
     var body: some View {
         if let error {
             StatusPanel(symbol: "wifi.exclamationmark", title: "Could not refresh", message: error)
         }
-        ForEach(alarms) { AlarmBanner(text: $0.note) }
+        ForEach(alarms) { alarm in
+            // The CLI marks the "kit install is behind its origin main" alarm with the title "update".
+            if alarm.repo.isEmpty, alarm.title == "update" {
+                UpdateBanner(update: update)
+            } else {
+                AlarmBanner(text: alarm.note)
+            }
+        }
+    }
+}
+
+/// The kit install is behind its origin main: approvals wait until it is updated.
+struct UpdateBanner: View {
+    let update: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill").font(.system(size: 16))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("A kit update is available").font(.system(size: 13, weight: .semibold))
+                Text("Approvals and turning repos on or off wait until you update.")
+                    .font(.system(size: 12))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Update", action: update).buttonStyle(PrimaryPillStyle())
+        }
+        .foregroundStyle(Palette.textPrimary)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.rowRadius)
+                .fill(Palette.surfaceMuted)
+                .strokeBorder(Palette.hairline))
     }
 }
 

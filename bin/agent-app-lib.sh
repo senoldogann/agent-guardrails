@@ -157,3 +157,16 @@ agent_env_exports() {
   printf "export GIT_CONFIG_KEY_2=credential.https://github.com.helper GIT_CONFIG_VALUE_2=''\n"
   printf 'export GIT_CONFIG_KEY_3=credential.https://github.com.helper GIT_CONFIG_VALUE_3=%q\n' "!$gh_path auth git-credential"
 }
+
+# Prints owner/repo of every repository the agent App is installed on, one per line (lowercase); nothing when
+# no App is registered here.
+agent_installed_repos() {
+  local dir jwt id token
+  agent_app_registered || return 0
+  dir=$(agent_dir)
+  jwt=$(app_jwt "$(jq -r .client_id "$dir/app.json")" "$dir/private-key.pem" "$(date +%s)")
+  for id in $(github_app_api GET /app/installations "$jwt" "" | jq -r '.[].id'); do
+    token=$(github_app_api POST "/app/installations/$id/access_tokens" "$jwt" '{"permissions":{"metadata":"read"}}' | jq -r .token)
+    github_app_api GET "/installation/repositories?per_page=100" "$token" "" | jq -r '.repositories[].full_name | ascii_downcase'
+  done
+}

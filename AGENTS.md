@@ -69,8 +69,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - Pattern files (`write-allow`) are bash globs where `*` also matches `/`.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority.
-- A kit change that adds or renames an owner command, a skill or a global hook only reaches the owner after
-  `./install.sh` runs again; such a PR says so in its description. The owner updates the install clone
-  (`git pull --ff-only`, `./install.sh`, `make app`); bash-guard blocks the agent from touching it.
+- Every kit merge reaches the owner through `guardrails update` (the app's Update button): it fast-forwards
+  the install clone to the confirmed commit, runs `./install.sh` and rebuilds the app. Until then the owner's
+  state-changing commands refuse to run. bash-guard blocks the agent from the update and the install clone.
 - bash-guard reads every line of a command, heredoc bodies included: write text that names the owner's
   commands with the Write tool, not a heredoc.

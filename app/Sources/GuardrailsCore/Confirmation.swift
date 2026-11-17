@@ -28,6 +28,12 @@ public func confirmationAnswer(for request: ConfirmRequest, plan: Plan?) throws 
             throw ConfirmationError.doesNotMatchPlan(step: .commit, expected: request.expect, planned: pr.shortSHA)
         }
         return request.expect
+    case (.commit, .update(let update)):
+        let isShortSHA = request.expect.count == 7 && request.expect.allSatisfy(\.isHexDigit)
+        guard isShortSHA, request.expect == update.shortTo else {
+            throw ConfirmationError.doesNotMatchPlan(step: .commit, expected: request.expect, planned: update.shortTo)
+        }
+        return request.expect
     case (.workflows, .approve(let pr)):
         guard pr.hasWorkflowChanges, request.expect == "workflows" else {
             throw ConfirmationError.doesNotMatchPlan(
@@ -61,8 +67,12 @@ public func isFinalConfirmation(_ request: ConfirmRequest, plan: Plan) -> Bool {
 /// what the owner approves: repository, PR and commit.
 public func ownerCheckReason(for request: ConfirmRequest, plan: Plan) -> String {
     switch (request.step, plan) {
+    case (.commit, .approve(let pr)) where pr.isOwnMerge:
+        "merge your own \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA)"
     case (.commit, .approve(let pr)):
         "approve \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA)"
+    case (.commit, .update(let update)):
+        "update the kit install to commit \(update.shortTo) (version \(update.toVersion))"
     case (.workflows, .approve(let pr)):
         "confirm you reviewed the workflow changes in \(pr.repo) PR #\(pr.pr)"
     case (.commit, .turnOn(let pr)):
