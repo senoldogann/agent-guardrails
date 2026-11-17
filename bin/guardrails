@@ -112,13 +112,18 @@ ruleset_state() {
   printf '%s\n' "${state:-missing}"
 }
 
-# Clones a repo into a new temporary directory at the given ref (a branch or a PR's head SHA).
+# Clones a repo into a new temporary directory at the given ref (a branch or a PR's head SHA). Always over
+# HTTPS with gh as the credential helper, whatever gh's git_protocol says, so a machine without a GitHub SSH
+# key works. Runs inside $(...), where `set -e` does not apply, so every step dies on its own failure.
 clone_at() {
   local repo=$1 ref=$2 dir
-  dir=$(mktemp -d)
-  gh repo clone "$repo" "$dir" -- --quiet
-  git -C "$dir" fetch --quiet origin "$ref"
-  git -C "$dir" checkout --quiet --detach FETCH_HEAD
+  dir=$(mktemp -d) || die "cannot create a temporary directory"
+  git -c credential.https://github.com.helper= -c "credential.https://github.com.helper=!gh auth git-credential" \
+    clone --quiet --no-checkout "https://github.com/$repo.git" "$dir" || die "cannot clone $repo over HTTPS"
+  git -C "$dir" config credential.https://github.com.helper ''
+  git -C "$dir" config --add credential.https://github.com.helper '!gh auth git-credential'
+  git -C "$dir" fetch --quiet origin "$ref" || die "cannot fetch $ref from $repo"
+  git -C "$dir" checkout --quiet --detach FETCH_HEAD || die "cannot check out $ref of $repo"
   printf '%s\n' "$dir"
 }
 
@@ -224,7 +229,7 @@ on_pr() {
   [[ $(ruleset_state "$repo") == missing ]] ||
     die "$repo already has the $ruleset_name ruleset; approve kit PRs there with: approve-head $(jq -r .url <<<"$pr_json")"
 
-  dir=$(clone_at "$repo" "$sha")
+  dir=$(clone_at "$repo" "$sha") || exit 1
   tmp_dirs+=" $dir"
   require_no_drift "$dir"
   require_no_status_rights "$dir"
@@ -271,7 +276,7 @@ $extra_workflows"
 on_repo() {
   local repo=$1 default_branch dir
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
-  dir=$(clone_at "$repo" "$default_branch")
+  dir=$(clone_at "$repo" "$default_branch") || exit 1
   tmp_dirs+=" $dir"
   require_no_drift "$dir"
   require_no_status_rights "$dir"
@@ -284,7 +289,7 @@ on_repo() {
 off_repo() {
   local repo=$1 default_branch dir notes name branch=chore/remove-agent-guardrails url head file
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
-  dir=$(clone_at "$repo" "$default_branch")
+  dir=$(clone_at "$repo" "$default_branch") || exit 1
   tmp_dirs+=" $dir"
   [[ -z $(git -C "$dir" ls-remote origin "refs/heads/$branch") ]] ||
     die "branch $branch already exists on $repo; nobody but this command should create it. Inspect and delete it, then try again."
@@ -507,7 +512,7 @@ status() {
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
-    dir=$(clone_at "$repo" "$default_branch")
+    dir=$(clone_at "$repo" "$default_branch") || exit 1
     tmp_dirs+=" $dir"
     drift=$(kit_drift "$dir")
     mode=$(approval_mode "$repo")
