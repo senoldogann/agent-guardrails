@@ -36,12 +36,37 @@ struct InboxTests {
         }
     }
 
-    @Test func reportsOnlyNewApprovals() throws {
+    @Test func reportsOnlyNewAlarmsApprovalsAndQuestions() throws {
         let before = try parseInbox(#"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}"#)
-        let after = try parseInbox(
-            #"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}"# + "\n"
-                + #"{"kind":"approve","repo":"a/b","url":"u2","title":"t2","note":"n"}"#)
-        #expect(newApprovals(previous: before, current: after).map(\.url) == ["u2"])
+        let after = try parseInbox("""
+            {"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}
+            {"kind":"approve","repo":"a/b","url":"u2","title":"t2","note":"n"}
+            {"kind":"answer","repo":"a/b","url":"u3","title":"spec: x","note":"2 questions"}
+            {"kind":"alarm","repo":"a/c","url":"","title":"","note":"ruleset disabled"}
+            {"kind":"wait","repo":"a/b","url":"u4","title":"t4","note":"checks running"}
+            {"kind":"turn-on","repo":"a/d","url":"u5","title":"chore: install","note":""}
+            """)
+        #expect(newAttentionItems(previous: before, current: after).map(\.kind) == [.alarm, .approve, .answer])
+        #expect(newAttentionItems(previous: after, current: after).isEmpty)
+        #expect(waitingCount(after) == 3)
+        #expect(waitingCount(after, repo: "a/b") == 3)
+        #expect(waitingCount(after, repo: "a/c") == 0)
+    }
+
+    @Test func routesEachNotificationToItsAction() {
+        let approve = InboxItem(kind: .approve, repo: "a/b", url: "https://github.com/a/b/pull/1", title: "feat: x", note: "")
+        let answer = InboxItem(kind: .answer, repo: "a/b", url: "https://github.com/a/b/pull/2", title: "spec: y", note: "")
+        let update = InboxItem(kind: .alarm, repo: "", url: "", title: "update", note: "the kit install is behind")
+        let kitAlarm = InboxItem(kind: .alarm, repo: "", url: "", title: "", note: "the kit install has local changes")
+        let repoAlarm = InboxItem(kind: .alarm, repo: "a/c", url: "", title: "", note: "ruleset disabled")
+        #expect(inboxRoute(for: approve) == .review(url: "https://github.com/a/b/pull/1", title: "feat: x"))
+        #expect(inboxRoute(for: answer) == .browser(url: "https://github.com/a/b/pull/2"))
+        #expect(inboxRoute(for: update) == .update)
+        #expect(inboxRoute(for: kitAlarm) == .projects)
+        #expect(inboxRoute(for: repoAlarm) == .projects)
+        #expect(notificationText(for: approve) == NotificationText(title: "Waiting for your approval", body: "a/b: feat: x"))
+        #expect(notificationText(for: kitAlarm).body == "Kit install: the kit install has local changes")
+        #expect(notificationText(for: repoAlarm) == NotificationText(title: "Guardrails alarm", body: "a/c: ruleset disabled"))
     }
 }
 

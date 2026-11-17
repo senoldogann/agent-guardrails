@@ -118,6 +118,9 @@ struct InboxList: View {
             InboxProblems(error: model.lastError, alarms: snapshot.alarms) {
                 open(ActionRequest(kind: .update, target: "", label: "the kit install"))
             }
+            if model.notificationsShown == false {
+                NotificationsOffBanner()
+            }
             ItemSection(title: "Approve", items: snapshot.approvals, actionTitle: "Review", disabled: snapshot.hasKitInstallAlarm) {
                 open(ActionRequest(kind: .approve, target: $0.url, label: $0.title))
             }
@@ -130,7 +133,8 @@ struct InboxList: View {
             InboxFooterNote(
                 inProgress: snapshot.inProgress.count,
                 showsQuiet: snapshot.isQuiet && model.lastError == nil && model.lastUpdated != nil,
-                hasRepos: !snapshot.repos.isEmpty)
+                hasRepos: !snapshot.repos.isEmpty,
+                notifies: model.notificationsShown != false)
         }
     }
 }
@@ -181,6 +185,30 @@ struct UpdateBanner: View {
     }
 }
 
+/// macOS shows none of the app's notifications, so new approvals and alarms appear only in this inbox.
+struct NotificationsOffBanner: View {
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "bell.slash").font(.system(size: 15)).foregroundStyle(Palette.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Notifications are off").font(.system(size: 13, weight: .semibold))
+                Text("New approvals and alarms reach you only here until you allow them.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Allow…", action: openNotificationSettings)
+                .buttonStyle(SecondaryPillStyle())
+                .fixedSize()
+                .help("Open System Settings › Notifications › Guardrails")
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surfaceMuted))
+    }
+}
+
 struct ItemSection: View {
     let title: String
     let items: [InboxItem]
@@ -202,13 +230,14 @@ struct InboxFooterNote: View {
     let inProgress: Int
     let showsQuiet: Bool
     let hasRepos: Bool
+    let notifies: Bool
 
     var body: some View {
         if inProgress > 0 {
             Text("\(inProgress) in progress").font(.caption).foregroundStyle(Palette.textSecondary)
         }
         if showsQuiet {
-            QuietState(hasRepos: hasRepos)
+            QuietState(hasRepos: hasRepos, notifies: notifies)
         }
     }
 }
@@ -265,6 +294,7 @@ struct StatusPanel: View {
 
 struct QuietState: View {
     let hasRepos: Bool
+    let notifies: Bool
 
     var body: some View {
         VStack(spacing: 8) {
@@ -274,7 +304,7 @@ struct QuietState: View {
             Text("Nothing waits for you").font(.system(size: 14, weight: .medium))
             Text(
                 hasRepos
-                    ? "New approvals show up here and as a notification."
+                    ? (notifies ? "New approvals show up here and as a notification." : "New approvals show up here.")
                     : "No enforced repos yet. Ask your agent for /guardrails-init in a project; its PR appears here to turn on."
             )
             .font(.caption)

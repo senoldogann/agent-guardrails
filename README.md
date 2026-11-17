@@ -83,7 +83,9 @@ the app. `guardrails version` shows what is installed.
    confirmation of the commit).
 
 `guardrails` without arguments, or the menu bar app, lists what waits for you: questions from the agent, PRs
-to approve, bootstrap PRs to turn on, and alarms.
+to approve, bootstrap PRs to turn on, and alarms. The app also sends a notification for each new one (a click
+opens its Review window), and its Projects window opens on an overview of the same list and your enforced
+repositories (⌘R refreshes, ⌘F searches).
 
 ## The agent's own GitHub identity
 

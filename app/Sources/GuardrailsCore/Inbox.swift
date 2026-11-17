@@ -92,8 +92,60 @@ public func groupInbox(_ items: [InboxItem]) -> InboxSnapshot {
         inProgress: of([.wait, .blocked]))
 }
 
-/// Approve items that were not in the previous snapshot, for notifications.
-public func newApprovals(previous: InboxSnapshot, current: InboxSnapshot) -> [InboxItem] {
-    let known = Set(previous.approvals.map(\.id))
-    return current.approvals.filter { !known.contains($0.id) }
+/// Alarms, approvals and the agent's questions that were not in the previous snapshot, for notifications.
+public func newAttentionItems(previous: InboxSnapshot, current: InboxSnapshot) -> [InboxItem] {
+    let known = Set(attentionItems(previous).map(\.id))
+    return attentionItems(current).filter { !known.contains($0.id) }
+}
+
+private func attentionItems(_ snapshot: InboxSnapshot) -> [InboxItem] {
+    snapshot.alarms + snapshot.approvals + snapshot.answers
+}
+
+/// What the owner can act on now: the count on the menu bar item and the Dock icon.
+public func waitingCount(_ snapshot: InboxSnapshot) -> Int {
+    snapshot.approvals.count + snapshot.answers.count
+}
+
+/// Approvals and questions that wait for the owner in one repository.
+public func waitingCount(_ snapshot: InboxSnapshot, repo: String) -> Int {
+    (snapshot.approvals + snapshot.answers).filter { $0.repo == repo }.count
+}
+
+/// Where a click on an inbox notification takes the owner.
+public enum InboxRoute: Equatable, Sendable {
+    /// The Review window of a PR that waits for approval.
+    case review(url: String, title: String)
+    /// The Review window of a kit update.
+    case update
+    /// The agent's question, on GitHub.
+    case browser(url: String)
+    /// The Projects window, where the alarm and its repository are shown.
+    case projects
+}
+
+public func inboxRoute(for item: InboxItem) -> InboxRoute {
+    switch item.kind {
+    case .approve: .review(url: item.url, title: item.title)
+    case .answer: .browser(url: item.url)
+    // The CLI marks the "kit install is behind its origin main" alarm with the title "update".
+    case .alarm where item.repo.isEmpty && item.title == "update": .update
+    default: .projects
+    }
+}
+
+public struct NotificationText: Equatable, Sendable {
+    public let title: String
+    public let body: String
+}
+
+public func notificationText(for item: InboxItem) -> NotificationText {
+    let place = item.repo.isEmpty ? "Kit install" : item.repo
+    switch item.kind {
+    case .approve: return NotificationText(title: "Waiting for your approval", body: "\(place): \(item.title)")
+    case .answer: return NotificationText(title: "The agent asks", body: "\(place): \(item.title)")
+    case .alarm where item.repo.isEmpty && item.title == "update":
+        return NotificationText(title: "A kit update is available", body: "Approvals wait until you update.")
+    default: return NotificationText(title: "Guardrails alarm", body: "\(place): \(item.note)")
+    }
 }

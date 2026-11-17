@@ -32,6 +32,17 @@ struct ProjectsTests {
         #expect(try parseProjects(output).allSatisfy { $0.mode == nil && $0.agentApp == nil })
     }
 
+    @Test func saysWhyARepositoryNeedsTheOwner() throws {
+        let byRepo = Dictionary(uniqueKeysWithValues: try parseProjects(output).map { ($0.repo, $0) })
+        let line = { (repo: String, waiting: Int) in attentionLine(for: byRepo[repo]!, waiting: waiting) }
+        #expect(line("acme/billing", 0) == "ruleset disabled")
+        #expect(line("acme/mobile", 0) == "Bootstrap PR is ready to turn on")
+        #expect(line("acme/shop", 0) == nil)
+        #expect(line("acme/shop", 1) == "1 waits for you")
+        #expect(line("acme/shop", 2) == "2 wait for you")
+        #expect(line("acme/site", 4) == nil)
+    }
+
     @Test func searchMatchesOwnerAndName() throws {
         let groups = groupProjects(try parseProjects(output), matching: " SHO ")
         #expect(groups.on.map(\.repo) == ["acme/shop"])
