@@ -6,8 +6,23 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Added
+
+- The Projects window opens on an **Overview**: what waits for you, with the same actions as the menu bar, and
+  the enforced repositories, alarms first. ⌘R refreshes and ⌘F searches.
+- Sidebar rows say why a repository needs you (its alarm, a bootstrap PR to turn on, or how many approvals and
+  questions wait) instead of its last push; the group of repositories that are off starts closed, and a
+  search still finds them.
+- Notifications for new alarms and agent questions as well as approvals; a click opens the PR's Review window,
+  the kit update, the question on GitHub, or the Projects window. They also show while the app is in front.
+- The Dock icon carries the number of approvals and questions that wait, like the menu bar item.
+- When macOS shows none of the app's notifications, the inbox says so, with a button to the app's page in
+  System Settings.
+
 ### Fixed
 
+- Sidebar repository names are drawn as primary text again (they were dimmer than the line below them), and
+  the agent App panel shows the App's full name.
 - While the Projects window or a Review window is open, the app has a Dock icon and a place in Cmd-Tab, so a
   window that went behind other apps can be brought back; with the last window closed it is a menu bar item
   again.

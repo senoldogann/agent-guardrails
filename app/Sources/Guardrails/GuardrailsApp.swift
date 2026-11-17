@@ -14,7 +14,7 @@ struct GuardrailsApp: App {
         MenuBarExtra {
             MenuView(model: model)
         } label: {
-            MenuBarLabel(snapshot: model.snapshot)
+            MenuBarLabel(model: model)
         }
         .menuBarExtraStyle(.window)
 
@@ -53,16 +53,39 @@ struct ProjectsWindow: View {
 }
 
 /// Shape, not only color, carries the state: a plain shield when quiet, a filled warning shield on alarms.
+/// The label is the one view that exists all the time, so it also opens what a clicked notification asks for.
 struct MenuBarLabel: View {
-    let snapshot: InboxSnapshot
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        let snapshot = model.snapshot
         let symbol = snapshot.alarms.isEmpty ? "checkmark.shield" : "exclamationmark.shield.fill"
-        let count = snapshot.approvals.count + snapshot.answers.count
+        let count = waitingCount(snapshot)
         HStack(spacing: 3) {
             Image(systemName: symbol)
             if count > 0 { Text("\(count)") }
         }
+        .onChange(of: model.pendingRoute) { _, route in
+            guard let route else { return }
+            model.pendingRoute = nil
+            follow(route)
+        }
+    }
+
+    private func follow(_ route: InboxRoute) {
+        switch route {
+        case .review(let url, let title):
+            openWindow(id: WindowID.review, value: ActionRequest(kind: .approve, target: url, label: title))
+        case .update:
+            openWindow(id: WindowID.review, value: ActionRequest(kind: .update, target: "", label: "the kit install"))
+        case .browser(let url):
+            openInBrowser(url)
+            return
+        case .projects:
+            openWindow(id: WindowID.projects)
+        }
+        activateApp()
     }
 }
 

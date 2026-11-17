@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GuardrailsCore
 import Observation
@@ -19,7 +20,13 @@ final class AppModel {
     private(set) var loadState = LoadState.idle
     private(set) var lastError: String?
     private(set) var lastUpdated: Date?
+    /// Set when the owner clicks a notification; the menu bar label opens it and clears it.
+    var pendingRoute: InboxRoute?
+    /// False when macOS shows none of the app's notifications (denied, or alert style None); nil until known.
+    private(set) var notificationsShown: Bool?
     private var hasLoadedOnce = false
+    /// The notification center keeps only a weak reference to its delegate.
+    private var notificationDelegate: NotificationDelegate?
 
     init(configuration: Result<AppConfiguration, AppConfiguration.LoadError>) {
         self.configuration = configuration
@@ -27,6 +34,9 @@ final class AppModel {
         case .success(let found): projects = ProjectsModel(configuration: found)
         case .failure: projects = nil
         }
+        let delegate = NotificationDelegate { [weak self] route in self?.pendingRoute = route }
+        notificationDelegate = delegate
+        UNUserNotificationCenter.current().delegate = delegate
         Task { await self.runRefreshLoop() }
         Task { await requestNotificationPermission() }
     }
@@ -52,9 +62,13 @@ final class AppModel {
             }
             let next = try parseInbox(result.standardOutput)
             if hasLoadedOnce {
-                notify(about: newApprovals(previous: snapshot, current: next))
+                notify(about: newAttentionItems(previous: snapshot, current: next))
             }
             snapshot = next
+            let waiting = waitingCount(next)
+            // Shown while the app has its Dock icon (a window is open); the menu bar item shows the same count.
+            NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
+            notificationsShown = await notificationsAreShown()
             hasLoadedOnce = true
             lastError = nil
             lastUpdated = Date()
@@ -99,14 +113,70 @@ final class AppModel {
         return message.isEmpty ? "guardrails inbox exited with status \(result.status)" : message
     }
 
-    private func notify(about approvals: [InboxItem]) {
-        for item in approvals {
+    private func notify(about items: [InboxItem]) {
+        for item in items {
+            let text = notificationText(for: item)
             let content = UNMutableNotificationContent()
-            content.title = "Waiting for your approval"
-            content.body = "\(item.repo): \(item.title)"
+            content.title = text.title
+            content.body = text.body
             content.sound = .default
+            do {
+                content.userInfo = [notificationItemKey: try JSONEncoder().encode(item)]
+            } catch {
+                NSLog("Guardrails: could not attach the inbox item to its notification: %@", String(describing: error))
+            }
             let request = UNNotificationRequest(identifier: item.id, content: content, trigger: nil)
-            UNUserNotificationCenter.current().add(request)
+            Task {
+                do {
+                    try await UNUserNotificationCenter.current().add(request)
+                } catch {
+                    NSLog("Guardrails: notification %@ was not added: %@", item.id, String(describing: error))
+                }
+            }
+        }
+    }
+}
+
+/// Whether macOS shows the app's notifications at all: allowed, with an alert style other than None.
+private func notificationsAreShown() async -> Bool {
+    let settings = await UNUserNotificationCenter.current().notificationSettings()
+    let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+    return allowed && settings.alertStyle != .none
+}
+
+/// System Settings › Notifications, at this app's page.
+func openNotificationSettings() {
+    guard let id = Bundle.main.bundleIdentifier,
+        let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)")
+    else { return }
+    NSWorkspace.shared.open(url)
+}
+
+private let notificationItemKey = "inboxItem"
+
+/// Shows notifications while the app is in front (a window is open) and routes a click to the item's action.
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, Sendable {
+    private let follow: @MainActor @Sendable (InboxRoute) -> Void
+
+    init(follow: @escaping @MainActor @Sendable (InboxRoute) -> Void) {
+        self.follow = follow
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let data = response.notification.request.content.userInfo[notificationItemKey] as? Data else {
+            NSLog("Guardrails: a notification without its inbox item was clicked")
+            return
+        }
+        do {
+            await follow(inboxRoute(for: try JSONDecoder().decode(InboxItem.self, from: data)))
+        } catch {
+            NSLog("Guardrails: could not read a clicked notification's inbox item: %@", String(describing: error))
         }
     }
 }

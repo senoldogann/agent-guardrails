@@ -112,6 +112,18 @@ public func groupProjects(_ projects: [Project], matching search: String) -> Pro
         off: shown.filter { $0.state == .off || $0.state == .noAdmin })
 }
 
+/// The sidebar row's second line when a repository needs the owner, in place of its visibility and last
+/// push; nil when nothing in it waits.
+public func attentionLine(for project: Project, waiting: Int) -> String? {
+    switch project.state {
+    case .alarm: return project.note.isEmpty ? "Needs your attention" : project.note
+    case .ready: return "Bootstrap PR is ready to turn on"
+    case .on where waiting == 1: return "1 waits for you"
+    case .on where waiting > 1: return "\(waiting) wait for you"
+    default: return nil
+    }
+}
+
 /// The state of one open PR as `guardrails prs <repo> --json` reports it.
 public enum PullRequestKind: String, Codable, Sendable {
     case answer
