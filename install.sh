@@ -7,7 +7,8 @@
 # 1. Symlinks this kit's skills into ~/.claude/skills (/guardrails-init, /ticket-spec,
 #    /ticket-implement, /process-fix).
 # 2. Registers the global hooks in ~/.claude/settings.json (idempotent, keeps other hooks):
-#    PreToolUse Bash -> hooks-global/bash-guard.sh, UserPromptSubmit -> hooks-global/prompt-reminder.sh.
+#    PreToolUse Bash -> hooks-global/bash-guard.sh, UserPromptSubmit -> hooks-global/prompt-reminder.sh,
+#    SessionStart and PreToolUse Bash -> hooks-global/agent-identity.sh.
 #    A backup of settings.json is written next to it before any change.
 # 3. Links the owner-only commands guardrails, approve-head and revoke-head into the first writable
 #    directory on PATH among ~/.local/bin, /opt/homebrew/bin and /usr/local/bin.
@@ -79,15 +80,17 @@ done
 
 guard="$kit/hooks-global/bash-guard.sh"
 reminder="$kit/hooks-global/prompt-reminder.sh"
-updated=$(jq --arg guard "$guard" --arg reminder "$reminder" '
+identity="$kit/hooks-global/agent-identity.sh"
+updated=$(jq --arg guard "$guard" --arg reminder "$reminder" --arg identity "$identity" '
   def other_kit_hook:
-    any(.hooks[]?; (.command | test("/hooks-global/(bash-guard|prompt-reminder)\\.sh$"))
-      and .command != $guard and .command != $reminder);
+    any(.hooks[]?; (.command | test("/hooks-global/(bash-guard|prompt-reminder|agent-identity)\\.sh$"))
+      and .command != $guard and .command != $reminder and .command != $identity);
   def ensure(event; matcher; command):
     .hooks[event] = ((.hooks[event] // []) | map(select(other_kit_hook | not))
-      | if any(.[]; any(.hooks[]?; .command == command)) then .
+      | if any(.[]; .matcher == matcher and any(.hooks[]?; .command == command)) then .
         else . + [{matcher: matcher, hooks: [{type: "command", command: command}]}] end);
   ensure("PreToolUse"; "Bash"; $guard) | ensure("UserPromptSubmit"; ""; $reminder)
+  | ensure("SessionStart"; ""; $identity) | ensure("PreToolUse"; "Bash"; $identity)
 ' "$settings")
 
 if [[ $updated == "$(jq . "$settings")" ]]; then

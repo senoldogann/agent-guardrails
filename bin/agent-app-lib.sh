@@ -143,3 +143,17 @@ agent_session_token() {
   )
   printf '%s\n' "$session"
 }
+
+# The shell exports that make a Claude Code session use a gh config directory: gh reads its token there, git
+# asks gh for HTTPS credentials (every other helper dropped), and SSH remotes are rewritten to HTTPS.
+# Arguments: gh config directory, path of the gh executable.
+agent_env_exports() {
+  local config=$1 gh_path=$2
+  printf 'export GH_CONFIG_DIR=%q\n' "$config"
+  printf 'export GIT_CONFIG_COUNT=4\n'
+  printf 'export GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com:\n'
+  printf 'export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_1=ssh://git@github.com/\n'
+  # An empty helper value drops every helper configured before it (osxkeychain, stored passwords).
+  printf "export GIT_CONFIG_KEY_2=credential.https://github.com.helper GIT_CONFIG_VALUE_2=''\n"
+  printf 'export GIT_CONFIG_KEY_3=credential.https://github.com.helper GIT_CONFIG_VALUE_3=%q\n' "!$gh_path auth git-credential"
+}

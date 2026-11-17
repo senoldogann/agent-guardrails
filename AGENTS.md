@@ -37,7 +37,11 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`
   adds a one-line reminder per prompt. Everywhere they block the owner's commands and the enforced-repo list.
-  `kit-project.sh` (sourced by both hooks and `bin/guardrails`) decides what counts as a kit repository.
+  `agent-identity.sh` (SessionStart, and PreToolUse Bash to renew) points a kit repository's session at a
+  one-hour token of the agent App through `CLAUDE_ENV_FILE` (`GH_CONFIG_DIR`, git helper and SSH-to-HTTPS
+  rewrite), so gh and git push run as the App's bot; it fails closed when the App is installed but no token
+  can be minted. `kit-project.sh` (sourced by the hooks and `bin/guardrails`) decides what counts as a kit
+  repository.
 - `README.md` is for people installing and using the kit; this file is for working on it.
 
 ## Commands

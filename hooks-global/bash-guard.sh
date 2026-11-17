@@ -5,8 +5,9 @@
 # directory. Everywhere else the agent works as if the kit did not exist, with one exception that protects
 # the kit repositories themselves: nothing may run the owner's commands (approve-head, revoke-head,
 # guardrails on/off/approve/revoke/agent create), post a `merge-approval` status or touch the list of enforced repositories.
-# In kit repositories the agent works with the owner's GitHub identity, so actions reserved for the human
-# must be blocked before they run: approving or admin-merging PRs, approving deployments,
+# In kit repositories the agent works with the owner's GitHub identity unless agent-identity.sh switched the
+# session to the agent App's bot, and the owner's login stays reachable either way, so actions reserved for
+# the human must be blocked before they run: approving or admin-merging PRs, approving deployments,
 # changing repo settings/rulesets/workflows/secrets, reading credentials, and pushing to the default
 # branch. `gh` is allow-listed per subcommand; everything else is a deny-list over the whole command
 # string, including text inside quotes (so `bash -c "..."` wrappers are covered).
