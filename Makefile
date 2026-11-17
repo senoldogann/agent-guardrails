@@ -14,6 +14,7 @@ test:
 	tests/human-owned.sh
 	tests/smoke.sh
 	tests/release.sh
+	tests/agent-app.sh
 
 ## Slow: real TS/Python/Rust/Swift mini projects (needs pnpm, uv, cargo, swift).
 test-lang:

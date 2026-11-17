@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Added
+
+- `guardrails agent create` registers the agent's own GitHub App from a manifest (contents and pull requests
+  write, no workflows or administration); `guardrails agent status` shows where it is installed and flags an
+  install on all repositories or extra permissions. The agent does not use it yet.
+
 ## [0.1.0] - 2026-11-17
 
 First versioned release of the kit as it is used today.
