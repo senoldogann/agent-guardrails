@@ -6,8 +6,9 @@ import SwiftUI
 struct ReviewView: View {
     let request: ActionRequest
     let configuration: AppConfiguration
-    let onFinish: () -> Void
+    let onFinish: (ActionModel) -> Void
     @State private var model: ActionModel?
+    @State private var evidence = PullRequestEvidence()
     @State private var showsLog = false
     @Environment(\.dismiss) private var dismiss
 
@@ -27,13 +28,15 @@ struct ReviewView: View {
             }
             if let model { actionBar(model) }
         }
-        .background(Palette.canvas)
-        .frame(minWidth: 500, minHeight: 520)
+        .frame(minWidth: 540, minHeight: 560)
         .task {
             let started = ActionModel(request: request, configuration: configuration)
             model = started
             await started.run()
-            onFinish()
+            onFinish(started)
+        }
+        .task(id: model?.plan?.pullRequest?.sha) {
+            if let pr = model?.plan?.pullRequest { await evidence.load(pr) }
         }
         .onAppear { bringWindowsForward() }
         .onDisappear { model?.cancel() }
@@ -80,12 +83,13 @@ struct ReviewView: View {
                     HStack(spacing: 8) {
                         SHABadge(sha: pr.shortSHA)
                         Text("exactly this commit").font(.caption).foregroundStyle(Palette.textSecondary)
+                        DiffStatsLabel(diff: evidence.diff)
                         Spacer()
                         Button("Open changes on GitHub") {
                             openInBrowser(pr.url + "/files")
                             model.markDiffOpened()
                         }
-                        .buttonStyle(SecondaryPillStyle())
+                        .secondaryAction()
                     }
                     if case .turnOn = model.plan {
                         Label("Kit files match your installed kit", systemImage: "checkmark.circle.fill")
@@ -100,6 +104,8 @@ struct ReviewView: View {
                     }
                 }
             }
+            ChecksCard(pr: pr, evidence: evidence)
+            if let spec = evidence.spec { SpecCard(spec: spec) }
             FileGroups(files: pr.files)
         }
     }
@@ -234,7 +240,7 @@ struct ReviewView: View {
                 Label(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), systemImage: "touchid")
             }
             .buttonStyle(.glassProminent)
-            .tint(request.kind == .turnOff ? Palette.dangerFill : Palette.textPrimary)
+            .tint(request.kind == .turnOff ? Palette.dangerFill : nil)
             .disabled(pending.step == .commit && model.needsDiffReview && !model.diffOpened)
         case .verifyingOwner:
             ProgressView().controlSize(.small)

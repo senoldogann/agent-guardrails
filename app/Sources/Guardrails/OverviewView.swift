@@ -33,12 +33,17 @@ struct OverviewView: View {
                         }
                     }
                 }
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionLabel(text: "Recent activity")
+                    ActivityList(
+                        entries: latestActivity(model.activity.entries, limit: 12),
+                        emptyText: "Approvals, turning repos on or off, and what arrives in your inbox show up here.")
+                }
             }
             .padding(Metrics.windowPadding)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .background(Palette.canvas)
         .navigationTitle("Overview")
     }
 
@@ -65,7 +70,7 @@ struct EnforcedRepoRow: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 12) {
-                ProjectMonogram(project: project)
+                RepoIcon(project: project, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.textPrimary)
                     Text(attentionLine(for: project, waiting: waiting) ?? modeText)

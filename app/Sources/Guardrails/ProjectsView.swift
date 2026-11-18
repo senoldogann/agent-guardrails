@@ -138,7 +138,7 @@ struct AgentPanel: View {
                 .help(detail)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surfaceMuted))
+        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius))
         .padding(10)
     }
 }
@@ -150,12 +150,12 @@ struct AgentPanelAction: View {
     var body: some View {
         if agent.registered, let installURL = agent.installURL {
             Button("Manage") { openInBrowser(installURL) }
-                .buttonStyle(SecondaryPillStyle())
+                .secondaryAction()
                 .fixedSize()
                 .help("Choose which repositories the agent App may work in")
         } else if !agent.registered {
             Button("Create…", action: create)
-                .buttonStyle(PrimaryPillStyle())
+                .primaryAction()
                 .fixedSize()
                 .help("Register the agent's own GitHub App, so you can approve its PRs with GitHub reviews")
         }
@@ -204,7 +204,7 @@ struct ProjectRow: View {
     var body: some View {
         let attention = attentionLine(for: project, waiting: waiting)
         HStack(spacing: 10) {
-            ProjectMonogram(project: project)
+            RepoIcon(project: project, size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(project.name)
                     .font(.system(size: 13, weight: .medium))
@@ -230,25 +230,76 @@ struct ProjectRow: View {
     }
 }
 
-/// The repository's initial in a rounded square, with a colored badge when guardrails are on, ready or alarmed.
-struct ProjectMonogram: View {
+/// GitHub's own repository icon (repository, private, fork) on a tile tinted by the guardrails state: green
+/// when on, red on an alarm, amber when ready to turn on, neutral when off.
+struct RepoIcon: View {
     let project: Project
+    let size: CGFloat
 
     var body: some View {
-        Text(project.name.prefix(1).uppercased())
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Palette.textSecondary)
-            .frame(width: 26, height: 26)
-            .background(RoundedRectangle(cornerRadius: 7).fill(Palette.surfaceMuted))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.hairline))
-            .overlay(alignment: .bottomTrailing) {
-                if project.state != .off {
-                    StateDot(state: project.state)
-                        .padding(2)
-                        .background(Circle().fill(Palette.canvas))
-                        .offset(x: 3, y: 3)
-                }
-            }
+        let tone = RepoTone(state: project.state)
+        let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+        OcticonImage(icon: glyph, size: size * 0.5)
+            .foregroundStyle(tone.glyph)
+            .frame(width: size, height: size)
+            .background(shape.fill(tone.fill))
+            .overlay(shape.strokeBorder(tone.stroke))
+            .accessibilityElement()
+            .accessibilityLabel(accessibilityText)
+    }
+
+    private var glyph: Octicon {
+        switch project.kind {
+        case .fork: .repoForked
+        case .privateRepo: .lock
+        case .publicRepo: .repo
+        }
+    }
+
+    private var accessibilityText: String {
+        let kind = switch project.kind {
+        case .fork: "Fork"
+        case .privateRepo: "Private repository"
+        case .publicRepo: "Public repository"
+        }
+        return "\(kind), guardrails \(stateWord(project.state))"
+    }
+}
+
+/// The colors of a repository tile; color only where the state means something.
+struct RepoTone {
+    let glyph: Color
+    let fill: Color
+    let stroke: Color
+
+    init(state: ProjectState) {
+        switch state {
+        case .on: self.init(tint: Palette.success)
+        case .alarm: self.init(tint: Palette.danger)
+        case .ready: self.init(tint: Palette.warning)
+        case .off, .noAdmin: self.init(glyph: Palette.textSecondary, fill: Palette.surfaceMuted, stroke: Palette.hairline)
+        }
+    }
+
+    private init(tint: Color) {
+        self.init(glyph: tint, fill: tint.opacity(0.12), stroke: tint.opacity(0.28))
+    }
+
+    private init(glyph: Color, fill: Color, stroke: Color) {
+        self.glyph = glyph
+        self.fill = fill
+        self.stroke = stroke
+    }
+}
+
+/// "on", "off", …: the state in a sentence.
+func stateWord(_ state: ProjectState) -> String {
+    switch state {
+    case .on: "on"
+    case .alarm: "alarmed"
+    case .ready: "ready to turn on"
+    case .off: "off"
+    case .noAdmin: "not possible without admin rights"
     }
 }
 

@@ -18,6 +18,26 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - The Dock icon carries the number of approvals and questions that wait, like the menu bar item.
 - When macOS shows none of the app's notifications, the inbox says so, with a button to the app's page in
   System Settings.
+- The Review window shows what the owner approves against, read from GitHub at exactly the planned commit:
+  the size of the change, every check run (failed first, each linked), the steps each `checks-<lang>` gate ran
+  and its mutation verdict from that job's CI log, and the acceptance criteria and properties of the spec the
+  PR carries. The CLI's plan and the checks' own results still decide.
+- An activity log of what you approved, merged, turned on or off and updated in the app, and of what arrived
+  in your inbox: on the overview, on each repository's page, and in
+  `~/Library/Application Support/Guardrails/activity.jsonl` (newest 500 kept once it passes 1000).
+- A Settings window (⌘,): open at login, how often to check GitHub, notifications, the clones folder, the
+  activity log, the version and the kit install.
+- A welcome checklist at the first launch (again from Settings): kit installed, GitHub CLI signed in,
+  notifications allowed, the agent's own GitHub App (recommended) and a first repository turned on, each with
+  its live state and the button that does it.
+
+### Changed
+
+- Repositories show GitHub's own icon (repository, private or fork) on a tile tinted by their state instead of
+  their first letter.
+- Buttons are Liquid Glass: the primary action in the app's graphite accent, so its label stays readable in
+  light, dark and inactive windows; the agent panel is a glass card. The off-white page background is gone.
+- Open at login moved from the menu bar panel to Settings; the panel has a Settings button instead.
 
 ### Fixed
 

@@ -28,12 +28,18 @@ struct ProjectDetail: View {
                         repo: project.repo, projects: projects, approvalsLocked: model.snapshot.hasKitInstallAlarm,
                         open: open)
                 }
+                let history = activity(of: project.repo, in: model.activity.entries, limit: 8)
+                if !history.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionLabel(text: "Activity")
+                        ActivityList(entries: history, emptyText: "")
+                    }
+                }
             }
             .padding(Metrics.windowPadding)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .background(Palette.canvas)
         .navigationTitle(project.name)
         .sheet(isPresented: $showsSetup) {
             SetupSheet(project: project) {
@@ -55,7 +61,8 @@ struct ProjectHeader: View {
     let startSetup: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 14) {
+            RepoIcon(project: project, size: 46)
             VStack(alignment: .leading, spacing: 6) {
                 Text(project.name).font(.system(size: 28, weight: .medium)).tracking(-0.5)
                 HStack(spacing: 8) {
@@ -89,7 +96,7 @@ struct HeaderActions: View {
             } label: {
                 GitHubLabel(title: "GitHub")
             }
-            .buttonStyle(.glass)
+            .secondaryAction()
             switch project.state {
             case .ready:
                 Button {
@@ -97,23 +104,20 @@ struct HeaderActions: View {
                 } label: {
                     Label("Turn on", systemImage: "power").labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Palette.textPrimary)
+                .primaryAction()
                 .disabled(actionsLocked)
             case .off:
                 Button(action: startSetup) {
                     Label("Set up…", systemImage: "terminal").labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.glassProminent)
-                    .tint(Palette.textPrimary)
+                .primaryAction()
             case .alarm:
                 Button {
                     open(ActionRequest(kind: .turnOnRepo, target: project.repo, label: project.repo))
                 } label: {
                     Label("Restore", systemImage: "arrow.counterclockwise").labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Palette.dangerFill)
+                .destructiveAction()
                 .disabled(actionsLocked)
             case .on, .noAdmin:
                 EmptyView()
@@ -129,7 +133,7 @@ struct HeaderActions: View {
                 }
                 .menuStyle(.button)
                 .menuIndicator(.hidden)
-                .buttonStyle(.glass)
+                .secondaryAction()
                 .fixedSize()
             }
         }
@@ -169,7 +173,7 @@ struct ProjectStateCard: View {
                         } label: {
                             GitHubLabel(title: "Open PR")
                         }
-                        .buttonStyle(SecondaryPillStyle())
+                        .secondaryAction()
                     }
                 }
             }
@@ -273,9 +277,18 @@ func shortRelativeTime(_ iso: String, now: Date) -> String {
     formatRelative(iso, style: .abbreviated, now: now)
 }
 
+/// "3 minutes ago" for a moment the app recorded.
+func relativeTime(_ date: Date, now: Date) -> String {
+    formatRelative(date, style: .full, now: now)
+}
+
 /// English, like the rest of the app; the raw value when GitHub sends something that is not ISO 8601.
 private func formatRelative(_ iso: String, style: RelativeDateTimeFormatter.UnitsStyle, now: Date) -> String {
     guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
+    return formatRelative(date, style: style, now: now)
+}
+
+private func formatRelative(_ date: Date, style: RelativeDateTimeFormatter.UnitsStyle, now: Date) -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.locale = Locale(identifier: "en_US")
     formatter.unitsStyle = style
@@ -300,7 +313,7 @@ struct OnCard: View {
                         Button("Switch to review mode") {
                             open(ActionRequest(kind: .turnOnRepo, target: project.repo, label: project.repo))
                         }
-                        .buttonStyle(PrimaryPillStyle())
+                        .primaryAction()
                         .disabled(actionsLocked)
                     }
                 } else if project.mode == .status, project.agentApp == .missing, let installURL = agent?.installURL {
@@ -315,7 +328,7 @@ struct OnCard: View {
                         } label: {
                             GitHubLabel(title: "Add to agent App")
                         }
-                        .buttonStyle(SecondaryPillStyle())
+                        .secondaryAction()
                     }
                 }
             }
