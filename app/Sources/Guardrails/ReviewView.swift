@@ -17,15 +17,16 @@ struct ReviewView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(request.windowTitle).font(.displayTitle).tracking(-0.3)
+                    Text(request.windowTitle).font(.displayTitle)
                     if let model {
                         planSection(model)
                         statusSection(model)
                         logSection(model)
                     }
                 }
+                .frame(maxWidth: pageWidth, alignment: .leading)
                 .padding(Metrics.windowPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
             if let model { actionBar(model) }
         }
@@ -97,18 +98,18 @@ struct ReviewView: View {
                             .textSelection(.enabled)
                     }
                     if case .loaded(let now) = evidence.snapshot, now.head.sha != pr.sha {
-                        Label("The PR moved to \(now.head.sha.prefix(7)) after this check. Cancel, then review the new commit.", systemImage: "exclamationmark.triangle.fill")
+                        OcticonLabel("The PR moved to \(now.head.sha.prefix(7)) after this check. Cancel, then review the new commit.", icon: .alert)
                             .font(.caption)
                             .foregroundStyle(Palette.danger)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if case .turnOn = model.plan {
-                        Label("Kit files match your installed kit", systemImage: "checkmark.circle.fill")
+                        OcticonLabel("Kit files match your installed kit", icon: .checkCircle)
                             .font(.caption)
-                            .foregroundStyle(Palette.success)
+                            .foregroundStyle(Palette.textSecondary)
                     }
                     if pr.isOwnMerge {
-                        Label("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", systemImage: "arrow.triangle.merge")
+                        OcticonLabel("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
                             .font(.caption)
                             .foregroundStyle(Palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -134,7 +135,7 @@ struct ReviewView: View {
                     }
                 }
                 ForEach(removal.notes, id: \.self) { note in
-                    Text(note).font(.caption).foregroundStyle(Palette.warning)
+                    Text(note).font(.caption).foregroundStyle(Palette.textSecondary)
                 }
             }
         }
@@ -156,15 +157,15 @@ struct ReviewView: View {
             }
         case .succeeded:
             ResultCard(
-                symbol: "checkmark.circle.fill", color: Palette.success, title: successTitle(model),
+                symbol: .checkCircle, color: Palette.textSecondary, title: successTitle(model),
                 message: successMessage(model))
         case .failed(let message):
-            ResultCard(symbol: "xmark.octagon.fill", color: Palette.danger, title: "Stopped", message: message)
+            ResultCard(symbol: .xCircle, color: Palette.danger, title: "Stopped", message: message)
         case .cancelled:
-            ResultCard(symbol: "minus.circle", color: Palette.textSecondary, title: "Cancelled", message: "Nothing was changed.")
+            ResultCard(symbol: .skip, color: Palette.textSecondary, title: "Cancelled", message: "Nothing was changed.")
         case .preparing, .awaitingConfirmation, .verifyingOwner:
             if let problem = model.ownerCheckProblem {
-                StatusPanel(symbol: "touchid", title: "Not confirmed", message: problem)
+                StatusPanel(symbol: .passkey, title: "Not confirmed", message: problem)
             }
         }
     }
@@ -248,7 +249,7 @@ struct ReviewView: View {
             Button {
                 Task { await model.confirm() }
             } label: {
-                Label(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), systemImage: "touchid")
+                OcticonLabel(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), icon: .passkey)
             }
             .buttonStyle(.glassProminent)
             .tint(request.kind == .turnOff ? Palette.dangerFill : Palette.accent)
@@ -285,7 +286,7 @@ struct FileGroups: View {
                 group(title: "Workflows and guardrails · can change what CI enforces", color: Palette.danger, files: workflows)
             }
             if !humanOwned.isEmpty {
-                group(title: "Human-owned · yours from now on", color: Palette.warning, files: humanOwned)
+                group(title: "Human-owned · yours from now on", color: Palette.textSecondary, files: humanOwned)
             }
             if !agent.isEmpty {
                 group(title: "Written by the agent", color: Palette.textSecondary, files: agent)
@@ -318,7 +319,7 @@ struct WorkflowWarning: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("This PR changes workflows or guardrails", systemImage: "exclamationmark.triangle.fill")
+            OcticonLabel("This PR changes workflows or guardrails", icon: .alert)
                 .font(.system(size: 13, weight: .semibold))
             Text("These files decide what CI checks. Approve only if you read these changes on GitHub:")
                 .font(.system(size: 12))
@@ -332,7 +333,7 @@ struct WorkflowWarning: View {
 }
 
 struct ResultCard: View {
-    let symbol: String
+    let symbol: Octicon
     let color: Color
     let title: String
     let message: String
@@ -340,7 +341,7 @@ struct ResultCard: View {
     var body: some View {
         Card {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(color)
+                OcticonImage(icon: symbol, size: 14).font(.system(size: 20)).foregroundStyle(color)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 15, weight: .medium))
                     Text(message)

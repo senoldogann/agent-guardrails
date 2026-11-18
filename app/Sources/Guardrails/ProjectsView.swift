@@ -16,7 +16,7 @@ struct ProjectSidebar: View {
         let groups = groupProjects(projects.projects, matching: search)
         List(selection: $selection) {
             if search.isEmpty {
-                Label("Overview", systemImage: "square.grid.2x2")
+                OcticonLabel("Overview", icon: .apps)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
                     .tag(WorkspacePage.overview)
@@ -34,7 +34,7 @@ struct ProjectSidebar: View {
             }
             if search.isEmpty {
                 Section {
-                    Label("Settings", systemImage: "gearshape")
+                    OcticonLabel("Settings", icon: .gear)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Palette.textPrimary)
                         .tag(WorkspacePage.settings)
@@ -62,7 +62,7 @@ struct AgentPanel: View {
         let detail = agent.registered ? (agent.slug ?? "") : "The agent uses your GitHub login"
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: agent.registered ? "person.badge.shield.checkmark" : "person.crop.circle.badge.questionmark")
+                OcticonImage(icon: .person, size: 14)
                     .font(.system(size: 14))
                     .foregroundStyle(Palette.textSecondary)
                 Text(agent.registered ? "Agent App" : "Agent identity").font(.system(size: 12, weight: .semibold))
@@ -144,7 +144,7 @@ struct ProjectRow: View {
     var body: some View {
         let attention = attentionLine(for: project, waiting: waiting)
         HStack(spacing: 10) {
-            RepoIcon(project: project, size: 28)
+            RepoIcon(project: project, size: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(project.name)
                     .font(.system(size: 13, weight: .medium))
@@ -152,7 +152,7 @@ struct ProjectRow: View {
                     .lineLimit(1)
                 Text(attention ?? projectSubtitle(project, now: Date()))
                     .font(.system(size: 11, weight: attention == nil ? .regular : .medium))
-                    .foregroundStyle(project.state == .alarm ? Palette.danger : Palette.textSecondary)
+                    .foregroundStyle(Palette.textSecondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -177,13 +177,8 @@ struct RepoIcon: View {
     let size: CGFloat
 
     var body: some View {
-        let tone = RepoTone(state: project.state)
-        let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-        OcticonImage(icon: glyph, size: size * 0.5)
-            .foregroundStyle(tone.glyph)
-            .frame(width: size, height: size)
-            .background(shape.fill(tone.fill))
-            .overlay(shape.strokeBorder(tone.stroke))
+        OcticonImage(icon: glyph, size: size)
+            .foregroundStyle(project.state == .alarm ? Palette.danger : Palette.textSecondary)
             .accessibilityElement()
             .accessibilityLabel(accessibilityText)
     }
@@ -203,32 +198,6 @@ struct RepoIcon: View {
         case .publicRepo: "Public repository"
         }
         return "\(kind), guardrails \(stateWord(project.state))"
-    }
-}
-
-/// The colors of a repository tile; color only where the state means something.
-struct RepoTone {
-    let glyph: Color
-    let fill: Color
-    let stroke: Color
-
-    init(state: ProjectState) {
-        switch state {
-        case .on: self.init(tint: Palette.success)
-        case .alarm: self.init(tint: Palette.danger)
-        case .ready: self.init(tint: Palette.warning)
-        case .off, .noAdmin: self.init(glyph: Palette.textSecondary, fill: Palette.surfaceMuted, stroke: Palette.hairline)
-        }
-    }
-
-    private init(tint: Color) {
-        self.init(glyph: tint, fill: tint.opacity(0.12), stroke: tint.opacity(0.28))
-    }
-
-    private init(glyph: Color, fill: Color, stroke: Color) {
-        self.glyph = glyph
-        self.fill = fill
-        self.stroke = stroke
     }
 }
 
@@ -258,9 +227,9 @@ struct StateDot: View {
 
     private var color: Color {
         switch state {
-        case .on: Palette.success
+        case .on: Palette.textSecondary
         case .alarm: Palette.danger
-        case .ready: Palette.warning
+        case .ready: Palette.textSecondary
         case .off, .noAdmin: Palette.hairline
         }
     }

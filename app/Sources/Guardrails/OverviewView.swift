@@ -14,13 +14,13 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Overview").font(.system(size: 28, weight: .medium)).tracking(-0.5)
+                    Text("Overview").font(.displayTitle)
                     Text(summary(enforced: enforced.count))
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.textSecondary)
                 }
                 if let error = projects.lastError, !projects.projects.isEmpty {
-                    StatusPanel(symbol: "exclamationmark.triangle", title: "Repositories could not be refreshed", message: error)
+                    StatusPanel(symbol: .alert, title: "Repositories could not be refreshed", message: error)
                 }
                 VStack(alignment: .leading, spacing: 12) {
                     InboxList(model: model, open: open)
@@ -28,9 +28,12 @@ struct OverviewView: View {
                 if !enforced.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         SectionLabel(text: "Enforced repositories")
-                        ForEach(enforced) { project in
-                            EnforcedRepoRow(project: project, waiting: waitingCount(model.snapshot, repo: project.repo)) {
-                                select(project.repo)
+                        RowGroup {
+                            ForEach(Array(enforced.enumerated()), id: \.element.id) { index, project in
+                                if index > 0 { Divider().padding(.leading, 40) }
+                                EnforcedRepoRow(project: project, waiting: waitingCount(model.snapshot, repo: project.repo)) {
+                                    select(project.repo)
+                                }
                             }
                         }
                     }
@@ -71,12 +74,12 @@ struct EnforcedRepoRow: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 12) {
-                RepoIcon(project: project, size: 32)
+                RepoIcon(project: project, size: 16).frame(width: 16)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.textPrimary)
                     Text(attentionLine(for: project, waiting: waiting) ?? modeText)
                         .font(.caption)
-                        .foregroundStyle(project.state == .alarm ? Palette.danger : Palette.textSecondary)
+                        .foregroundStyle(Palette.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -87,12 +90,11 @@ struct EnforcedRepoRow: View {
                     }
                     .foregroundStyle(Palette.textSecondary)
                 }
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+                OcticonImage(icon: .chevronRight, size: 12).foregroundStyle(Palette.textSecondary)
             }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surface))
-            .overlay(RoundedRectangle(cornerRadius: Metrics.rowRadius).strokeBorder(Palette.hairline))
-            .contentShape(RoundedRectangle(cornerRadius: Metrics.rowRadius))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Open \(project.repo)")

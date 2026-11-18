@@ -36,7 +36,7 @@ struct MainWindow: View {
                 Button {
                     Task { await refreshAll() }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    OcticonImage(icon: .sync, size: 14).accessibilityLabel("Refresh")
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Refresh (⌘R)")
@@ -187,7 +187,7 @@ struct WorkspaceTabBar: View {
 
 struct WorkspaceTab: View {
     let title: String
-    let symbol: String
+    let symbol: Octicon
     let isSelected: Bool
     let canClose: Bool
     let select: () -> Void
@@ -196,7 +196,7 @@ struct WorkspaceTab: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: symbol)
+            OcticonImage(icon: symbol, size: 14)
                 .font(.system(size: 11))
                 .foregroundStyle(isSelected ? Palette.textPrimary : Palette.textSecondary)
             Text(title)
@@ -206,7 +206,7 @@ struct WorkspaceTab: View {
                 .truncationMode(.tail)
             if canClose {
                 Button(action: close) {
-                    Image(systemName: "xmark")
+                    OcticonImage(icon: .x, size: 14)
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Palette.textSecondary)
                         .frame(width: 16, height: 16)
@@ -243,29 +243,27 @@ struct WorkspaceStatusBar: View {
         let snapshot = model.snapshot
         let waiting = waitingCount(snapshot)
         HStack(spacing: 16) {
-            Label(updatedText, systemImage: "arrow.triangle.2.circlepath")
+            OcticonLabel(updatedText, icon: .sync)
             if !snapshot.alarms.isEmpty {
-                Label(snapshot.alarms.count == 1 ? "1 alarm" : "\(snapshot.alarms.count) alarms", systemImage: "exclamationmark.triangle.fill")
+                OcticonLabel(snapshot.alarms.count == 1 ? "1 alarm" : "\(snapshot.alarms.count) alarms", icon: .alert)
                     .foregroundStyle(Palette.danger)
             }
-            Label(waiting == 0 ? "Nothing waits for you" : (waiting == 1 ? "1 waits for you" : "\(waiting) wait for you"), systemImage: "tray")
-            Label(enforcedText, systemImage: "checkmark.shield")
+            OcticonLabel(waiting == 0 ? "Nothing waits for you" : (waiting == 1 ? "1 waits for you" : "\(waiting) wait for you"), icon: .inbox)
+            OcticonLabel(enforcedText, icon: .shieldCheck)
             Spacer()
             if model.loadState == .loading || projects.isLoading {
                 ProgressView().controlSize(.mini)
             }
             if model.notificationsShown == false {
-                Label("Notifications off", systemImage: "bell.slash")
+                OcticonLabel("Notifications off", icon: .bellSlash)
             }
         }
         .labelStyle(.titleAndIcon)
         .font(.system(size: 11))
         .foregroundStyle(Palette.textSecondary)
         .padding(.horizontal, 14)
-        .frame(height: 28)
-        .glassEffect(.regular, in: .capsule)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
+        .frame(height: 26)
+        .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
     }
 
     private var updatedText: String {
@@ -299,19 +297,19 @@ func pageTitle(_ page: WorkspacePage, workspace: Workspace, projects: ProjectsMo
 }
 
 @MainActor
-func pageSymbol(_ page: WorkspacePage, workspace: Workspace) -> String {
+func pageSymbol(_ page: WorkspacePage, workspace: Workspace) -> Octicon {
     switch page {
-    case .overview: "square.grid.2x2"
-    case .repository: "folder"
-    case .settings: "gearshape"
-    case .welcome: "hand.wave"
-    case .pullRequest: "arrow.triangle.pull"
+    case .overview: .apps
+    case .repository: .repo
+    case .settings: .gear
+    case .welcome: .info
+    case .pullRequest: .pullRequest
     case .review(let run):
         switch workspace.reviews[run]?.action.phase {
-        case .succeeded: "checkmark.circle"
-        case .failed: "xmark.octagon"
-        case .cancelled: "minus.circle"
-        default: "touchid"
+        case .succeeded: .checkCircle
+        case .failed: .xCircle
+        case .cancelled: .skip
+        default: .passkey
         }
     }
 }

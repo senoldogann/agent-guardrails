@@ -15,7 +15,7 @@ struct PullRequestPage: View {
             case .loading:
                 ProgressView("Loading #\(ref.number) from GitHub…").frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
-                StatusPanel(symbol: "exclamationmark.triangle", title: "Could not load #\(ref.number)", message: message)
+                StatusPanel(symbol: .alert, title: "Could not load #\(ref.number)", message: message)
                     .padding(Metrics.windowPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .loaded(let pr):
@@ -61,7 +61,7 @@ struct PullRequestHeader: View {
                 Button {
                     Task { await pullRequest.load() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    OcticonImage(icon: .sync, size: 14)
                 }
                 .buttonStyle(.borderless)
                 .help("Load the pull request again")
@@ -109,6 +109,9 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, Metrics.windowPadding)
         .padding(.vertical, 16)
+        // The same centered column as the page below it.
+        .frame(maxWidth: pageWidth + 2 * Metrics.windowPadding)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -129,12 +132,12 @@ struct PullRequestStateChip: View {
 
     private var stateLook: (String, Color) {
         switch pr.state {
-        case "MERGED": ("Merged", Palette.success)
+        case "MERGED": ("Merged", Palette.textSecondary)
         case "CLOSED": ("Closed", Palette.danger)
         default:
             if pr.isDraft { ("Draft", Palette.textSecondary) }
-            else if pr.isApproved { (pr.autoMergeRequest == nil ? "Approved" : "Approved · auto-merge on", Palette.success) }
-            else { (pr.autoMergeRequest == nil ? "Open" : "Open · auto-merge on", Palette.warning) }
+            else if pr.isApproved { (pr.autoMergeRequest == nil ? "Approved" : "Approved · auto-merge on", Palette.textSecondary) }
+            else { (pr.autoMergeRequest == nil ? "Open" : "Open · auto-merge on", Palette.textSecondary) }
         }
     }
 }
@@ -146,12 +149,12 @@ struct ChecksSummary: View {
     var body: some View {
         let failed = checks.filter { $0.outcome == .failed }.count
         let running = checks.filter { $0.outcome == .running }.count
-        let (symbol, text, color): (String, String, Color) =
-            if checks.isEmpty { ("circle.dashed", "No checks", Palette.textSecondary) }
-            else if failed > 0 { ("xmark.circle", "\(failed) failing", Palette.danger) }
-            else if running > 0 { ("clock", "\(running) running", Palette.warning) }
-            else { ("checkmark.circle", "All checks passed", Palette.success) }
-        Label(text, systemImage: symbol)
+        let (symbol, text, color): (Octicon, String, Color) =
+            if checks.isEmpty { (.circle, "No checks", Palette.textSecondary) }
+            else if failed > 0 { (.xCircle, "\(failed) failing", Palette.danger) }
+            else if running > 0 { (.clock, "\(running) running", Palette.textSecondary) }
+            else { (.checkCircle, "All checks passed", Palette.textSecondary) }
+        OcticonLabel(text, icon: symbol)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(color)
             .lineLimit(1)
@@ -218,7 +221,7 @@ struct PullRequestMenu: View {
                 Button("Close Pull Request…", role: .destructive) { confirmsClose = true }
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            OcticonImage(icon: .kebabHorizontal, size: 14)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

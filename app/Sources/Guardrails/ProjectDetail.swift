@@ -16,7 +16,7 @@ struct ProjectDetail: View {
                     startSetup: { showsSetup = true })
                 if model.snapshot.hasKitInstallAlarm {
                     StatusPanel(
-                        symbol: "lock", title: "Actions are locked",
+                        symbol: .lock, title: "Actions are locked",
                         message: "The kit install needs attention: use Update in the menu bar, or fix the alarm shown there. On, off and approve refuse until then.")
                 }
                 ProjectStateCard(
@@ -60,9 +60,9 @@ struct ProjectHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            RepoIcon(project: project, size: 46)
+            RepoIcon(project: project, size: 22)
             VStack(alignment: .leading, spacing: 6) {
-                Text(project.name).font(.system(size: 28, weight: .medium)).tracking(-0.5)
+                Text(project.name).font(.displayTitle)
                 HStack(spacing: 8) {
                     StateChip(state: project.state)
                     if project.private { Chip(text: "Private") }
@@ -100,20 +100,20 @@ struct HeaderActions: View {
                 Button {
                     open(ActionRequest(kind: .turnOn, target: project.setupURL, label: project.repo))
                 } label: {
-                    Label("Turn on", systemImage: "power").labelStyle(.titleAndIcon)
+                    OcticonLabel("Turn on", icon: .plug).labelStyle(.titleAndIcon)
                 }
                 .primaryAction()
                 .disabled(actionsLocked)
             case .off:
                 Button(action: startSetup) {
-                    Label("Set up…", systemImage: "terminal").labelStyle(.titleAndIcon)
+                    OcticonLabel("Set up…", icon: .terminal).labelStyle(.titleAndIcon)
                 }
                 .primaryAction()
             case .alarm:
                 Button {
                     open(ActionRequest(kind: .turnOnRepo, target: project.repo, label: project.repo))
                 } label: {
-                    Label("Restore", systemImage: "arrow.counterclockwise").labelStyle(.titleAndIcon)
+                    OcticonLabel("Restore", icon: .history).labelStyle(.titleAndIcon)
                 }
                 .destructiveAction()
                 .disabled(actionsLocked)
@@ -127,7 +127,7 @@ struct HeaderActions: View {
                     }
                     .disabled(actionsLocked)
                 } label: {
-                    Image(systemName: "ellipsis")
+                    OcticonImage(icon: .kebabHorizontal, size: 14)
                 }
                 .menuStyle(.button)
                 .menuIndicator(.hidden)
@@ -161,7 +161,7 @@ struct ProjectStateCard: View {
             Card {
                 VStack(alignment: .leading, spacing: 10) {
                     Explainer(
-                        symbol: "shippingbox", color: Palette.warning, title: "Ready to turn on",
+                        symbol: .box, color: Palette.textSecondary, title: "Ready to turn on",
                         text: "The bootstrap PR is open. Turning on checks its kit files against your installed kit, merges exactly the commit you confirm and applies the ruleset.")
                     HStack {
                         Text(displaySafe(project.setupTitle)).font(.system(size: 13, weight: .medium))
@@ -180,7 +180,7 @@ struct ProjectStateCard: View {
         case .noAdmin:
             Card {
                 Explainer(
-                    symbol: "person.badge.key", color: Palette.textSecondary, title: "No admin rights",
+                    symbol: .key, color: Palette.textSecondary, title: "No admin rights",
                     text: "You cannot apply rulesets in \(project.repo), so guardrails cannot be enforced here.")
             }
         }
@@ -196,11 +196,11 @@ struct OffCard: View {
         Card {
             if let setupStarted {
                 Explainer(
-                    symbol: "hourglass", color: Palette.warning, title: "Setting up…",
+                    symbol: .hourglass, color: Palette.textSecondary, title: "Setting up…",
                     text: "Started \(setupStarted.formatted(date: .omitted, time: .shortened)) in Terminal. When Claude opens the bootstrap PR, this project moves to Ready to turn on. Refresh to check; if Terminal closed early, set it up again.")
             } else {
                 Explainer(
-                    symbol: "shield.slash", color: Palette.textSecondary, title: "Guardrails are off",
+                    symbol: .shieldX, color: Palette.textSecondary, title: "Guardrails are off",
                     text: "Agents work here as they normally do. Set up adds the kit with Claude in Terminal: it opens a bootstrap PR, and you turn it on from here once you have looked at it.")
             }
         }
@@ -208,14 +208,14 @@ struct OffCard: View {
 }
 
 struct Explainer: View {
-    let symbol: String
+    let symbol: Octicon
     let color: Color
     let title: String
     let text: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(color).frame(width: 22)
+            OcticonImage(icon: symbol, size: 14).font(.system(size: 18)).foregroundStyle(color).frame(width: 22)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 15, weight: .medium))
                 Text(text)
@@ -303,7 +303,7 @@ struct OnCard: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                Explainer(symbol: "checkmark.shield.fill", color: Palette.success, title: title, text: text)
+                Explainer(symbol: .shieldCheck, color: Palette.textSecondary, title: title, text: text)
                 if project.canSwitchToReviewMode {
                     HStack {
                         Text("The agent App is installed here.").font(.caption).foregroundStyle(Palette.textSecondary)

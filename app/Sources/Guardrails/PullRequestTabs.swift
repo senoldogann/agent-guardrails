@@ -87,7 +87,7 @@ struct RollupRow: View {
                 Button {
                     openInBrowser(link)
                 } label: {
-                    Image(systemName: "arrow.up.right.square")
+                    OcticonImage(icon: .linkExternal, size: 14)
                 }
                 .buttonStyle(.borderless)
                 .help("Open the check on GitHub")
@@ -195,7 +195,7 @@ struct TimelineRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol)
+            OcticonImage(icon: symbol, size: 14)
                 .font(.system(size: 13))
                 .foregroundStyle(color)
                 .frame(width: 24, height: 24)
@@ -220,21 +220,21 @@ struct TimelineRow: View {
         .padding(.vertical, 8)
     }
 
-    private var symbol: String {
+    private var symbol: Octicon {
         switch event.kind {
-        case .commit: "smallcircle.filled.circle"
-        case .review(let state) where state == "APPROVED": "checkmark.seal.fill"
-        case .review(let state) where state == "CHANGES_REQUESTED": "exclamationmark.bubble"
-        case .review(let state) where state == "DISMISSED": "seal"
-        case .review: "text.bubble"
-        case .comment: "bubble.left"
+        case .commit: .gitCommit
+        case .review(let state) where state == "APPROVED": .check
+        case .review(let state) where state == "CHANGES_REQUESTED": .comment
+        case .review(let state) where state == "DISMISSED": .dash
+        case .review: .comment
+        case .comment: .comment
         }
     }
 
     private var color: Color {
         switch event.kind {
-        case .review(let state) where state == "APPROVED": Palette.success
-        case .review(let state) where state == "CHANGES_REQUESTED": Palette.warning
+        case .review(let state) where state == "APPROVED": Palette.textSecondary
+        case .review(let state) where state == "CHANGES_REQUESTED": Palette.textSecondary
         default: Palette.textSecondary
         }
     }
@@ -261,7 +261,7 @@ struct PullRequestCode: View {
             case nil, .loading:
                 ProgressView("Loading the diff…").frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
-                StatusPanel(symbol: "exclamationmark.triangle", title: "Could not load the diff", message: message)
+                StatusPanel(symbol: .alert, title: "Could not load the diff", message: message)
                     .padding(Metrics.windowPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .loaded(let files):
@@ -294,10 +294,10 @@ struct FileDiffCard: View {
                 isExpanded.toggle()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right").font(.system(size: 11))
+                    OcticonImage(icon: isExpanded ? .chevronDown : .chevronRight, size: 12)
                     Text(displaySafe(file.path)).font(.mono).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
-                    Text("+\(file.additions)").foregroundStyle(Palette.success)
+                    Text("+\(file.additions)").foregroundStyle(Palette.textSecondary)
                     Text("−\(file.deletions)").foregroundStyle(Palette.danger)
                 }
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
@@ -347,7 +347,7 @@ struct DiffLineRow: View {
 
     private var background: Color {
         switch line.kind {
-        case .added: Palette.success.opacity(0.12)
+        case .added: Palette.textSecondary.opacity(0.12)
         case .removed: Palette.danger.opacity(0.12)
         case .hunk: Palette.surfaceMuted
         default: .clear

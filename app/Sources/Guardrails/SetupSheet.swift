@@ -11,7 +11,7 @@ struct SetupSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Set up \(project.name)").font(.displayTitle).tracking(-0.3)
+            Text("Set up \(project.name)").font(.displayTitle)
             Text("Claude adds the guardrails kit in Terminal and opens a bootstrap PR. You stay in control: it runs with its normal permission prompts, and nothing is enforced until you turn it on.")
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.textSecondary)
@@ -85,18 +85,18 @@ struct CloneStatus: View {
         case .clone(.missing):
             Text("No clone here yet. Clone it to start.").font(.caption).foregroundStyle(Palette.textSecondary)
         case .clone(.ready):
-            Label("Clean clone on \(branch), origin matches", systemImage: "checkmark.circle.fill")
+            OcticonLabel("Clean clone on \(branch), origin matches", icon: .checkCircle)
                 .font(.caption)
-                .foregroundStyle(Palette.success)
+                .foregroundStyle(Palette.textSecondary)
         case .clone(.problem(let message)), .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
+            OcticonLabel(message, icon: .alert)
                 .font(.caption)
                 .foregroundStyle(Palette.danger)
                 .fixedSize(horizontal: false, vertical: true)
         case .launched:
-            Label("Terminal opened. Follow Claude there.", systemImage: "terminal")
+            OcticonLabel("Terminal opened. Follow Claude there.", icon: .terminal)
                 .font(.caption)
-                .foregroundStyle(Palette.success)
+                .foregroundStyle(Palette.textSecondary)
         }
     }
 }
@@ -124,7 +124,7 @@ struct SetupActions: View {
                             if model.step == .launched { onLaunched() }
                         }
                     } label: {
-                        Label("Open Terminal and set up", systemImage: "terminal")
+                        OcticonLabel("Open Terminal and set up", icon: .terminal)
                     }
                     .primaryAction()
                 case .clone(.problem), .failed:

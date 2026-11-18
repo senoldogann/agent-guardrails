@@ -17,7 +17,7 @@ struct PullRequestSection: View {
                 Button {
                     Task { await projects.reloadPullRequests(of: repo) }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    OcticonImage(icon: .sync, size: 14)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Palette.textSecondary)
@@ -55,8 +55,9 @@ struct PullRequestList: View {
                     Text("No open pull requests.").font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
                 }
             } else {
-                VStack(spacing: 8) {
-                    ForEach(list.items) { item in
+                RowGroup {
+                    ForEach(Array(list.items.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { Divider().padding(.leading, 46) }
                         PullRequestRow(
                             repo: repo, item: item, approvalsLocked: approvalsLocked, open: open,
                             openPullRequest: openPullRequest)
@@ -116,9 +117,8 @@ struct PullRequestRow: View {
                 .secondaryAction()
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.rowRadius).strokeBorder(Palette.hairline))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
 
@@ -126,31 +126,31 @@ struct KindBadge: View {
     let kind: PullRequestKind
 
     var body: some View {
-        Image(systemName: symbol)
+        OcticonImage(icon: symbol, size: 14)
             .font(.system(size: 14))
             .foregroundStyle(color)
             .frame(width: 22)
             .help(help)
     }
 
-    private var symbol: String {
+    private var symbol: Octicon {
         switch kind {
-        case .approve: "checkmark.seal"
-        case .answer: "questionmark.bubble"
-        case .wait: "clock"
-        case .blocked: "xmark.octagon"
-        case .draft: "pencil.line"
-        case .approved: "checkmark.seal.fill"
+        case .approve: .passkey
+        case .answer: .comment
+        case .wait: .clock
+        case .blocked: .xCircle
+        case .draft: .pullRequestDraft
+        case .approved: .check
         }
     }
 
     private var color: Color {
         switch kind {
         case .approve: Palette.textPrimary
-        case .answer: Palette.warning
+        case .answer: Palette.textSecondary
         case .wait, .draft: Palette.textSecondary
         case .blocked: Palette.danger
-        case .approved: Palette.success
+        case .approved: Palette.textSecondary
         }
     }
 

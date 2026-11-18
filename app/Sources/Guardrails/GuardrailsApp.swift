@@ -65,7 +65,7 @@ struct ProjectsWindow: View {
         if let projects = model.projects {
             MainWindow(model: model, projects: projects)
         } else {
-            StatusPanel(symbol: "wrench.and.screwdriver", title: "Setup needed", message: model.setupProblem ?? "")
+            StatusPanel(symbol: .tools, title: "Setup needed", message: model.setupProblem ?? "")
                 .padding(Metrics.windowPadding)
                 .frame(minWidth: 480, minHeight: 200)
         }
@@ -80,10 +80,11 @@ struct MenuBarLabel: View {
 
     var body: some View {
         let snapshot = model.snapshot
-        let symbol = snapshot.alarms.isEmpty ? "checkmark.shield" : "exclamationmark.shield.fill"
+        let symbol: Octicon = snapshot.alarms.isEmpty ? .shieldCheck : .shieldX
         let count = waitingCount(snapshot)
         HStack(spacing: 3) {
-            Image(systemName: symbol)
+            // The menu bar draws the 16-point template image itself, in the menu bar's own color.
+            Image(nsImage: symbol.image)
             if count > 0 { Text("\(count)") }
         }
         .onChange(of: model.pendingRoute) { _, route in

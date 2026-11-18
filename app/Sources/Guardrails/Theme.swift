@@ -10,11 +10,11 @@ enum Palette {
     static let hairline = Color(light: 0x000000, lightAlpha: 0.09, dark: 0xFFFFFF, darkAlpha: 0.10)
     static let textPrimary = Color(light: 0x0A0A0A, dark: 0xF5F5F7)
     static let textSecondary = Color(light: 0x6B6B70, dark: 0xA1A1A6)
-    static let danger = Color(light: 0xD92D20, dark: 0xF97066)
-    /// Fill behind white text (alarms, destructive buttons): dark enough in both modes for contrast.
-    static let dangerFill = Color(light: 0xD92D20, dark: 0xB42318)
-    static let warning = Color(light: 0xB54708, dark: 0xFDB022)
-    static let success = Color(light: 0x067647, dark: 0x47CD89)
+    /// The one color besides the neutrals: something is wrong (an alarm, a failed check, a destructive action).
+    /// Everything else is told by icon shape and words, as Primer, Linear and Claude do.
+    static let danger = Color(light: 0xC4372C, dark: 0xEE6B60)
+    /// Fill behind white text (destructive buttons): dark enough in both modes for contrast.
+    static let dangerFill = Color(light: 0xC4372C, dark: 0xB42318)
     /// Fill of primary buttons and switches behind white: graphite in both modes, set where it is used. The
     /// asset catalog's AccentColor is a light gray in light mode, because macOS draws the sidebar selection in
     /// it (`.tint` does not reach the selection) and a graphite row reads as black; plain glass buttons take
@@ -52,8 +52,10 @@ extension NSColor {
 }
 
 extension Font {
-    static let displayTitle = Font.system(size: 22, weight: .medium)
-    static let sectionTitle = Font.system(size: 11, weight: .semibold)
+    /// A page's title: one size for every page.
+    static let displayTitle = Font.system(size: 22, weight: .semibold)
+    /// A group's heading inside a page: small, in sentence case, never uppercased.
+    static let sectionTitle = Font.system(size: 12, weight: .semibold)
     static let mono = Font.system(size: 12, design: .monospaced)
 }
 
@@ -79,9 +81,8 @@ struct SectionLabel: View {
     let text: String
 
     var body: some View {
-        Text(text.uppercased())
+        Text(text)
             .font(.sectionTitle)
-            .tracking(0.6)
             .foregroundStyle(Palette.textSecondary)
     }
 }
@@ -114,24 +115,40 @@ struct Card<Content: View>: View {
     }
 }
 
-/// A red banner with the CLI's own alarm sentence.
+/// An alarm in the CLI's own words: a red alert icon on a quiet surface, so the words stay easy to read.
 struct AlarmBanner: View {
     let text: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            OcticonImage(icon: .alert, size: 14).foregroundStyle(Palette.danger).padding(.top, 1)
             Text(text)
                 .font(.system(size: 12))
+                .foregroundStyle(Palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
-        .foregroundStyle(.white)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.dangerFill))
+        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surfaceMuted))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.rowRadius).strokeBorder(Palette.hairline))
     }
 }
 
-/// The widest a page's column of cards gets: readable lines in a full-screen window.
-let pageWidth: CGFloat = 1040
+/// Every page is one centered column this wide at most, as in Claude and Linear: lines stay readable in a
+/// full-screen window, and every page lines up with the others.
+let pageWidth: CGFloat = 760
+
+/// Rows of one kind in a single container, split by hairlines, instead of a card per row.
+struct RowGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(Palette.hairline))
+    }
+}

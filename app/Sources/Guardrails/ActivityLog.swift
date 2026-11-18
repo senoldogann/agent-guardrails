@@ -140,7 +140,7 @@ struct ActivityList: View {
     let emptyText: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        RowGroup {
             if entries.isEmpty {
                 Text(emptyText).font(.caption).foregroundStyle(Palette.textSecondary).padding(12)
             }
@@ -149,9 +149,6 @@ struct ActivityList: View {
                 ActivityRow(entry: entry)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.rowRadius).strokeBorder(Palette.hairline))
     }
 }
 
@@ -168,7 +165,7 @@ struct ActivityRow: View {
                     .truncationMode(.tail)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(entry.outcome == .failed ? Palette.danger : Palette.textSecondary)
+                    .foregroundStyle(Palette.textSecondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
@@ -176,7 +173,7 @@ struct ActivityRow: View {
                 Button {
                     openInBrowser(entry.url)
                 } label: {
-                    Image(systemName: "arrow.up.right.square")
+                    OcticonImage(icon: .linkExternal, size: 14)
                 }
                 .buttonStyle(.borderless)
                 .help("Open on GitHub")
@@ -200,9 +197,9 @@ struct ActivitySymbol: View {
     var body: some View {
         Group {
             switch outcome {
-            case .succeeded: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
-            case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(Palette.danger)
-            case .arrived: Image(systemName: "tray.and.arrow.down").foregroundStyle(Palette.textSecondary)
+            case .succeeded: OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.textSecondary)
+            case .failed: OcticonImage(icon: .xCircle, size: 14).foregroundStyle(Palette.danger)
+            case .arrived: OcticonImage(icon: .inbox, size: 14).foregroundStyle(Palette.textSecondary)
             }
         }
         .font(.system(size: 14))

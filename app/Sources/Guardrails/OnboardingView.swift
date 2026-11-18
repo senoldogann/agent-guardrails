@@ -143,7 +143,7 @@ struct OnboardingHeader: View {
                 .frame(width: 64, height: 64)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Welcome to Guardrails").font(.system(size: 24, weight: .medium)).tracking(-0.4)
+                Text("Welcome to Guardrails").font(.displayTitle)
                 Text("Agents work within the specs you lock, and nothing merges until you approve the exact commit. A few steps make this Mac ready.")
                     .font(.system(size: 13))
                     .foregroundStyle(Palette.textSecondary)
@@ -189,9 +189,9 @@ struct OnboardingSymbol: View {
     var body: some View {
         Group {
             switch state {
-            case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
+            case .done: OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.textSecondary)
             case .todo:
-                Image(systemName: "circle").foregroundStyle(isOptional ? Palette.textSecondary : Palette.warning)
+                OcticonImage(icon: .circle, size: 14).foregroundStyle(isOptional ? Palette.textSecondary : Palette.textSecondary)
             case .checking: ProgressView().controlSize(.small)
             }
         }
