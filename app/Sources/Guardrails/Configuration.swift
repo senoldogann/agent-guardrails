@@ -53,7 +53,7 @@ struct ActionRequest: Codable, Hashable {
     let label: String
     /// Every request is its own run: a window group brings back an open window for an equal value, which
     /// would show a finished or cancelled run instead of starting a new one.
-    let run = UUID()
+    private(set) var run = UUID()
 
     var arguments: [String] {
         switch kind {
