@@ -2,18 +2,12 @@ import GuardrailsCore
 import SwiftUI
 
 /// A pull request inside the app: what it changes, its checks, history and diff, and what the owner can do
-/// with it. Approvals still go through the Review window.
-struct PullRequestWindow: View {
-    let ref: PullRequestRef
+/// with it. Approvals still go through a Review tab.
+struct PullRequestPage: View {
+    let pullRequest: PullRequestModel
     let model: AppModel
-    @State private var pullRequest: PullRequestModel
-    @State private var tab = PullRequestTab.summary
 
-    init(ref: PullRequestRef, model: AppModel) {
-        self.ref = ref
-        self.model = model
-        _pullRequest = State(initialValue: PullRequestModel(ref: ref))
-    }
+    private var ref: PullRequestRef { pullRequest.ref }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,33 +19,16 @@ struct PullRequestWindow: View {
                     .padding(Metrics.windowPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .loaded(let pr):
-                PullRequestHeader(pr: pr, ref: ref, pullRequest: pullRequest, model: model, tab: $tab)
+                PullRequestHeader(pr: pr, ref: ref, pullRequest: pullRequest, model: model)
                 Divider()
-                PullRequestTabContent(pr: pr, ref: ref, pullRequest: pullRequest, model: model, tab: tab)
+                PullRequestTabContent(pr: pr, ref: ref, pullRequest: pullRequest, model: model, tab: pullRequest.tab)
             }
         }
-        .frame(minWidth: 560, minHeight: 480)
         .background(Palette.surface)
-        .navigationTitle("#\(ref.number) · \(ref.repo)")
-        .toolbar {
-            ToolbarItemGroup {
-                if pullRequest.isLoading || pullRequest.running != nil {
-                    ProgressView().controlSize(.small)
-                }
-                Button {
-                    Task { await pullRequest.load() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .keyboardShortcut("r", modifiers: .command)
-                .help("Load the pull request again")
-                if case .loaded(let pr) = pullRequest.detail {
-                    PullRequestMenu(pr: pr, ref: ref, pullRequest: pullRequest, model: model)
-                }
-            }
+        .task {
+            // Loaded once when the tab opens; Refresh (⌘R in the page) loads it again.
+            if case .loading = pullRequest.detail { await pullRequest.load() }
         }
-        .task { await pullRequest.load() }
-        .onAppear { bringWindowsForward() }
     }
 }
 
@@ -69,14 +46,29 @@ struct PullRequestHeader: View {
     let ref: PullRequestRef
     let pullRequest: PullRequestModel
     let model: AppModel
-    @Binding var tab: PullRequestTab
 
     var body: some View {
+        @Bindable var pullRequest = pullRequest
         VStack(alignment: .leading, spacing: 10) {
-            Text(displaySafe(pr.title))
-                .font(.system(size: 18, weight: .semibold))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(displaySafe(pr.title))
+                    .font(.system(size: 18, weight: .semibold))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if pullRequest.isLoading || pullRequest.running != nil {
+                    ProgressView().controlSize(.small)
+                }
+                Button {
+                    Task { await pullRequest.load() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Load the pull request again")
+                .accessibilityLabel("Load the pull request again")
+                PullRequestMenu(pr: pr, ref: ref, pullRequest: pullRequest, model: model)
+            }
             HStack(spacing: 8) {
                 PullRequestStateChip(pr: pr)
                 Text("#\(pr.number) · \(displaySafe(pr.author?.login ?? "")) · updated \(relativeTime(pr.updatedAt))")
@@ -105,7 +97,7 @@ struct PullRequestHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
-                Picker("View", selection: $tab) {
+                Picker("View", selection: $pullRequest.tab) {
                     ForEach(PullRequestTab.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
@@ -173,7 +165,6 @@ struct PullRequestMainAction: View {
     let ref: PullRequestRef
     let pullRequest: PullRequestModel
     let model: AppModel
-    @Environment(\.openWindow) private var openWindow
     @State private var confirmsMerge = false
 
     var body: some View {
@@ -191,8 +182,7 @@ struct PullRequestMainAction: View {
                 }
         } else if pr.isOpen, !pr.isDraft, !pr.isApproved {
             Button("Review…") {
-                openWindow(id: WindowID.review, value: ActionRequest(kind: .approve, target: ref.url, label: displaySafe(pr.title)))
-                activateApp()
+                model.openReview(ActionRequest(kind: .approve, target: ref.url, label: displaySafe(pr.title)))
             }
             .primaryAction()
             .disabled(model.snapshot.hasKitInstallAlarm)
@@ -229,8 +219,12 @@ struct PullRequestMenu: View {
                 Button("Close Pull Request…", role: .destructive) { confirmsClose = true }
             }
         } label: {
-            Label("More", systemImage: "ellipsis")
+            Image(systemName: "ellipsis.circle")
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("More actions")
         .disabled(pullRequest.running != nil)
         .help("More actions")
         .confirmationDialog("Close #\(pr.number) without merging?", isPresented: $confirmsClose) {

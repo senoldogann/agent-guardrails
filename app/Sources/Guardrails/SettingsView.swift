@@ -32,17 +32,16 @@ struct SettingsView: View {
                 LabeledContent("Kit install") {
                     Text(kitPath).font(.mono).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                 }
-                Button("Show the welcome checklist…") {
-                    openWindow(id: WindowID.welcome)
-                    activateApp()
+                Button("Show the welcome checklist") {
+                    model.workspace.show(.welcome)
                 }
             }
         }
         .formStyle(.grouped)
         // Switches in graphite: the asset catalog's accent is a light gray for the sidebar selection.
         .tint(Palette.accent)
-        .frame(width: 500)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { bringWindowsForward() }
         .task { await model.recheckNotifications() }
     }

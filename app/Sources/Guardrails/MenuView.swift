@@ -6,7 +6,6 @@ import SwiftUI
 struct MenuView: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -62,15 +61,14 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
             HStack {
-                Button("Projects") {
-                    openWindow(id: WindowID.projects)
-                    activateApp()
+                Button("Open Guardrails") {
+                    openMainWindow(openWindow)
                 }
                 .secondaryAction()
                 Spacer()
                 Button {
-                    openSettings()
-                    activateApp()
+                    model.workspace.show(.settings)
+                    openMainWindow(openWindow)
                 } label: {
                     Image(systemName: "gearshape")
                 }
@@ -84,8 +82,8 @@ struct MenuView: View {
     }
 
     private func open(_ request: ActionRequest) {
-        openWindow(id: WindowID.review, value: request)
-        activateApp()
+        model.openReview(request)
+        openMainWindow(openWindow)
     }
 }
 

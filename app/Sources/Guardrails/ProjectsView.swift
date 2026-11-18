@@ -1,82 +1,16 @@
 import GuardrailsCore
 import SwiftUI
 
-/// The main window: an overview and every repository of the owner on the left, grouped by state; the
-/// selected one on the right.
-struct ProjectsView: View {
-    let model: AppModel
-    let projects: ProjectsModel
-    @State private var selection: String? = overviewSelection
-    @State private var search = ""
-    @FocusState private var searchFocused: Bool
-
-    var body: some View {
-        NavigationSplitView {
-            ProjectSidebar(projects: projects, snapshot: model.snapshot, selection: $selection, search: search)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
-        } detail: {
-            ProjectDetailContainer(model: model, projects: projects, selection: selection) { selection = $0 }
-        }
-        .searchable(text: $search, placement: .sidebar, prompt: "Search repositories")
-        .searchFocused($searchFocused)
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    Task { await refreshAll() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .keyboardShortcut("r", modifiers: .command)
-                .help("Refresh (⌘R)")
-                .disabled(projects.isLoading)
-            }
-        }
-        .background {
-            // ⌘F moves to the sidebar's search field, as in Finder and Mail.
-            Button("Search repositories") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-                .accessibilityHidden(true)
-        }
-        .toolbar(removing: .title)
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .frame(minWidth: 820, minHeight: 540)
-        .onAppear { bringWindowsForward() }
-        .task { await refreshWhileOpen() }
-    }
-
-    private func refreshAll() async {
-        await model.refresh()
-        await projects.loadProjects()
-    }
-
-    /// Loads when the window opens and every 15 minutes while it stays open.
-    private func refreshWhileOpen() async {
-        while !Task.isCancelled {
-            await projects.loadProjects()
-            do {
-                try await Task.sleep(for: projectsRefreshInterval)
-            } catch {
-                return
-            }
-        }
-    }
-}
-
-/// The Projects window reloads this often while it stays open; the toolbar's Refresh reloads at once.
-private let projectsRefreshInterval = Duration.seconds(15 * 60)
-
-/// The sidebar's Overview row; repository names are never empty, so it cannot collide with one.
-private let overviewSelection = ""
-
+/// The main window's sidebar: the overview, every repository grouped by what it needs, and settings. A
+/// click shows the page in the browse tab.
 struct ProjectSidebar: View {
     let projects: ProjectsModel
     let snapshot: InboxSnapshot
-    @Binding var selection: String?
+    @Binding var selection: WorkspacePage?
     let search: String
+    let createAgent: () -> Void
     /// Most of an owner's repositories are off; the group stays closed unless the owner opens it.
     @AppStorage("showsOffProjects") private var showsOff = false
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let groups = groupProjects(projects.projects, matching: search)
@@ -85,7 +19,7 @@ struct ProjectSidebar: View {
                 Label("Overview", systemImage: "square.grid.2x2")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
-                    .tag(overviewSelection)
+                    .tag(WorkspacePage.overview)
             }
             ProjectSection(title: "Needs you", projects: groups.needsYou, snapshot: snapshot)
             ProjectSection(title: "On", projects: groups.on, snapshot: snapshot)
@@ -93,9 +27,17 @@ struct ProjectSidebar: View {
             // A search shows its matches among the off repositories even while the group is closed.
             if !groups.off.isEmpty {
                 Section(isExpanded: Binding(get: { showsOff || !search.isEmpty }, set: { showsOff = $0 })) {
-                    ForEach(groups.off) { ProjectRow(project: $0, waiting: 0).tag($0.repo) }
+                    ForEach(groups.off) { ProjectRow(project: $0, waiting: 0).tag(WorkspacePage.repository($0.repo)) }
                 } header: {
                     Text("Off · \(groups.off.count)")
+                }
+            }
+            if search.isEmpty {
+                Section {
+                    Label("Settings", systemImage: "gearshape")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Palette.textPrimary)
+                        .tag(WorkspacePage.settings)
                 }
             }
         }
@@ -105,10 +47,7 @@ struct ProjectSidebar: View {
         }
         .safeAreaBar(edge: .bottom) {
             if let agent = projects.agent {
-                AgentPanel(agent: agent) {
-                    openWindow(id: WindowID.review, value: ActionRequest(kind: .agentCreate, target: "", label: "the agent App"))
-                    activateApp()
-                }
+                AgentPanel(agent: agent, create: createAgent)
             }
         }
     }
@@ -171,7 +110,8 @@ struct ProjectSection: View {
         if !projects.isEmpty {
             Section(title) {
                 ForEach(projects) { project in
-                    ProjectRow(project: project, waiting: waitingCount(snapshot, repo: project.repo)).tag(project.repo)
+                    ProjectRow(project: project, waiting: waitingCount(snapshot, repo: project.repo))
+                        .tag(WorkspacePage.repository(project.repo))
                 }
             }
         }
@@ -322,21 +262,6 @@ struct StateDot: View {
         case .alarm: Palette.danger
         case .ready: Palette.warning
         case .off, .noAdmin: Palette.hairline
-        }
-    }
-}
-
-struct ProjectDetailContainer: View {
-    let model: AppModel
-    let projects: ProjectsModel
-    let selection: String?
-    let select: (String) -> Void
-
-    var body: some View {
-        if let selection, let project = projects.project(named: selection) {
-            ProjectDetail(project: project, model: model, projects: projects).id(project.repo)
-        } else {
-            OverviewView(model: model, projects: projects, select: select)
         }
     }
 }

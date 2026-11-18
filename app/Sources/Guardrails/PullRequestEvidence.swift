@@ -35,6 +35,8 @@ final class PullRequestEvidence {
     /// nil when the PR changes no `specs/<ID>/`.
     private(set) var spec: Loadable<SpecDocuments>?
     private(set) var isLoading = false
+    /// The commit the evidence was last loaded for; a tab shown again does not load it twice.
+    private(set) var loadedSHA: String?
 
     func load(_ pr: PullRequestPlan) async {
         guard isValidRepoName(pr.repo), pr.sha.wholeMatch(of: /[0-9a-f]{40}/) != nil else {
@@ -44,6 +46,7 @@ final class PullRequestEvidence {
             return
         }
         isLoading = true
+        loadedSHA = pr.sha
         defer { isLoading = false }
         async let diffDone: Void = loadDiff(pr)
         async let checksDone: Void = loadChecks(pr)

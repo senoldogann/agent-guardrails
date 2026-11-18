@@ -1,16 +1,17 @@
 import GuardrailsCore
 import SwiftUI
 
-/// The review window of one action. Everything the owner reads comes from the CLI's plan event and sits on
-/// opaque surfaces; only the bottom action bar is glass.
+/// The review tab of one action. Everything the owner reads comes from the CLI's plan event and sits on
+/// opaque surfaces; only the bottom action bar is glass. The session outlives the view, so switching tabs
+/// keeps the run and its loaded checks.
 struct ReviewView: View {
-    let request: ActionRequest
-    let configuration: AppConfiguration
-    let onFinish: @MainActor @Sendable (ActionModel) -> Void
-    @State private var model: ActionModel?
-    @State private var evidence = PullRequestEvidence()
+    let session: ReviewSession
+    let close: () -> Void
     @State private var showsLog = false
-    @Environment(\.dismiss) private var dismiss
+
+    private var request: ActionRequest { session.request }
+    private var model: ActionModel? { session.action }
+    private var evidence: PullRequestEvidence { session.evidence }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,18 +29,9 @@ struct ReviewView: View {
             }
             if let model { actionBar(model) }
         }
-        .frame(minWidth: 540, minHeight: 560)
-        .task {
-            guard model == nil else { return }
-            let started = ActionModel(request: request, configuration: configuration)
-            model = started
-            started.start(onFinish: onFinish)
-        }
         .task(id: model?.plan?.pullRequest?.sha) {
-            if let pr = model?.plan?.pullRequest { await evidence.load(pr) }
+            if let pr = model?.plan?.pullRequest, evidence.loadedSHA != pr.sha { await evidence.load(pr) }
         }
-        .onAppear { bringWindowsForward() }
-        .onDisappear { model?.cancel() }
     }
 
     // MARK: plan
@@ -229,7 +221,7 @@ struct ReviewView: View {
                     .keyboardShortcut(.cancelAction)
                     .disabled(!model.canCancel)
                 } else {
-                    Button("Close") { dismiss() }
+                    Button("Close", action: close)
                         .buttonStyle(.glass)
                         .keyboardShortcut(.cancelAction)
                 }

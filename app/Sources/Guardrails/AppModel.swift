@@ -18,6 +18,8 @@ final class AppModel {
     let projects: ProjectsModel?
     /// What the owner did in the app and what arrived for them, kept on this Mac.
     let activity = ActivityLog()
+    /// The main window's tabs.
+    let workspace = Workspace()
     private(set) var snapshot = InboxSnapshot.empty
     private(set) var loadState = LoadState.idle
     private(set) var lastError: String?
@@ -96,6 +98,12 @@ final class AppModel {
     /// Asks macOS again whether it shows the app's notifications, e.g. after the owner changed the setting.
     func recheckNotifications() async {
         notificationsShown = await notificationsAreShown()
+    }
+
+    /// Starts an action in a Review tab of the main window. The caller opens the window.
+    func openReview(_ request: ActionRequest) {
+        guard case .success(let found) = configuration else { return }
+        workspace.showReview(request, configuration: found) { [weak self] action in self?.actionFinished(action) }
     }
 
     /// Logs how a Review window's action ended and refreshes what it changed.
