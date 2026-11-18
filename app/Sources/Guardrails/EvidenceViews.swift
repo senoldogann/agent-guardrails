@@ -27,7 +27,8 @@ struct ChecksCard: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    SectionLabel(text: "Checks on \(pr.shortSHA)")
+                    SectionLabel(text: "Checks")
+                    SHABadge(sha: pr.shortSHA)
                     Spacer()
                     if evidence.isLoading {
                         ProgressView().controlSize(.mini)
