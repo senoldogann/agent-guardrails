@@ -41,6 +41,9 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- `ci-run` no longer risks dying of SIGPIPE while it looks for a draft spec, and the kit drift check stops on
+  a `diff` error instead of reporting no drift.
+- `install.sh` also checks for `curl` and `openssl`, which creating the agent App needs.
 - Sidebar repository names are drawn as primary text again (they were dimmer than the line below them), and
   the agent App panel shows the App's full name.
 - While the Projects window or a Review window is open, the app has a Dock icon and a place in Cmd-Tab, so a
@@ -49,6 +52,21 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - bash-guard no longer blocks every command that mentions topics together with a path or repository named
   `agent-guardrails` (such as a search in the kit's own clone, or setting the kit repository's topics); it
   still blocks adding, removing or searching the `agent-guardrails` topic itself.
+
+### Security
+
+- The workflow permission scan (ci-guard, `approve-head`, `guardrails on`) now finds a check or status write
+  grant in every one-line YAML spelling (quoted, `!!str`, flow mapping) and a write value on its own line;
+  ci-guard also refuses YAML tags in workflows a PR changes, so `name: !!str guard` cannot pass as a job name.
+- `approve-head` counts only a guard run of this PR into the default branch; another PR with the same head into
+  a branch the agent can push to runs that branch's `agent-guard.yml`.
+- `approve-head` marks guardrail files (`.agent/`, `.claude/`, other `.github/` files, Makefiles, code
+  owners) `!!` like workflows and asks for the second confirmation for them too.
+- The file list of a PR must be complete: a page that fails or GitHub's 3000-file cap stops the approval.
+- Checking the kit install against its origin passes git the origin's URL, so the remote's settings (an
+  upload program) cannot run; only an https GitHub or local path origin is accepted.
+- ci-guard refuses changed file names with control characters or backticks, which could forge lines of the
+  step summary.
 
 ## [0.3.0] - 2026-11-17
 

@@ -349,11 +349,13 @@ topic_alarms() {
 }
 
 kit_install_alarm() {
-  local local_sha remote_sha
+  local local_sha remote_sha origin
   [[ -z $(kit_local_changes) ]] ||
     printf 'alarm\037\037\037\037the kit install at %s has local changes: on, off and approve refuse until it is clean\n' "$kit"
   local_sha=$(kit_git rev-parse HEAD)
-  if ! remote_sha=$(kit_git ls-remote origin refs/heads/main 2>/dev/null | cut -f1) || [[ -z $remote_sha ]]; then
+  if ! origin=$(kit_origin 2>/dev/null); then
+    printf 'alarm\037\037\037\037the kit install at %s has an origin that is not https://github.com/<owner>/<repo>: on, off and approve refuse until you fix it\n' "$kit"
+  elif ! remote_sha=$(kit_remote_git ls-remote "$origin" refs/heads/main 2>/dev/null | cut -f1) || [[ -z $remote_sha ]]; then
     printf 'note\037\037\037\037could not reach the kit origin to compare the install with its main\n'
   elif [[ $local_sha != "$remote_sha" ]]; then
     # The title "update" tells the app to offer its Update button for this alarm.

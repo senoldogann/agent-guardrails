@@ -366,6 +366,26 @@ printf 'on: pull_request\npermissions:\n  checks: write\njobs:\n  lint:\n    run
 git add -A
 git commit -qm token
 expect_failure "workflow with a check-writing token fails" ci_guard chore/checks-token chore/checks-token main
+git checkout -q -b chore/quoted-token main
+mkdir -p .github/workflows
+printf 'on: pull_request\npermissions:\n  statuses: "write"\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make lint\n' >.github/workflows/lint.yml
+git add -A
+git commit -qm quoted
+expect_failure "a quoted status-writing token fails" ci_guard chore/quoted-token chore/quoted-token main
+expect_out "the quoted grant is explained" "requests a write permission"
+git checkout -q -b chore/tagged-name main
+mkdir -p .github/workflows
+printf 'on: pull_request\njobs:\n  lint:\n    name: !!str guard\n    runs-on: ubuntu-latest\n    steps:\n      - run: make lint\n' >.github/workflows/lint.yml
+git add -A
+git commit -qm tagged
+expect_failure "a tagged job name fails" ci_guard chore/tagged-name chore/tagged-name main
+expect_out "the tag is explained" "uses a YAML tag"
+git checkout -q -b chore/fenced-name main
+printf 'x\n' >'notes```.md'
+git add -A
+git commit -qm fenced
+expect_failure "a file name with a backtick fails" ci_guard chore/fenced-name chore/fenced-name main
+expect_out "the name is explained" "control character or backtick"
 git checkout -q -b chore/kit-checks main
 mkdir -p .github/workflows
 cp "$kit/skills/guardrails-init/template/ci/checks-node.yml" .github/workflows/

@@ -39,10 +39,13 @@ mode=$(approval_mode "$repo") || exit 1
   die "the agent-guardrails rulesets on $repo are missing, inactive or changed, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
 
 # The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
-# from any check run named "guard": a workflow added by the PR could report a check run of that name.
-guard=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target&per_page=100" \
-  --jq '[.workflow_runs[] | select(.path == ".github/workflows/agent-guard.yml")] | sort_by(.created_at) | last | .conclusion // "missing"')
-[[ $guard == success ]] || die "guard run for $sha is '$guard'; wait for it or fix the PR"
+# from any check run named "guard": a workflow added by the PR could report a check run of that name. The run
+# must belong to this PR into the default branch: another PR with the same head into a branch the agent can
+# push to would run that branch's own agent-guard.yml (see guard_conclusion).
+guard_runs=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target&per_page=100") ||
+  die "cannot read the guard runs of $sha; nothing approved"
+guard=$(guard_conclusion "$pr" "$default_branch" <<<"$guard_runs")
+[[ $guard == success ]] || die "guard run of PR #$pr into $default_branch at $sha is '$guard'; wait for it or fix the PR"
 
 # Read in full before the loop: a failed listing or download must stop the approval, not skip the scan.
 workflows=$(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path') ||
@@ -73,15 +76,14 @@ while IFS= read -r file; do
   [[ -n $file ]] || continue
   marker="  "
   if is_human_owned "$file"; then marker="! "; fi
-  case $file in .github/workflows/* | .github/actions/*)
+  if changes_enforcement "$file"; then
     marker="!!"
     workflow_changes+="$file "
-    ;;
-  esac
+  fi
   printf '%s %s\n' "$marker" "$file"
   marked+="${marker// /}"$'\t'"$file"$'\n'
 done <<<"$files"
-printf '\n(! human-owned, !! workflow: can change what CI enforces)\n'
+printf '\n(! human-owned, !! workflow or guardrail file: can change what CI enforces)\n'
 
 short=${sha:0:7}
 emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
@@ -93,7 +95,7 @@ else
   confirm commit "$short" "Type $short to approve merging exactly this commit: "
 fi
 if [[ -n $workflow_changes ]]; then
-  confirm workflows workflows "Workflow files change ($workflow_changes). Type 'workflows' to confirm you reviewed them: "
+  confirm workflows workflows "Workflow or guardrail files change ($workflow_changes). Type 'workflows' to confirm you reviewed them: "
 fi
 
 if [[ $mode == status ]]; then

@@ -18,7 +18,8 @@ kit=$(cd "$(dirname "$0")" && pwd -P)
 
 # Everything the install needs is checked before anything changes, so a failed run leaves no half install.
 missing=""
-for tool in git gh jq; do
+# curl and openssl sign the agent App's requests (creating the App and the agent-identity hook).
+for tool in git gh jq curl openssl; do
   command -v "$tool" >/dev/null || missing="$missing $tool"
 done
 [[ -z $missing ]] || {

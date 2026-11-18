@@ -23,7 +23,8 @@ spec_commit=$(git rev-list -n 1 "$base..$head" -- 'specs/*/spec.lock')
 status=0
 
 if [[ -z $spec_commit ]]; then
-  draft_ticket=$(git diff --name-only "$base" "$head" -- specs | awk -F/ 'NF >= 3 { print $2; exit }')
+  # awk reads to the end: exiting at the first match would make git diff die of SIGPIPE under pipefail.
+  draft_ticket=$(git diff --name-only "$base" "$head" -- specs | awk -F/ 'NF >= 3 && first == "" { first = $2 } END { print first }')
   if [[ -n $draft_ticket && ! -f "specs/$draft_ticket/spec.lock" ]]; then
     printf '=== draft gate for %s (spec not locked yet; the guard keeps this PR unmergeable) ===\n' "$draft_ticket"
     make --no-print-directory check-draft SPEC_TICKET="$draft_ticket" || status=1
