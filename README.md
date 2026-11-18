@@ -36,9 +36,12 @@ flowchart LR
   implementation. The owner answers the questions; the spec and the test IDs are then locked by hash.
 - **Implement phase:** a local write-guard lets the agent change only the files listed in the ticket's
   `write-allow`, and a stop hook keeps it working until `make check` passes.
-- **CI:** `ci-guard` runs from the default branch through `pull_request_target`, reads the PR only as data and
-  fails it for changed locked files, tests or CI configuration, merge commits, symlinks and similar.
-  Language checks run the type checker, linter, tests and a mutation gate on the changed code.
+- **CI:** `ci-guard` runs from the default branch through `pull_request_target` and reads the PR only as data.
+  It fails a PR that changes locked spec files or tests without a new lock, adds a workflow that could stand
+  in for a required check, or carries merge commits, symlinks and similar. Changes to the guardrails
+  themselves (`.agent/`, the Makefile, workflows) are listed for the owner, who confirms them separately when
+  approving; they do not fail the guard, because kit updates change them. Language checks run the type
+  checker, linter, tests and a mutation gate on the changed code.
 - **Approval:** a ruleset requires the guard, the checks and the owner's approval of the PR's current HEAD. A
   push after the approval needs a new one.
 
@@ -127,8 +130,9 @@ merges a PR that removes the kit's files; the repository settings stay.
 - **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
   computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a
   container or in CI with only the App's token.
-- Other administrators of a repository can change or remove its rulesets; the inbox raises an alarm when the
-  rulesets or the list of enforced repositories stop matching.
+- Other administrators of a repository can change or remove its rulesets. The inbox raises an alarm when the
+  main agent-guardrails ruleset is not active or the list of enforced repositories stops matching; it does
+  not yet compare the rulesets' contents (required checks, bypass list) or the review and tag rulesets.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 

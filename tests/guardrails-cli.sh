@@ -95,6 +95,31 @@ edited (kit include removed; targets that called .agent/ scripts need a look): M
 kept (decided requirements stay as documentation): specs/"
 if grep -F 'include .agent/common.mk' "$project/Makefile" >/dev/null; then fail "kit include left in Makefile"; else ok; fi
 
+echo "grants_check_or_status_writes"
+# Every spelling of a grant is found; read access, comments and look-alike keys are not.
+while IFS= read -r spelling; do
+  if printf 'permissions:\n%b\n' "$spelling" | grants_check_or_status_writes; then ok; else fail "missed a grant: $spelling"; fi
+done <<'EOF'
+  checks: write
+  statuses: "write"
+  checks: 'write'
+  statuses: !!str write
+  statuses:\n    write
+  statuses: >-\n    write
+  {statuses: write, contents: read}
+  "checks": write
+permissions: "write-all"
+EOF
+while IFS= read -r spelling; do
+  if printf 'permissions:\n%b\n' "$spelling" | grants_check_or_status_writes; then fail "false grant: $spelling"; else ok; fi
+done <<'EOF'
+  checks: read
+  statuses: none
+  contents: write
+  # statuses: write
+jobs:\n  checks:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm run write-docs
+EOF
+
 echo "classify_prs"
 fixture='[
  {"url":"u1","title":"spec(A-1): x","isDraft":true,"labels":[{"name":"needs-decision"}],"statusCheckRollup":[]},
@@ -187,6 +212,10 @@ case $args in
   "search prs "*) printf 'acme/new\thttps://github.com/acme/new/pull/1\tchore: install the kit\n' ;;
   "api --paginate repos/acme/shop/pulls/1/files"*) printf 'src/a.ts\n' ;;
   "api --paginate repos/acme/shop/pulls/2/files"*) printf 'src/a.ts\ncontrol-character src/??fake\n' ;;
+  "api --paginate repos/acme/shop/pulls/3/files"*) printf 'src/a.ts\n' ;;
+  "api --paginate repos/acme/shop/pulls/4/files"*) printf 'src/a.ts\n'; echo "HTTP 502" >&2; exit 1 ;;
+  "api repos/acme/shop/pulls/1 --jq .changed_files" | "api repos/acme/shop/pulls/4 --jq .changed_files") echo 1 ;;
+  "api repos/acme/shop/pulls/3 --jq .changed_files") echo 3001 ;;
   *) echo "fake gh: unexpected call: $args" >&2; exit 1 ;;
 esac
 FAKE
@@ -240,6 +269,29 @@ expect_eq "plain file names pass" "$(PATH="$fake_bin:$PATH" pr_files acme/shop 1
 if (PATH="$fake_bin:$PATH" pr_files acme/shop 2 >/dev/null 2>&1); then
   fail "a file name with control characters must be refused"
 else ok; fi
+if (PATH="$fake_bin:$PATH" pr_files acme/shop 3 >/dev/null 2>&1); then
+  fail "a list shorter than the PR's count of changed files must be refused"
+else ok; fi
+if (PATH="$fake_bin:$PATH" pr_files acme/shop 4 >/dev/null 2>&1); then
+  fail "a listing that failed on a later page must be refused"
+else ok; fi
+
+echo "changes_enforcement"
+for path in .github/workflows/ci.yml .github/CODEOWNERS .agent/bin/run-checks .claude/settings.json Makefile \
+  sub/Makefile .agent/common.mk CODEOWNERS; do
+  if changes_enforcement "$path"; then ok; else fail "$path changes what CI enforces"; fi
+done
+for path in src/Makefile.ts specs/A-1/spec.lock README.md; do
+  if changes_enforcement "$path"; then fail "$path does not change what CI enforces"; else ok; fi
+done
+
+echo "guard_conclusion"
+runs='{"workflow_runs":[
+ {"path":".github/workflows/agent-guard.yml","created_at":"2026-01-01T00:00:00Z","conclusion":"failure","pull_requests":[{"number":5,"base":{"ref":"main"}}]},
+ {"path":".github/workflows/agent-guard.yml","created_at":"2026-01-02T00:00:00Z","conclusion":"success","pull_requests":[{"number":6,"base":{"ref":"scratch"}}]},
+ {"path":".github/workflows/lookalike.yml","created_at":"2026-01-03T00:00:00Z","conclusion":"success","pull_requests":[{"number":5,"base":{"ref":"main"}}]}]}'
+expect_eq "a newer run of another PR into another branch does not count" "$(guard_conclusion 5 main <<<"$runs")" "failure"
+expect_eq "a PR with no guard run into the default branch is missing" "$(guard_conclusion 6 main <<<"$runs")" "missing"
 
 echo "kit install checks"
 fake_kit="$work/fake-kit"
@@ -260,6 +312,21 @@ rm "$fake_kit/new-tool"
 git -C "$fake_kit" config core.fsmonitor "touch $work/fsmonitor-ran; false"
 kit=$fake_kit kit_local_changes >/dev/null 2>&1 || true
 if [[ -e "$work/fsmonitor-ran" ]]; then fail "core.fsmonitor ran while checking the install"; else ok; fi
+git -C "$fake_kit" config --unset core.fsmonitor
+# The origin is an https GitHub repository or a local path; the remote's upload program never runs, and a
+# rewrite to the ext transport is refused.
+git init -q --bare "$work/mirror"
+git -C "$fake_kit" remote add origin "$work/mirror"
+git -C "$fake_kit" config remote.origin.uploadpack "touch $work/uploadpack-ran; git-upload-pack"
+kit=$fake_kit kit_remote_git ls-remote "$(kit=$fake_kit kit_origin)" >/dev/null
+if [[ -e "$work/uploadpack-ran" ]]; then fail "checking the origin ran the remote's upload program"; else ok; fi
+git -C "$fake_kit" remote set-url origin "ext::sh -c touch% $work/ext-ran"
+if (kit=$fake_kit kit_origin >/dev/null 2>&1); then fail "an ext:: origin must not be accepted"; else ok; fi
+git -C "$fake_kit" remote set-url origin https://github.com/acme/agent-guardrails.git
+expect_eq "an https GitHub origin is accepted" "$(kit=$fake_kit kit_origin)" "https://github.com/acme/agent-guardrails.git"
+git -C "$fake_kit" config url."ext::sh -c touch% $work/ext-ran".insteadOf https://github.com/acme/agent-guardrails.git
+kit=$fake_kit kit_remote_git ls-remote "$(kit=$fake_kit kit_origin)" >/dev/null 2>&1 || true
+if [[ -e "$work/ext-ran" ]]; then fail "a rewrite to the ext transport ran a program"; else ok; fi
 
 echo "project bash-guard shim"
 shim="$template/.agent/hooks/bash-guard.sh"

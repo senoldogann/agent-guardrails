@@ -14,10 +14,14 @@ kit_drift() {
     printf 'missing: .agent/\n'
     return 0
   }
-  diff -rq "$template/.agent" "$dir/.agent" | sed -E \
+  # diff exits 1 when the trees differ (reported below) and 2 when it could not compare them (an error).
+  local differences status=0
+  differences=$(diff -rq "$template/.agent" "$dir/.agent") || status=$?
+  [[ $status -le 1 ]] || die "could not compare $dir/.agent with the kit template (diff exit $status)"
+  [[ -z $differences ]] || sed -E \
     -e "s#^Files $template/(.*) and .* differ\$#differs from the kit: \\1#" \
     -e "s#^Only in $template/(.*): (.*)\$#missing: \\1/\\2#" \
-    -e "s#^Only in $dir/(.*): (.*)\$#not in the kit: \\1/\\2#" || true
+    -e "s#^Only in $dir/(.*): (.*)\$#not in the kit: \\1/\\2#" <<<"$differences"
   # diff and cmp follow symlinks and ignore modes, so check both separately.
   find "$dir/.agent" "$dir/.claude" "$dir/.github" -type l 2>/dev/null | sed "s#^$dir/#symlink not allowed: #"
   (cd "$template" && find .agent -type f) | while IFS= read -r file; do
@@ -40,10 +44,27 @@ kit_drift() {
   [[ $found -eq 1 ]] || printf 'missing: .github/workflows/checks-<lang>.yml\n'
 }
 
-# Git on the kit install without the repository settings that run programs (fsmonitor, hooks, pager), so
-# checking the install cannot itself execute code someone left in its .git/config.
+# Git on the kit install without the repository settings that run programs locally (fsmonitor, hooks, pager).
+# Talking to the origin needs kit_remote_git as well: a remote's settings can run programs too.
 kit_git() {
   git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -C "$kit" "$@"
+}
+
+# The kit origin's URL from the install's config: an https GitHub repository, or an absolute path to a local
+# clone (tests, mirrors). Git is then given this URL, never the remote's name, so the remote's other settings
+# (such as an upload program, which git would run) do not apply.
+kit_origin() {
+  local url
+  url=$(kit_git remote get-url origin) || die "the kit install at $kit has no origin remote"
+  [[ $url =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ || ($url == /* && $url != *::*) ]] ||
+    die "the kit install's origin is '$url', not https://github.com/<owner>/<repo>. Fix it with: git -C $kit remote set-url origin https://github.com/<owner>/agent-guardrails.git"
+  printf '%s\n' "$url"
+}
+
+# Git against the kit origin's URL: the ext transport is off, so a URL rewrite in the config (url.*.insteadOf)
+# cannot turn the fetch into a program, and no credential helper runs.
+kit_remote_git() {
+  kit_git -c protocol.ext.allow=never -c credential.helper= "$@"
 }
 
 # Prints the kit install's local changes, one per line: edits and untracked files (whatever the repository
@@ -54,9 +75,33 @@ kit_local_changes() {
 }
 
 # Succeeds when the workflow on stdin lets its token write check runs or commit statuses (and so could fake a
-# required check or an approval): `checks: write`, `statuses: write` or `write-all`.
+# required check or an approval): `checks: write`, `statuses: write` or `write-all`, in every spelling YAML
+# allows on a line (quoted, tagged `!!str`, inside a flow mapping). A line holding nothing but a write value
+# (the value of a key on an earlier line) counts too, so the check fails closed. ci-guard's copy of these
+# patterns must stay the same.
 grants_check_or_status_writes() {
-  grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null
+  grep -Ei -e "^[^#]*(checks|statuses)[\"']?[[:space:]]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)" -e "^[[:space:]]*(:[[:space:]]*)?(-[[:space:]]+)?(!!str[[:space:]]+)?[\"']?write(-all)?[\"']?[[:space:]]*(#.*)?$" -e 'write-all' >/dev/null
+}
+
+# Succeeds for a changed file that can change what CI enforces: workflows and other GitHub config, the
+# guardrails themselves (.agent/, .claude/), the Makefiles CI runs, and code owners. approve-head marks these
+# "!!" and asks for a second confirmation.
+changes_enforcement() {
+  case $1 in
+    .github/* | .agent/* | .claude/* | Makefile | */Makefile | *.mk | CODEOWNERS | docs/CODEOWNERS) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Reads `GET repos/{repo}/actions/runs?head_sha=…&event=pull_request_target` on stdin and prints the
+# conclusion of the newest agent-guard.yml run of PR $1 into branch $2, or "missing". A pull_request_target run
+# uses the workflow of its base branch, so only a run into the default branch counts. GitHub lists the PR of
+# a run only for PRs from the same repository; PRs from forks are not supported.
+guard_conclusion() {
+  jq -r --argjson pr "$1" --arg base "$2" '
+    [.workflow_runs[] | select(.path == ".github/workflows/agent-guard.yml"
+      and any(.pull_requests[]?; .number == $pr and .base.ref == $base))]
+    | sort_by(.created_at) | last | .conclusion // "missing"'
 }
 
 # Dies in the agent's environment: the agent's sessions set a GitHub token or point gh at the agent App's
@@ -71,11 +116,11 @@ require_owner_environment() {
 # a change an agent made there must not silently become the reference.
 require_reviewed_kit() {
   local local_sha remote_sha origin
-  origin=$(kit_git remote get-url origin)
+  origin=$(kit_origin)
   [[ -z $(kit_local_changes) ]] ||
     die "the kit install at $kit has local changes, so this command may not be the reviewed one. Inspect them with: git -C $kit status"
   local_sha=$(kit_git rev-parse HEAD)
-  remote_sha=$(kit_git ls-remote origin refs/heads/main | cut -f1) ||
+  remote_sha=$(kit_remote_git ls-remote "$origin" refs/heads/main | cut -f1) ||
     die "could not reach $origin to confirm the kit install is its reviewed main"
   [[ -n $remote_sha ]] || die "$origin has no main branch"
   [[ $local_sha == "$remote_sha" ]] ||
@@ -84,12 +129,19 @@ require_reviewed_kit() {
 
 # Prints the files a PR changes, one per line; dies when GitHub cannot list them or when a file name holds a
 # control character. Names are written by the agent, and a newline or escape sequence in one could forge
-# lines of the review the owner reads (or a confirmation prompt the app answers).
+# lines of the review the owner reads (or a confirmation prompt the app answers). The list must be complete: a
+# page that fails midway, or GitHub's cap of 3000 files, would hide files from the review, so the count is
+# compared with the PR's own count of changed files.
 pr_files() {
-  local files unsafe
+  local files unsafe expected count
   files=$(gh api --paginate "repos/$1/pulls/$2/files?per_page=100" \
-    --jq '.[].filename | if test("[[:cntrl:]]") then "control-character " + gsub("[[:cntrl:]]"; "?") else . end')
+    --jq '.[].filename | if test("[[:cntrl:]]") then "control-character " + gsub("[[:cntrl:]]"; "?") else . end') ||
+    die "could not list the files of PR #$2 in $1"
   [[ -n $files ]] || die "could not list the files of PR #$2 in $1"
+  expected=$(gh api "repos/$1/pulls/$2" --jq .changed_files) || die "could not read PR #$2 in $1"
+  count=$(grep -c '' <<<"$files")
+  [[ $count == "$expected" ]] ||
+    die "GitHub listed $count of the $expected files PR #$2 in $1 changes (it lists at most 3000); refuse to show or approve a partial list. Split the PR."
   unsafe=$(grep '^control-character ' <<<"$files" || true)
   [[ -z $unsafe ]] || die "PR #$2 in $1 has file names with control characters; refuse to show or approve it:
 ${unsafe//control-character /  }"
@@ -449,12 +501,13 @@ kit_file_at() {
 # install.sh again and, on macOS with the app installed, rebuilds the app. Refuses local changes, a branch
 # other than main, and an origin main that does not contain the installed commit.
 kit_update() {
-  local current target commits from_version to_version
+  local origin current target commits from_version to_version
   [[ -z $(kit_local_changes) ]] ||
     die "the kit install at $kit has local changes, so it cannot be fast-forwarded. Inspect them with: git -C $kit status"
   [[ $(kit_git symbolic-ref --quiet --short HEAD) == main ]] ||
     die "the kit install at $kit is not on main. Switch it with: git -C $kit switch main"
-  kit_git fetch --quiet origin main || die "cannot fetch main from $(kit_git remote get-url origin)"
+  origin=$(kit_origin)
+  kit_remote_git fetch --quiet "$origin" main || die "cannot fetch main from $origin"
   current=$(kit_git rev-parse HEAD)
   target=$(kit_git rev-parse FETCH_HEAD)
   if [[ $current == "$target" ]]; then

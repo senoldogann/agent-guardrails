@@ -35,6 +35,12 @@ merges=$(git rev-list --merges "$base..$head")
 changed=""
 while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
   new_mode=$(cut -d' ' -f2 <<<"$meta")
+  # Names are written by the agent and end up in this output, the step summary and the owner's review: a
+  # newline, an escape sequence or a backtick (a Markdown fence) could forge lines there.
+  if [[ $path == *[[:cntrl:]\`]* ]]; then
+    fail "file name with a control character or backtick not allowed: $(LC_ALL=C tr -d '\000-\037\177' <<<"$path")"
+    continue
+  fi
   case $new_mode in
     000000 | 100644 | 100755) ;;
     120000) fail "symlink not allowed: $path" ;;
@@ -57,11 +63,17 @@ done < <(git diff --raw -z --no-renames "$base" "$head")
 # mappings, anchors, block-scalar names). The guard workflow itself only runs from the default branch
 # (pull_request_target), so its trigger may not change. Unchanged workflows may not write checks or
 # statuses either, because pull_request runs execute the PR's code with their token.
+# A line holding nothing but a write value: the value of a key on an earlier line (`statuses:` then `  write`).
+write_value_line="^[[:space:]]*(:[[:space:]]*)?(-[[:space:]]+)?(!!str[[:space:]]+)?[\"']?write(-all)?[\"']?[[:space:]]*(#.*)?$"
+# checks or statuses granted write, in every spelling YAML allows on a line; the same patterns as
+# grants_check_or_status_writes in the kit's guardrails-lib.sh.
+check_or_status_write="^[^#]*(checks|statuses)[\"']?[[:space:]]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)"
 workflow_problems() {
   local path=$1 content=$2 name=${1##*/} own_job="" ids
   [[ $name == checks-*.yml ]] && own_job=${name%.yml}
-  grep -Eiq '^[^#]*:[[:space:]]*write([[:space:]]|#|$)|write-all' <<<"$content" &&
+  grep -Eiq -e "^[^#]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)" -e "$write_value_line" -e 'write-all' <<<"$content" &&
     printf 'requests a write permission for its token (workflows changed by a PR stay read-only)\n'
+  grep -Eq '(^|[[:space:]])!![A-Za-z]' <<<"$content" && printf 'uses a YAML tag\n'
   # shellcheck disable=SC1003 # the backslashes are literal regex characters
   grep -Eq '^[[:space:]]+name:[^#]*\\|^[[:space:]]+["'\''][^"'\'']*\\' <<<"$content" && printf 'escapes characters in a name\n'
   grep -Eq '^[^#]*:[[:space:]]*\{([^{]|$)' <<<"$content" && printf 'uses a YAML flow mapping\n'
@@ -95,7 +107,7 @@ while IFS= read -r path; do
 done <<<"$changed"
 while IFS= read -r path; do
   [[ $path == .github/workflows/*.yml || $path == .github/workflows/*.yaml ]] || continue
-  if git show "$head:$path" | grep -Ei '(checks|statuses):[[:space:]]*write|write-all' >/dev/null; then
+  if git show "$head:$path" | grep -Ei -e "$check_or_status_write" -e "$write_value_line" -e 'write-all' >/dev/null; then
     fail "workflow $path lets its token write checks or statuses, which could fake a required check"
   fi
 done < <(git ls-tree -r --name-only "$head" -- .github/workflows)
