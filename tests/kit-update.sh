@@ -39,6 +39,9 @@ git clone -q "$work/origin.git" "$work/install"
 git -C "$work/install" reset -q --hard HEAD~1
 target=$(git -C "$work/origin.git" rev-parse main)
 kit="$work/install"
+# A throwaway HOME for every run: the owner's own Claude Code settings must not decide these cases.
+export HOME="$work/home"
+mkdir -p "$HOME/.claude"
 source "$here/skills/guardrails-init/template/.agent/bin/lib.sh"
 source "$here/bin/guardrails-lib.sh"
 export GUARDRAILS_EVENTS_FD=3
@@ -69,6 +72,12 @@ git -C "$kit" -c user.name=t -c user.email=t@example.invalid commit -q --allow-e
 expect_eq "a diverged main is refused" "$(run_update | tail -1)" \
   "error: main of the kit origin does not contain the installed commit $(git -C "$kit" rev-parse --short=7 HEAD); inspect it before updating"
 git -C "$kit" reset -q --hard "$before"
+
+printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/elsewhere/kit/hooks-global/bash-guard.sh"}]}]}}\n' \
+  >"$HOME/.claude/settings.json"
+expect_eq "a clone that is not the active install is refused" "$(run_update | tail -1)" \
+  "error: the active kit install is /elsewhere/kit (its bash-guard runs in Claude Code), not $kit; update that one: /elsewhere/kit/bin/guardrails update"
+rm "$HOME/.claude/settings.json"
 
 confirm() { accept; }
 home="$work/home"

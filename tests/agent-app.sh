@@ -97,6 +97,25 @@ identity_out=$(jq -n --arg d "$kit_repo" '{cwd: $d, hook_event_name: "SessionSta
   identity_status=0 || identity_status=$?
 expect_eq "no App: no output, no exports" "$identity_status [$identity_out] $(cat "$work/env-file" 2>/dev/null | wc -l | tr -d ' ')" "0 [] 0"
 
+# With a registered App, gh and git push in a kit repository need this session's identity to be set up for it.
+git -C "$kit_repo" remote add origin https://github.com/acme/shop.git
+app_home="$work/app-home"
+mkdir -p "$app_home/.config/agent-guardrails/agent"
+printf '{"slug":"agent"}\n' >"$app_home/.config/agent-guardrails/agent/app.json"
+printf 'key\n' >"$app_home/.config/agent-guardrails/agent/private-key.pem"
+pre_tool() {
+  jq -n --arg d "$kit_repo" --arg s "$1" --arg c "$2" \
+    '{cwd: $d, session_id: $s, hook_event_name: "PreToolUse", tool_input: {command: $c}}' |
+    HOME="$app_home" "$kit/hooks-global/agent-identity.sh" >/dev/null 2>&1 && printf '0' || printf '%s' "$?"
+}
+expect_eq "a session started elsewhere cannot reach GitHub here" \
+  "$(pre_tool s1 'gh pr create --fill') $(pre_tool s1 'git -C . push origin x') $(pre_tool s1 'make check')" "2 2 0"
+mkdir -p "$app_home/.config/agent-guardrails/agent/sessions/by-id"
+printf 'acme/other\n' >"$app_home/.config/agent-guardrails/agent/sessions/by-id/s1"
+printf 'acme/shop\n' >"$app_home/.config/agent-guardrails/agent/sessions/by-id/s2"
+expect_eq "nor one set up for another repository; the session set up here can" \
+  "$(pre_tool s1 'gh pr view 1') $(pre_tool s2 'gh pr view 1') $(pre_tool '' 'gh pr view 1')" "2 0 2"
+
 # The registration flow without a browser: the local page posts the manifest with this server as the redirect
 # and the state GitHub must echo; the callback with that state prints the code, another state fails.
 flow() {

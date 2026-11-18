@@ -207,8 +207,10 @@ case $args in
   "api user --jq .login") echo owner ;;
   "search repos "*) printf 'acme/shop\nacme/lost\n' ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
+  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-tags")'*) echo 9 ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*) echo "" ;;
-  "api repos/acme/shop/rulesets/7") echo '{"id":7,"name":"agent-guardrails","enforcement":"active","rules":[]}' ;;
+  "api repos/acme/shop/rulesets/7") cat "$FAKE_RULESETS/branch.json" ;;
+  "api repos/acme/shop/rulesets/9") cat "$FAKE_RULESETS/tag.json" ;;
   "api --paginate repos/acme/off/rulesets"* | "api --paginate repos/acme/broken/rulesets"*) echo "" ;;
   "pr list -R acme/broken "*) echo "HTTP 502" >&2; exit 1 ;;
   "pr list -R acme/shop "*) cat "$FAKE_PRS" ;;
@@ -225,6 +227,11 @@ esac
 FAKE
 chmod +x "$fake_bin/gh"
 printf '%s' "$fixture" >"$work/prs.json"
+# acme/shop's live rulesets are the kit's own, in status mode.
+export FAKE_RULESETS="$work/rulesets"
+mkdir -p "$FAKE_RULESETS"
+status_mode_ruleset agent-guardrails "$(pinned_checks checks-node)" | jq -c '. + {id: 7}' >"$FAKE_RULESETS/branch.json"
+tag_ruleset agent-guardrails-tags | jq -c '. + {id: 9}' >"$FAKE_RULESETS/tag.json"
 fake_home="$work/fake-home"
 mkdir -p "$fake_home/.config/agent-guardrails"
 printf 'acme/shop\nacme/off\n' >"$fake_home/.config/agent-guardrails/repos"
@@ -232,7 +239,7 @@ run_cli() { HOME=$fake_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$k
 # Lines about the kit install itself depend on this checkout and the network; the tests skip them.
 inbox_text=$(run_cli inbox | grep -v 'kit install\|kit origin')
 expect_eq "inbox text" "$inbox_text" "ALARM  acme/lost carries the agent-guardrails topic but is not in $fake_home/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost
-ALARM  acme/off: ruleset missing. If you did not change it, check the audit log; restore with: guardrails on acme/off
+ALARM  acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off
 
 acme/shop
   answer   spec(A-1): x
@@ -256,7 +263,7 @@ expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"
 {"kind":"wait","repo":"acme/shop","url":"u6","title":"feat(A-6): new","note":"guard is running"}
 {"kind":"approve","repo":"acme/shop","url":"u7","title":"feat(A-7): revoked","note":"checks green"}
 {"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing"}
-{"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: ruleset missing. If you did not change it, check the audit log; restore with: guardrails on acme/off"}
+{"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off"}
 {"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":""}'
 
 broken_home="$work/broken-home"
@@ -343,6 +350,30 @@ run_shim() {
   printf '%s' $?
   set -e
 }
+echo "ruleset_problems"
+checks=$(pinned_checks checks-node)
+review_mode=$(jq -n -c --argjson b "$(branch_ruleset agent-guardrails "$checks")" \
+  --argjson v "$(review_ruleset agent-guardrails-review)" --argjson t "$(tag_ruleset agent-guardrails-tags)" \
+  '{branch: $b, review: $v, tag: $t}')
+expect_eq "the kit's own rulesets in review mode hold" "$(ruleset_problems <<<"$review_mode")" ""
+expect_eq "status mode needs no review ruleset" "$(jq -c --argjson b "$(status_mode_ruleset agent-guardrails "$checks")" \
+  '.branch = $b | .review = null' <<<"$review_mode" | ruleset_problems)" ""
+expect_eq "a review ruleset that lets anyone bypass it, or is gone, is an alarm" "$(jq -c \
+  '.review.bypass_actors += [{actor_id: 1, actor_type: "Integration", bypass_mode: "always"}]' <<<"$review_mode" | ruleset_problems)
+$(jq -c '.review = null' <<<"$review_mode" | ruleset_problems)" \
+  "the agent-guardrails-review ruleset has a changed bypass list
+no ruleset requires your approval any more (neither merge-approval nor agent-guardrails-review)"
+expect_eq "lost required checks and a bypass on the branch ruleset are alarms" "$(jq -c \
+  '.branch.rules |= map(select(.type != "required_status_checks")) | .branch.bypass_actors = [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}]' \
+  <<<"$review_mode" | ruleset_problems)" "the agent-guardrails ruleset has a bypass list
+the agent-guardrails ruleset lost its required_status_checks rule
+guard is no longer a required check from GitHub Actions
+no checks-<lang> job is a required check from GitHub Actions any more"
+expect_eq "a check reported by another App does not count" "$(jq -c \
+  '(.branch.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(del(.integration_id))' \
+  <<<"$review_mode" | ruleset_problems)" "guard is no longer a required check from GitHub Actions
+no checks-<lang> job is a required check from GitHub Actions any more"
+
 echo "rulesets and CODEOWNERS"
 checks=$(pinned_checks $'checks-node\n')
 expect_eq "checks pinned to GitHub Actions" "$checks" \

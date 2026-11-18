@@ -186,6 +186,8 @@ block 'cat ~/.local/share/agent-guardrails/bin/guardrails-lib.sh'
 block 'rm -rf ~/.config/agent-g*'
 block 'cd ~/.config && rm -r agent-guardrails'
 block 'cat ~/.config/agent-guardrails/repos'
+block 'cd ~/.config && cat agent-guardrails/repos'
+allow 'cd ~/src/agent-guardrails-worktrees/app && rg -n "model.configuration" Sources'
 block 'printf "acme/x\n" >> ~/.config/agent-guardrails/repos'
 
 echo "enforced repositories (owner's list)"

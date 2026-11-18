@@ -53,6 +53,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- bash-guard no longer treats a word such as `.configuration` in a command as the owner's config folder.
+- `guardrails on` in status mode says how a team switches to review mode.
 - Review window: "Open changes on GitHub" shows exactly the planned commit (a compare view), the size of the
   change shows only while it describes that commit, and a PR that moved after the check says so.
 - Agent-written titles, labels, file names and notification texts drop invisible format characters everywhere,
@@ -87,6 +89,14 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Security
 
+- The inbox compares each enforced repository's live rulesets with what the kit set up, not only whether the
+  main one is active: a missing or inactive review or tag ruleset, a bypass list, a removed rule, required checks
+  no longer pinned to GitHub Actions, other merge methods, or no rule requiring the owner's approval each raise
+  an alarm.
+- In a kit repository with the agent App registered, gh and `git push` are blocked when the session's identity
+  was not set up for that repository (the session started elsewhere), instead of running with the owner's login.
+- `guardrails update` updates only the active install (the clone whose bash-guard Claude Code runs). Updating
+  another clone moved every link and hook to it; a test build of the app did that once.
 - The workflow permission scan (ci-guard, `approve-head`, `guardrails on`) now finds a check or status write
   grant in every one-line YAML spelling (quoted, `!!str`, flow mapping) and a write value on its own line;
   ci-guard also refuses YAML tags in workflows a PR changes, so `name: !!str guard` cannot pass as a job name.
