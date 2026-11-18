@@ -277,9 +277,39 @@ public struct DiffStats: Codable, Sendable, Equatable {
     }
 }
 
-public func parseDiffStats(_ json: String) throws -> DiffStats {
+/// What `GET repos/{repo}/pulls/{number}` says about a PR now: the size of its change, its head and base. The
+/// size is the current head's; it describes the planned commit only while `headSHA` is that commit.
+public struct PullRequestSnapshot: Decodable, Sendable, Equatable {
+    public struct Ref: Decodable, Sendable, Equatable {
+        public let ref: String
+        public let sha: String
+    }
+
+    public let stats: DiffStats
+    public let head: Ref
+    public let base: Ref
+
+    enum CodingKeys: String, CodingKey {
+        case head, base
+    }
+
+    public init(from decoder: Decoder) throws {
+        stats = try DiffStats(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        head = try container.decode(Ref.self, forKey: .head)
+        base = try container.decode(Ref.self, forKey: .base)
+    }
+
+    /// GitHub's diff of exactly `sha` against the base branch, as the PR shows it for that head: what the owner
+    /// approves, even after a later push.
+    public func compareURL(repo: String, sha: String) -> String {
+        "https://github.com/\(repo)/compare/\(base.ref)...\(sha)"
+    }
+}
+
+public func parsePullRequestSnapshot(_ json: String) throws -> PullRequestSnapshot {
     do {
-        return try JSONDecoder().decode(DiffStats.self, from: Data(json.utf8))
+        return try JSONDecoder().decode(PullRequestSnapshot.self, from: Data(json.utf8))
     } catch {
         throw JSONLinesError(source: "GitHub pull request", lineNumber: 1, line: String(json.prefix(300)), reason: String(describing: error))
     }

@@ -7,6 +7,8 @@ struct GuardrailsApp: App {
     @State private var model = AppModel(configuration: AppConfiguration.fromMainBundle())
 
     init() {
+        // Writing to a CLI that already exited must fail with EPIPE (and be reported), not kill the app.
+        signal(SIGPIPE, SIG_IGN)
         DockPresence.observeWindowClosing()
     }
 

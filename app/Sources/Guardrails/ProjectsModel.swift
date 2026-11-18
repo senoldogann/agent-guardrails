@@ -13,6 +13,10 @@ final class ProjectsModel {
     private(set) var lastError: String?
     private(set) var lastUpdated: Date?
     private(set) var pullRequests: [String: PullRequestList] = [:]
+    /// Why the open PRs of a repo could not be loaded, until a load succeeds.
+    private(set) var pullRequestErrors: [String: String] = [:]
+    /// A load asked for while one runs: it runs again afterwards, so it reads what an action just changed.
+    private var loadsAgain = false
     /// Set-ups started from this app, by repo: shown as "Setting up…" until the bootstrap PR appears.
     private(set) var setupsStarted: [String: Date] = [:]
     /// The owner's agent App on this Mac, from `guardrails agent status --json`.
@@ -33,9 +37,18 @@ final class ProjectsModel {
     }
 
     func loadProjects() async {
-        guard !isLoading else { return }
+        guard !isLoading else {
+            loadsAgain = true
+            return
+        }
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            if loadsAgain {
+                loadsAgain = false
+                Task { await loadProjects() }
+            }
+        }
         do {
             let result = try await runGuardrails(["projects", "--json"])
             guard result.status == 0 else {
@@ -70,12 +83,13 @@ final class ProjectsModel {
         do {
             let result = try await runGuardrails(["prs", repo, "--json"])
             guard result.status == 0 else {
-                lastError = describeCommandFailure(result, command: "guardrails prs \(repo)")
+                pullRequestErrors[repo] = describeCommandFailure(result, command: "guardrails prs \(repo)")
                 return
             }
             pullRequests[repo] = PullRequestList(items: try parsePullRequests(result.standardOutput), loaded: Date())
+            pullRequestErrors[repo] = nil
         } catch {
-            lastError = String(describing: error)
+            pullRequestErrors[repo] = String(describing: error)
         }
     }
 

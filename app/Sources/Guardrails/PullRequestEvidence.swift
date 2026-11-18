@@ -7,6 +7,10 @@ enum Loadable<Value: Equatable>: Equatable {
     case loading
     case loaded(Value)
     case failed(String)
+
+    var isLoaded: Bool {
+        if case .loaded = self { true } else { false }
+    }
 }
 
 /// The spec a PR carries, as committed at the commit the owner approves.
@@ -24,7 +28,7 @@ struct SpecDocuments: Equatable {
 @MainActor
 @Observable
 final class PullRequestEvidence {
-    private(set) var diff: Loadable<DiffStats> = .loading
+    private(set) var snapshot: Loadable<PullRequestSnapshot> = .loading
     private(set) var checks: Loadable<[CheckRun]> = .loading
     /// By check run id.
     private(set) var gates: [Int: Loadable<GateReport>] = [:]
@@ -35,7 +39,7 @@ final class PullRequestEvidence {
     func load(_ pr: PullRequestPlan) async {
         guard isValidRepoName(pr.repo), pr.sha.wholeMatch(of: /[0-9a-f]{40}/) != nil else {
             let problem = "The plan names \(pr.repo) at \(pr.sha), which the app does not read from GitHub."
-            diff = .failed(problem)
+            snapshot = .failed(problem)
             checks = .failed(problem)
             return
         }
@@ -49,9 +53,9 @@ final class PullRequestEvidence {
 
     private func loadDiff(_ pr: PullRequestPlan) async {
         do {
-            diff = .loaded(try parseDiffStats(try await readGitHub(["api", "repos/\(pr.repo)/pulls/\(pr.pr)"])))
+            snapshot = .loaded(try parsePullRequestSnapshot(try await readGitHub(["api", "repos/\(pr.repo)/pulls/\(pr.pr)"])))
         } catch {
-            diff = .failed(String(describing: error))
+            snapshot = .failed(String(describing: error))
         }
     }
 

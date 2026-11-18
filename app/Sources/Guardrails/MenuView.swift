@@ -230,8 +230,8 @@ struct ItemRow: View {
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
-                Text(item.note.isEmpty ? item.repo : "\(item.repo) · \(item.note)")
+                Text(displaySafe(item.title)).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                Text(displaySafe(item.note.isEmpty ? item.repo : "\(item.repo) · \(item.note)"))
                     .font(.caption)
                     .foregroundStyle(Palette.textSecondary)
                     .lineLimit(1)
