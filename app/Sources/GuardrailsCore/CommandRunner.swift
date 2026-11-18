@@ -6,7 +6,20 @@ public struct CommandResult: Sendable, Equatable {
     public let standardError: String
 }
 
-/// Runs a non-interactive command (for example `guardrails inbox --json`) and collects its output.
+/// The longest a non-interactive command may run. `guardrails inbox` over many repositories, with GitHub's
+/// retries, stays well below it; a command still running then hangs (a stalled network, a prompt nobody sees).
+public let commandTimeout: TimeInterval = 300
+
+/// A command that ran past `commandTimeout` and was stopped.
+public struct CommandTimeoutError: Error, CustomStringConvertible {
+    public let command: [String]
+    public var description: String {
+        "\(command.joined(separator: " ")) did not finish within \(Int(commandTimeout)) seconds and was stopped"
+    }
+}
+
+/// Runs a non-interactive command (for example `guardrails inbox --json`) and collects its output. It is stopped
+/// after `commandTimeout`, so a hung command cannot hold a refresh forever.
 public func runCommand(command: [String], environment: [String: String]) async throws -> CommandResult {
     try await withCheckedThrowingContinuation { continuation in
         Thread.detachNewThread {
@@ -35,10 +48,17 @@ private func runCommandBlocking(command: [String], environment: [String: String]
     defer { try? FileManager.default.removeItem(at: errorURL) }
     let errorHandle = try FileHandle(forWritingTo: errorURL)
     process.standardError = errorHandle
+    let started = Date()
     try process.run()
+    let deadline = DispatchWorkItem { process.terminate() }
+    DispatchQueue.global().asyncAfter(deadline: .now() + commandTimeout, execute: deadline)
     let outputData = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    deadline.cancel()
     try errorHandle.close()
+    if process.terminationReason == .uncaughtSignal, Date().timeIntervalSince(started) >= commandTimeout {
+        throw CommandTimeoutError(command: command)
+    }
     let errorData = try Data(contentsOf: errorURL)
     return CommandResult(
         status: process.terminationStatus,

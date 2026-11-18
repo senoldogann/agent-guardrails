@@ -227,9 +227,9 @@ remove_agents_section() {
   rm -f "$file.tmp"
 }
 
-# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision
-# [,author,updatedAt]` on stdin and prints one compact JSON object per PR: {number, url, title, kind, note, sha,
-# draft, author, updated}. Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's
+# Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,
+# autoMergeRequest[,author,updatedAt]` on stdin and prints one compact JSON object per PR: {number, url, title,
+# kind, note, sha, draft, author, updated, autoMerge}. Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's
 # work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
 # review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
 # HEAD not approved yet). Any failed run named guard wins over a later success, because a workflow added by
@@ -253,12 +253,14 @@ pr_states() {
        else "checks failing" end) as $checks_note
     | (if any(.labels[]?; .name == "needs-decision") then ["answer", "the agent is waiting for your decision"]
        elif .isDraft then ["draft", "the agent is working on it"]
-       elif ($approval.state // "") == "SUCCESS" or .reviewDecision == "APPROVED" then ["approved", "approved; merges when checks pass"]
+       elif ($approval.state // "") == "SUCCESS" or .reviewDecision == "APPROVED" then
+         if .autoMergeRequest != null then ["approved", "approved; merges when checks pass"]
+         else ["approved", "approved; auto-merge is off, so merge it yourself"] end
        elif $guard == null or $guard.status != "COMPLETED" then ["wait", "guard is running"]
        elif $guard.conclusion != "SUCCESS" then ["blocked", "guard failed: the agent has to fix the PR"]
        else ["approve", $checks_note] end) as $state
     | {number, url, title, kind: $state[0], note: $state[1], sha: (.headRefOid // ""), draft: .isDraft,
-       author: ((.author.login // "") | clean), updated: (.updatedAt // "")}'
+       author: ((.author.login // "") | clean), updated: (.updatedAt // ""), autoMerge: (.autoMergeRequest != null)}'
 }
 
 # Reads the same input as pr_states and prints one tab-separated line per PR that needs the owner:

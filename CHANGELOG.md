@@ -30,6 +30,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - A welcome checklist at the first launch (again from Settings): kit installed, GitHub CLI signed in,
   notifications allowed, the agent's own GitHub App (recommended) and a first repository turned on, each with
   its live state and the button that does it.
+- A pull request window: click a PR on a repository's page to read its description (Markdown), checks,
+  comments, history and diff, and to comment, request changes, turn auto-merge on or off, convert it to a
+  draft or mark it ready, close or reopen it, or copy its link, number or checkout command. **Merge…**
+  appears once the head is approved and GitHub reports it mergeable, and merges exactly that commit; an
+  unapproved PR offers **Review…**, which still runs `approve-head`.
 
 ### Changed
 
@@ -38,8 +43,29 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - Buttons are Liquid Glass: the primary action in the app's graphite accent, so its label stays readable in
   light, dark and inactive windows; the agent panel is a glass card. The off-white page background is gone.
 - Open at login moved from the menu bar panel to Settings; the panel has a Settings button instead.
+- In light mode the selected sidebar row is light gray instead of near-black.
 
 ### Fixed
+
+- Review window: "Open changes on GitHub" shows exactly the planned commit (a compare view), the size of the
+  change shows only while it describes that commit, and a PR that moved after the check says so.
+- Agent-written titles, labels, file names and notification texts drop invisible format characters everywhere,
+  not only in the PR list.
+- Cancelling a Review, or a run that stopped while Touch ID was open, no longer brings back the confirm button
+  or logs a failure; closing the window after the last confirmation keeps reading the CLI, so the result is
+  still logged. Writing to a CLI that already exited cannot crash the app.
+- A refresh or projects load asked for while one runs now runs right after it, so an action shows up at once; a
+  shorter refresh interval takes effect without waiting out the old one; commands that hang are stopped after
+  five minutes.
+- A PR list that cannot load says why instead of loading forever; stale repositories and the inbox's notes
+  (such as an unreachable kit origin) are shown.
+- One unreadable line no longer hides the whole activity log; the closed welcome window stays closed; Review
+  opens a new run for a PR whose old window is still open; icon buttons have VoiceOver labels; characters cut
+  between two chunks of CLI output stay whole; checks read every page, and GitHub's refusals are not retried.
+- An approved PR without auto-merge said "merges when checks pass" although nothing would merge it; `guardrails
+  prs --json` now reports `autoMerge` and says "auto-merge is off, so merge it yourself" in that case.
+- bash-guard blocked harmless commands whose text mixed non-ASCII characters (such as `…`) with escaped
+  quotes, because a UTF-8 `awk` stopped on them; it now splits commands byte by byte.
 
 - `ci-run` no longer risks dying of SIGPIPE while it looks for a draft spec, and the kit drift check stops on
   a `diff` error instead of reporting no drift.

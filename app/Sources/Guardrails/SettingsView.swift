@@ -39,6 +39,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        // Switches in graphite: the asset catalog's accent is a light gray for the sidebar selection.
+        .tint(Palette.accent)
         .frame(width: 500)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { bringWindowsForward() }

@@ -20,6 +20,9 @@ struct OverviewView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.textSecondary)
                 }
+                if let error = projects.lastError, !projects.projects.isEmpty {
+                    StatusPanel(symbol: "exclamationmark.triangle", title: "Repositories could not be refreshed", message: error)
+                }
                 VStack(alignment: .leading, spacing: 12) {
                     InboxList(model: model, open: open)
                 }

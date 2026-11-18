@@ -157,6 +157,8 @@ public struct PullRequestItem: Codable, Sendable, Hashable, Identifiable {
     public let draft: Bool
     public let author: String
     public let updated: String
+    /// GitHub merges it by itself once its rules pass. Older CLIs leave it out.
+    public let autoMerge: Bool?
 
     public var id: Int { number }
 }

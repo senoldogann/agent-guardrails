@@ -7,6 +7,8 @@ struct GuardrailsApp: App {
     @State private var model = AppModel(configuration: AppConfiguration.fromMainBundle())
 
     init() {
+        // Writing to a CLI that already exited must fail with EPIPE (and be reported), not kill the app.
+        signal(SIGPIPE, SIG_IGN)
         DockPresence.observeWindowClosing()
     }
 
@@ -30,6 +32,13 @@ struct GuardrailsApp: App {
         }
         .defaultSize(width: 640, height: 780)
 
+        WindowGroup("Pull Request", id: WindowID.pullRequest, for: PullRequestRef.self) { $ref in
+            if let ref {
+                PullRequestWindow(ref: ref, model: model)
+            }
+        }
+        .defaultSize(width: 820, height: 860)
+
         Window("Welcome to Guardrails", id: WindowID.welcome) {
             OnboardingView(model: model)
         }
@@ -45,6 +54,7 @@ enum WindowID {
     static let projects = "projects"
     static let review = "review"
     static let welcome = "welcome"
+    static let pullRequest = "pull-request"
 }
 
 /// The Projects window, or what to fix when the app does not know where the kit is.

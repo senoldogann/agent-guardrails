@@ -21,19 +21,32 @@ struct PullRequestSection: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Palette.textSecondary)
                 .help("Reload pull requests")
+                .accessibilityLabel("Reload pull requests")
             }
-            PullRequestList(list: projects.pullRequests[repo], approvalsLocked: approvalsLocked, open: open)
+            PullRequestList(
+                repo: repo, list: projects.pullRequests[repo], error: projects.pullRequestErrors[repo],
+                approvalsLocked: approvalsLocked, open: open)
         }
         .task { await projects.loadPullRequests(of: repo) }
     }
 }
 
 struct PullRequestList: View {
+    let repo: String
     let list: ProjectsModel.PullRequestList?
+    /// The last load's error; with an older list still shown, it says the list may be out of date.
+    let error: String?
     let approvalsLocked: Bool
     let open: (ActionRequest) -> Void
 
     var body: some View {
+        if let error {
+            Text(list == nil ? error : "Could not reload, showing the last list: \(error)")
+                .font(.caption)
+                .foregroundStyle(Palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
         if let list {
             if list.items.isEmpty {
                 Card {
@@ -42,11 +55,11 @@ struct PullRequestList: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(list.items) { item in
-                        PullRequestRow(item: item, approvalsLocked: approvalsLocked, open: open)
+                        PullRequestRow(repo: repo, item: item, approvalsLocked: approvalsLocked, open: open)
                     }
                 }
             }
-        } else {
+        } else if error == nil {
             Card {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -58,21 +71,33 @@ struct PullRequestList: View {
 }
 
 struct PullRequestRow: View {
+    let repo: String
     let item: PullRequestItem
     let approvalsLocked: Bool
     let open: (ActionRequest) -> Void
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 12) {
-            KindBadge(kind: item.kind)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(displaySafe(item.title)).font(.system(size: 13, weight: .medium)).lineLimit(2)
-                Text("#\(item.number) · \(item.author) · \(item.note) · updated \(relativeTime(item.updated))")
-                    .font(.caption)
-                    .foregroundStyle(Palette.textSecondary)
-                    .lineLimit(1)
+            Button {
+                openWindow(id: WindowID.pullRequest, value: PullRequestRef(repo: repo, number: item.number))
+                activateApp()
+            } label: {
+                HStack(spacing: 12) {
+                    KindBadge(kind: item.kind)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(displaySafe(item.title)).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        Text("#\(item.number) · \(displaySafe(item.author)) · \(item.note) · updated \(relativeTime(item.updated))")
+                            .font(.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 8)
+            .buttonStyle(.plain)
+            .help("Open #\(item.number) here: description, checks, history and diff")
             if item.kind == .approve {
                 Button("Review") {
                     open(ActionRequest(kind: .approve, target: item.url, label: displaySafe(item.title)))
@@ -133,7 +158,7 @@ struct KindBadge: View {
         case .wait: "Checks are running"
         case .blocked: "The guard failed; the agent has to fix it"
         case .draft: "The agent is working on it"
-        case .approved: "Approved; merges when checks pass"
+        case .approved: "Approved"
         }
     }
 }

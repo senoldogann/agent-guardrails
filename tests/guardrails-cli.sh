@@ -149,6 +149,10 @@ approve${tab}u7${tab}feat(A-7): revoked${tab}checks green"
 echo "pr_states"
 expect_eq "every open PR has a kind" "$(pr_states <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
   "u1 answer u2 draft u3 approve u4 approved u5 blocked u6 wait u7 approve "
+auto=$(jq -c '[.[] | select(.url == "u4")] | [.[0], (.[0] | .autoMergeRequest = {"mergeMethod": "SQUASH"})]' <<<"$fixture" |
+  pr_states | jq -r '"\(.autoMerge) \(.note)"')
+expect_eq "an approved PR says whether it merges itself" "$auto" "false approved; auto-merge is off, so merge it yourself
+true approved; merges when checks pass"
 
 echo "project_states"
 node() {

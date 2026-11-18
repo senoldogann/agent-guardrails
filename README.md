@@ -90,7 +90,10 @@ to approve, bootstrap PRs to turn on, and alarms. The app also sends a notificat
 opens its Review window), and its Projects window opens on an overview of the same list, your enforced
 repositories and recent activity (⌘R refreshes, ⌘F searches). Before you approve, the Review window shows the
 PR's checks on that exact commit, the steps and mutation verdict of the kit gate from its CI log, and the
-spec the PR carries. Settings (⌘,) and a first-launch checklist cover the rest of the set-up on your Mac.
+spec the PR carries. Click a pull request in a repository's page to open it in the app: its description,
+checks, comments, history and diff, and the actions around it (comment, request changes, merge an approved
+PR, auto-merge, draft or ready, close or reopen). Approving still goes through Review. Settings (⌘,) and a
+first-launch checklist cover the rest of the set-up on your Mac.
 
 ## The agent's own GitHub identity
 

@@ -6,7 +6,7 @@ import SwiftUI
 struct ReviewView: View {
     let request: ActionRequest
     let configuration: AppConfiguration
-    let onFinish: (ActionModel) -> Void
+    let onFinish: @MainActor @Sendable (ActionModel) -> Void
     @State private var model: ActionModel?
     @State private var evidence = PullRequestEvidence()
     @State private var showsLog = false
@@ -30,10 +30,10 @@ struct ReviewView: View {
         }
         .frame(minWidth: 540, minHeight: 560)
         .task {
+            guard model == nil else { return }
             let started = ActionModel(request: request, configuration: configuration)
             model = started
-            await started.run()
-            onFinish(started)
+            started.start(onFinish: onFinish)
         }
         .task(id: model?.plan?.pullRequest?.sha) {
             if let pr = model?.plan?.pullRequest { await evidence.load(pr) }
@@ -53,7 +53,7 @@ struct ReviewView: View {
             Card {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Checking \(request.label) with guardrails…").font(.system(size: 13))
+                    Text("Checking \(displaySafe(request.label)) with guardrails…").font(.system(size: 13))
                 }
             }
         case .update(let update):
@@ -79,17 +79,36 @@ struct ReviewView: View {
             Card {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(pr.repo) · PR #\(pr.pr)").font(.caption).foregroundStyle(Palette.textSecondary)
-                    Text(pr.title).font(.system(size: 15, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+                    Text(displaySafe(pr.title)).font(.system(size: 15, weight: .medium)).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         SHABadge(sha: pr.shortSHA)
                         Text("exactly this commit").font(.caption).foregroundStyle(Palette.textSecondary)
-                        DiffStatsLabel(diff: evidence.diff)
+                        if case .loaded(let now) = evidence.snapshot, now.head.sha == pr.sha {
+                            DiffStatsLabel(diff: .loaded(now.stats))
+                        }
                         Spacer()
                         Button("Open changes on GitHub") {
-                            openInBrowser(pr.url + "/files")
-                            model.markDiffOpened()
+                            if case .loaded(let now) = evidence.snapshot {
+                                openInBrowser(now.compareURL(repo: pr.repo, sha: pr.sha))
+                                model.markDiffOpened()
+                            }
                         }
                         .secondaryAction()
+                        .disabled(!evidence.snapshot.isLoaded)
+                        .help("GitHub's diff of exactly \(pr.shortSHA), even if the PR moves on")
+                    }
+                    if case .failed(let message) = evidence.snapshot {
+                        Text("Could not read the PR from GitHub, so the diff link waits: \(message). Load again with the button under Checks.")
+                            .font(.caption)
+                            .foregroundStyle(Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    if case .loaded(let now) = evidence.snapshot, now.head.sha != pr.sha {
+                        Label("The PR moved to \(now.head.sha.prefix(7)) after this check. Cancel, then review the new commit.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if case .turnOn = model.plan {
                         Label("Kit files match your installed kit", systemImage: "checkmark.circle.fill")
@@ -218,7 +237,7 @@ struct ReviewView: View {
                 if model.needsDiffReview, !model.diffOpened, case .awaitingConfirmation(let pending) = model.phase,
                     pending.step == .commit
                 {
-                    Text("Open the changes first: human-owned or workflow files change.")
+                    Text("Open the changes first: human-owned, workflow or guardrail files change.")
                         .font(.caption)
                         .foregroundStyle(Palette.textSecondary)
                 }
@@ -240,7 +259,7 @@ struct ReviewView: View {
                 Label(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), systemImage: "touchid")
             }
             .buttonStyle(.glassProminent)
-            .tint(request.kind == .turnOff ? Palette.dangerFill : nil)
+            .tint(request.kind == .turnOff ? Palette.dangerFill : Palette.accent)
             .disabled(pending.step == .commit && model.needsDiffReview && !model.diffOpened)
         case .verifyingOwner:
             ProgressView().controlSize(.small)
@@ -251,7 +270,7 @@ struct ReviewView: View {
 
     private func confirmTitle(_ pending: ConfirmRequest, ownMerge: Bool) -> String {
         switch (pending.step, request.kind) {
-        case (.workflows, _): "I reviewed the workflows"
+        case (.workflows, _): "I reviewed these files"
         case (_, .approve): ownMerge ? "Merge \(pending.expect)" : "Approve \(pending.expect)"
         case (_, .turnOn), (_, .turnOnRepo): "Turn on"
         case (_, .turnOff): "Turn off"
@@ -271,7 +290,7 @@ struct FileGroups: View {
         let agent = files.filter { !$0.isWorkflow && !$0.isHumanOwned }
         VStack(alignment: .leading, spacing: 12) {
             if !workflows.isEmpty {
-                group(title: "Workflows · can change what CI enforces", color: Palette.danger, files: workflows)
+                group(title: "Workflows and guardrails · can change what CI enforces", color: Palette.danger, files: workflows)
             }
             if !humanOwned.isEmpty {
                 group(title: "Human-owned · yours from now on", color: Palette.warning, files: humanOwned)
@@ -291,7 +310,7 @@ struct FileGroups: View {
                     Text("\(files.count)").font(.caption).foregroundStyle(Palette.textSecondary)
                 }
                 ForEach(files, id: \.path) { file in
-                    Text(file.path)
+                    Text(displaySafe(file.path))
                         .font(.mono)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -307,11 +326,11 @@ struct WorkflowWarning: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("This PR changes workflows", systemImage: "exclamationmark.triangle.fill")
+            Label("This PR changes workflows or guardrails", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Workflows decide what CI checks. Approve only if you read these changes on GitHub:")
+            Text("These files decide what CI checks. Approve only if you read these changes on GitHub:")
                 .font(.system(size: 12))
-            ForEach(files, id: \.path) { Text($0.path).font(.mono) }
+            ForEach(files, id: \.path) { Text(displaySafe($0.path)).font(.mono) }
         }
         .foregroundStyle(.white)
         .padding(14)

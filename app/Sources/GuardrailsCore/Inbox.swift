@@ -142,10 +142,10 @@ public struct NotificationText: Equatable, Sendable {
 public func notificationText(for item: InboxItem) -> NotificationText {
     let place = item.repo.isEmpty ? "Kit install" : item.repo
     switch item.kind {
-    case .approve: return NotificationText(title: "Waiting for your approval", body: "\(place): \(item.title)")
-    case .answer: return NotificationText(title: "The agent asks", body: "\(place): \(item.title)")
+    case .approve: return NotificationText(title: "Waiting for your approval", body: displaySafe("\(place): \(item.title)"))
+    case .answer: return NotificationText(title: "The agent asks", body: displaySafe("\(place): \(item.title)"))
     case .alarm where item.repo.isEmpty && item.title == "update":
         return NotificationText(title: "A kit update is available", body: "Approvals wait until you update.")
-    default: return NotificationText(title: "Guardrails alarm", body: "\(place): \(item.note)")
+    default: return NotificationText(title: "Guardrails alarm", body: displaySafe("\(place): \(item.note)"))
     }
 }

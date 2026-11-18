@@ -27,6 +27,8 @@ final class AppModel {
     /// False when macOS shows none of the app's notifications (denied, or alert style None); nil until known.
     private(set) var notificationsShown: Bool?
     private var hasLoadedOnce = false
+    /// A refresh asked for while one runs: it runs again afterwards, so it reads what an action just changed.
+    private var refreshesAgain = false
     /// The notification center keeps only a weak reference to its delegate.
     private var notificationDelegate: NotificationDelegate?
 
@@ -51,15 +53,25 @@ final class AppModel {
     }
 
     func refresh() async {
-        guard case .success(let configuration) = configuration, loadState != .loading else { return }
+        guard case .success(let configuration) = configuration else { return }
+        guard loadState != .loading else {
+            refreshesAgain = true
+            return
+        }
         loadState = .loading
-        defer { loadState = .idle }
+        defer {
+            loadState = .idle
+            if refreshesAgain {
+                refreshesAgain = false
+                Task { await refresh() }
+            }
+        }
         do {
             let result = try await runCommand(
                 command: ["/bin/bash", configuration.cliPath, "inbox", "--json"],
                 environment: cliEnvironment(inherited: ProcessInfo.processInfo.environment, eventsDescriptor: nil))
             guard result.status == 0 else {
-                lastError = describeFailure(result)
+                lastError = describeCommandFailure(result, command: "guardrails inbox")
                 return
             }
             let next = try parseInbox(result.standardOutput)
@@ -106,26 +118,20 @@ final class AppModel {
         }
     }
 
+    /// Refreshes, then waits the interval chosen in Settings. The interval is read again every half minute, so
+    /// a shorter one takes effect without waiting out the old one.
     private func runRefreshLoop() async {
         while !Task.isCancelled {
             await refresh()
-            do {
-                try await Task.sleep(for: .seconds(RefreshInterval.minutes * 60))
-            } catch {
-                return
+            let started = Date()
+            while Date().timeIntervalSince(started) < Double(RefreshInterval.minutes * 60) {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
             }
         }
-    }
-
-    private func describeFailure(_ result: CommandResult) -> String {
-        let message = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-        if message.contains("gh auth login") || message.contains("not logged") {
-            return "GitHub CLI is not signed in. Run gh auth login in your terminal, then refresh."
-        }
-        if message.contains("Could not resolve host") || message.contains("error connecting") {
-            return "Offline: GitHub cannot be reached. Showing the last known state."
-        }
-        return message.isEmpty ? "guardrails inbox exited with status \(result.status)" : message
     }
 
     private func notify(about items: [InboxItem]) {

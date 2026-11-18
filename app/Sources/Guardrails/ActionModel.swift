@@ -42,7 +42,16 @@ final class ActionModel {
         }
     }
 
-    func run() async {
+    /// Starts the run outside the window's lifetime: closing the window after the final confirmation must not
+    /// stop reading the CLI, or the outcome would be lost while the merge or approval goes on.
+    func start(onFinish: @escaping @MainActor (ActionModel) -> Void) {
+        Task {
+            await self.run()
+            onFinish(self)
+        }
+    }
+
+    private func run() async {
         let started: TerminalSession
         do {
             started = try TerminalSession(
@@ -79,9 +88,11 @@ final class ActionModel {
             try await verifyOwner(reason: ownerCheckReason(for: pending, plan: plan))
         } catch {
             ownerCheckProblem = error.localizedDescription
-            phase = .awaitingConfirmation(pending)
+            if phase == .verifyingOwner(pending) { phase = .awaitingConfirmation(pending) }
             return
         }
+        // The owner may have cancelled, or the CLI may have stopped, while the Touch ID prompt was open.
+        guard phase == .verifyingOwner(pending) else { return }
         if isFinalConfirmation(pending, plan: plan) { canCancel = false }
         do {
             try session?.send(answer + "\n")
@@ -111,11 +122,12 @@ final class ActionModel {
         switch output {
         case .terminal(let text):
             log += text.replacingOccurrences(of: "\r", with: "")
-        case .event(.plan(let announced)):
-            plan = announced
-        case .event(.confirm(let pending)):
-            phase = .awaitingConfirmation(pending)
+        case .event:
+            // After Cancel or a stop the CLI may still announce its next step; it must not bring the buttons back.
+            guard isRunning else { return }
+            handleEvent(output)
         case .invalidEvent(let error):
+            guard isRunning else { return }
             stop(with: error.description)
         case .exited(let code):
             switch phase {
@@ -123,6 +135,22 @@ final class ActionModel {
             default: phase = code == 0 ? .succeeded : .failed(lastLines(of: log))
             }
             if code == 0, request.kind == .update { relaunchAfterUpdate() }
+        }
+    }
+
+    private func handleEvent(_ output: SessionOutput) {
+        switch output {
+        case .event(.plan(let announced)):
+            // One run announces one plan; a second one could change what the owner already read.
+            guard plan == nil else {
+                stop(with: "guardrails announced a second plan; stopped without confirming anything.")
+                return
+            }
+            plan = announced
+        case .event(.confirm(let pending)):
+            phase = .awaitingConfirmation(pending)
+        default:
+            return
         }
     }
 

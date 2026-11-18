@@ -30,7 +30,11 @@ final class ActivityLog {
         fileURL = url
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {
-            entries = try parseActivity(try String(contentsOf: url, encoding: .utf8))
+            let file = parseActivity(try String(contentsOf: url, encoding: .utf8))
+            entries = file.entries
+            if let first = file.unreadable.first {
+                report("\(file.unreadable.count) line(s) of the activity log could not be read and are left out; the first: \(first)")
+            }
         } catch {
             report("The activity log could not be read: \(error)")
         }
@@ -176,6 +180,7 @@ struct ActivityRow: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Open on GitHub")
+                .accessibilityLabel("Open on GitHub")
             }
         }
         .padding(.horizontal, 12)

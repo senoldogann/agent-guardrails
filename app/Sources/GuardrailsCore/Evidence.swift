@@ -75,22 +75,11 @@ public enum CheckOutcome: Int, Sendable, Comparable {
     public static func < (lhs: CheckOutcome, rhs: CheckOutcome) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
-private struct CheckRunsPage: Decodable {
-    let checkRuns: [CheckRun]
-
-    enum CodingKeys: String, CodingKey {
-        case checkRuns = "check_runs"
-    }
-}
-
-/// Parses the check-runs response and orders it for the owner: failed first, then running, passed, skipped.
-public func parseCheckRuns(_ json: String) throws -> [CheckRun] {
-    do {
-        let page = try JSONDecoder().decode(CheckRunsPage.self, from: Data(json.utf8))
-        return page.checkRuns.sorted { ($0.outcome, $0.name) < ($1.outcome, $1.name) }
-    } catch {
-        throw JSONLinesError(source: "GitHub check runs", lineNumber: 1, line: String(json.prefix(300)), reason: String(describing: error))
-    }
+/// Parses check runs, one JSON object per line (`gh api --paginate … --jq '.check_runs[]'`, every page), and
+/// orders them for the owner: failed first, then running, passed, skipped.
+public func parseCheckRuns(_ lines: String) throws -> [CheckRun] {
+    try decodeJSONLines(lines, as: CheckRun.self, source: "GitHub check runs")
+        .sorted { ($0.outcome, $0.name) < ($1.outcome, $1.name) }
 }
 
 /// What the CI run of one `checks-<lang>` job did, read from its log. The log also carries what the code under
@@ -277,9 +266,39 @@ public struct DiffStats: Codable, Sendable, Equatable {
     }
 }
 
-public func parseDiffStats(_ json: String) throws -> DiffStats {
+/// What `GET repos/{repo}/pulls/{number}` says about a PR now: the size of its change, its head and base. The
+/// size is the current head's; it describes the planned commit only while `headSHA` is that commit.
+public struct PullRequestSnapshot: Decodable, Sendable, Equatable {
+    public struct Ref: Decodable, Sendable, Equatable {
+        public let ref: String
+        public let sha: String
+    }
+
+    public let stats: DiffStats
+    public let head: Ref
+    public let base: Ref
+
+    enum CodingKeys: String, CodingKey {
+        case head, base
+    }
+
+    public init(from decoder: Decoder) throws {
+        stats = try DiffStats(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        head = try container.decode(Ref.self, forKey: .head)
+        base = try container.decode(Ref.self, forKey: .base)
+    }
+
+    /// GitHub's diff of exactly `sha` against the base branch, as the PR shows it for that head: what the owner
+    /// approves, even after a later push.
+    public func compareURL(repo: String, sha: String) -> String {
+        "https://github.com/\(repo)/compare/\(base.ref)...\(sha)"
+    }
+}
+
+public func parsePullRequestSnapshot(_ json: String) throws -> PullRequestSnapshot {
     do {
-        return try JSONDecoder().decode(DiffStats.self, from: Data(json.utf8))
+        return try JSONDecoder().decode(PullRequestSnapshot.self, from: Data(json.utf8))
     } catch {
         throw JSONLinesError(source: "GitHub pull request", lineNumber: 1, line: String(json.prefix(300)), reason: String(describing: error))
     }

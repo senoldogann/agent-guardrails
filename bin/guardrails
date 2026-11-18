@@ -325,7 +325,7 @@ off_repo() {
 repo_items() {
   local prs
   prs=$(gh pr list -R "$1" --state open --limit 100 \
-    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision) ||
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,autoMergeRequest) ||
     die "cannot list the open PRs of $1"
   classify_prs <<<"$prs"
 }
@@ -480,7 +480,8 @@ projects_json() {
 prs_json() {
   [[ $1 =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "not an owner/repo name: $1"
   gh pr list -R "$1" --state open --limit 100 \
-    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,author,updatedAt | pr_states
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,autoMergeRequest,author,updatedAt |
+    pr_states
 }
 
 approve_pick() {
