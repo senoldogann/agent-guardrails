@@ -120,7 +120,7 @@ struct AlarmBanner: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            OcticonImage(icon: .alert, size: 14)
             Text(text)
                 .font(.system(size: 12))
                 .fixedSize(horizontal: false, vertical: true)

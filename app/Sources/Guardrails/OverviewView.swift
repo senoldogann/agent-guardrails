@@ -20,7 +20,7 @@ struct OverviewView: View {
                         .foregroundStyle(Palette.textSecondary)
                 }
                 if let error = projects.lastError, !projects.projects.isEmpty {
-                    StatusPanel(symbol: "exclamationmark.triangle", title: "Repositories could not be refreshed", message: error)
+                    StatusPanel(symbol: .alert, title: "Repositories could not be refreshed", message: error)
                 }
                 VStack(alignment: .leading, spacing: 12) {
                     InboxList(model: model, open: open)
@@ -87,7 +87,7 @@ struct EnforcedRepoRow: View {
                     }
                     .foregroundStyle(Palette.textSecondary)
                 }
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+                OcticonImage(icon: .chevronRight, size: 14).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textSecondary)
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surface))

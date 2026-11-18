@@ -189,9 +189,9 @@ struct OnboardingSymbol: View {
     var body: some View {
         Group {
             switch state {
-            case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
+            case .done: OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.success)
             case .todo:
-                Image(systemName: "circle").foregroundStyle(isOptional ? Palette.textSecondary : Palette.warning)
+                OcticonImage(icon: .circle, size: 14).foregroundStyle(isOptional ? Palette.textSecondary : Palette.warning)
             case .checking: ProgressView().controlSize(.small)
             }
         }

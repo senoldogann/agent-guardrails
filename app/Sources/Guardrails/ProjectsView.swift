@@ -16,7 +16,7 @@ struct ProjectSidebar: View {
         let groups = groupProjects(projects.projects, matching: search)
         List(selection: $selection) {
             if search.isEmpty {
-                Label("Overview", systemImage: "square.grid.2x2")
+                OcticonLabel("Overview", icon: .apps)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
                     .tag(WorkspacePage.overview)
@@ -34,7 +34,7 @@ struct ProjectSidebar: View {
             }
             if search.isEmpty {
                 Section {
-                    Label("Settings", systemImage: "gearshape")
+                    OcticonLabel("Settings", icon: .gear)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Palette.textPrimary)
                         .tag(WorkspacePage.settings)
@@ -62,7 +62,7 @@ struct AgentPanel: View {
         let detail = agent.registered ? (agent.slug ?? "") : "The agent uses your GitHub login"
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: agent.registered ? "person.badge.shield.checkmark" : "person.crop.circle.badge.questionmark")
+                OcticonImage(icon: .person, size: 14)
                     .font(.system(size: 14))
                     .foregroundStyle(Palette.textSecondary)
                 Text(agent.registered ? "Agent App" : "Agent identity").font(.system(size: 12, weight: .semibold))

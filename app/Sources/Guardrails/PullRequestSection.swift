@@ -17,7 +17,7 @@ struct PullRequestSection: View {
                 Button {
                     Task { await projects.reloadPullRequests(of: repo) }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    OcticonImage(icon: .sync, size: 14)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Palette.textSecondary)
@@ -126,21 +126,21 @@ struct KindBadge: View {
     let kind: PullRequestKind
 
     var body: some View {
-        Image(systemName: symbol)
+        OcticonImage(icon: symbol, size: 14)
             .font(.system(size: 14))
             .foregroundStyle(color)
             .frame(width: 22)
             .help(help)
     }
 
-    private var symbol: String {
+    private var symbol: Octicon {
         switch kind {
-        case .approve: "checkmark.seal"
-        case .answer: "questionmark.bubble"
-        case .wait: "clock"
-        case .blocked: "xmark.octagon"
-        case .draft: "pencil.line"
-        case .approved: "checkmark.seal.fill"
+        case .approve: .passkey
+        case .answer: .comment
+        case .wait: .clock
+        case .blocked: .xCircle
+        case .draft: .pullRequestDraft
+        case .approved: .check
         }
     }
 

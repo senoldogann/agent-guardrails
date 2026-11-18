@@ -11,7 +11,7 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if let problem = model.setupProblem {
-                StatusPanel(symbol: "wrench.and.screwdriver", title: "Setup needed", message: problem)
+                StatusPanel(symbol: .tools, title: "Setup needed", message: problem)
             } else {
                 content
             }
@@ -31,7 +31,7 @@ struct MenuView: View {
             Button {
                 Task { await model.refresh() }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                OcticonImage(icon: .sync, size: 14)
                     .rotationEffect(.degrees(model.loadState == .loading ? 180 : 0))
                     .animation(.easeInOut(duration: 0.4), value: model.loadState)
             }
@@ -70,7 +70,7 @@ struct MenuView: View {
                     model.workspace.show(.settings)
                     openMainWindow(openWindow)
                 } label: {
-                    Image(systemName: "gearshape")
+                    OcticonImage(icon: .gear, size: 14)
                 }
                 .secondaryAction()
                 .help("Settings (⌘,)")
@@ -99,7 +99,7 @@ struct InboxList: View {
                 open(ActionRequest(kind: .update, target: "", label: "the kit install"))
             }
             ForEach(snapshot.notes) { note in
-                Label(displaySafe(note.note), systemImage: "info.circle")
+                OcticonLabel(displaySafe(note.note), icon: .info)
                     .font(.caption)
                     .foregroundStyle(Palette.warning)
                     .fixedSize(horizontal: false, vertical: true)
@@ -132,7 +132,7 @@ struct InboxProblems: View {
 
     var body: some View {
         if let error {
-            StatusPanel(symbol: "wifi.exclamationmark", title: "Could not refresh", message: error)
+            StatusPanel(symbol: .alert, title: "Could not refresh", message: error)
         }
         ForEach(alarms) { alarm in
             // The CLI marks the "kit install is behind its origin main" alarm with the title "update".
@@ -153,7 +153,7 @@ struct UpdateBanner: View {
         HStack(alignment: .center, spacing: 10) {
             // The text color is set on the texts only: on the whole row it would override the white label of the
             // prominent Update button.
-            Image(systemName: "arrow.down.circle.fill").font(.system(size: 16)).foregroundStyle(Palette.textPrimary)
+            OcticonImage(icon: .download, size: 14).font(.system(size: 16)).foregroundStyle(Palette.textPrimary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("A kit update is available").font(.system(size: 13, weight: .semibold))
                 Text("Approvals and turning repos on or off wait until you update.")
@@ -177,7 +177,7 @@ struct UpdateBanner: View {
 struct NotificationsOffBanner: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "bell.slash").font(.system(size: 15)).foregroundStyle(Palette.warning)
+            OcticonImage(icon: .bellSlash, size: 14).font(.system(size: 15)).foregroundStyle(Palette.warning)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Notifications are off").font(.system(size: 13, weight: .semibold))
                 Text("New approvals and alarms reach you only here until you allow them.")
@@ -258,13 +258,13 @@ struct ItemRow: View {
 }
 
 struct StatusPanel: View {
-    let symbol: String
+    let symbol: Octicon
     let title: String
     let message: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol).foregroundStyle(Palette.warning)
+            OcticonImage(icon: symbol, size: 14).foregroundStyle(Palette.warning)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 13, weight: .semibold))
                 Text(message)
@@ -286,7 +286,7 @@ struct QuietState: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "checkmark.shield")
+            OcticonImage(icon: .shieldCheck, size: 14)
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(Palette.textSecondary)
             Text("Nothing waits for you").font(.system(size: 14, weight: .medium))

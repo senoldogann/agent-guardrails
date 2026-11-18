@@ -15,7 +15,7 @@ struct PullRequestPage: View {
             case .loading:
                 ProgressView("Loading #\(ref.number) from GitHub…").frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
-                StatusPanel(symbol: "exclamationmark.triangle", title: "Could not load #\(ref.number)", message: message)
+                StatusPanel(symbol: .alert, title: "Could not load #\(ref.number)", message: message)
                     .padding(Metrics.windowPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .loaded(let pr):
@@ -61,7 +61,7 @@ struct PullRequestHeader: View {
                 Button {
                     Task { await pullRequest.load() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    OcticonImage(icon: .sync, size: 14)
                 }
                 .buttonStyle(.borderless)
                 .help("Load the pull request again")
@@ -146,12 +146,12 @@ struct ChecksSummary: View {
     var body: some View {
         let failed = checks.filter { $0.outcome == .failed }.count
         let running = checks.filter { $0.outcome == .running }.count
-        let (symbol, text, color): (String, String, Color) =
-            if checks.isEmpty { ("circle.dashed", "No checks", Palette.textSecondary) }
-            else if failed > 0 { ("xmark.circle", "\(failed) failing", Palette.danger) }
-            else if running > 0 { ("clock", "\(running) running", Palette.warning) }
-            else { ("checkmark.circle", "All checks passed", Palette.success) }
-        Label(text, systemImage: symbol)
+        let (symbol, text, color): (Octicon, String, Color) =
+            if checks.isEmpty { (.circle, "No checks", Palette.textSecondary) }
+            else if failed > 0 { (.xCircle, "\(failed) failing", Palette.danger) }
+            else if running > 0 { (.clock, "\(running) running", Palette.warning) }
+            else { (.checkCircle, "All checks passed", Palette.success) }
+        OcticonLabel(text, icon: symbol)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(color)
             .lineLimit(1)
@@ -218,7 +218,7 @@ struct PullRequestMenu: View {
                 Button("Close Pull Request…", role: .destructive) { confirmsClose = true }
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            OcticonImage(icon: .kebabHorizontal, size: 14)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
