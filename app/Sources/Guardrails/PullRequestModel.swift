@@ -17,6 +17,8 @@ final class PullRequestModel {
     private(set) var running: String?
     /// The last action's error, shown above the tabs until the next action or reload.
     private(set) var problem: String?
+    /// Summary, Timeline or Code: kept with the model, so it survives switching tabs of the main window.
+    var tab = PullRequestTab.summary
 
     init(ref: PullRequestRef) {
         self.ref = ref

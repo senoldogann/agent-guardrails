@@ -1,11 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Monochrome tokens with color only for meaning (danger, warning, success); light and dark variants.
+/// Monochrome tokens with color only for meaning (danger, warning, success); light and dark variants. The
+/// window is translucent (Liquid Glass and the desktop show through), so surfaces are tinted veils over it:
+/// opaque enough that text on them keeps its contrast, clear enough to read as layers of glass.
 enum Palette {
-    static let surface = Color(light: 0xFFFFFF, dark: 0x161618)
-    static let surfaceMuted = Color(light: 0xF4F4F5, dark: 0x1F1F22)
-    static let hairline = Color(light: 0xE7E7E9, dark: 0x2A2A2E)
+    static let surface = Color(light: 0xFFFFFF, lightAlpha: 0.78, dark: 0xFFFFFF, darkAlpha: 0.06)
+    static let surfaceMuted = Color(light: 0x000000, lightAlpha: 0.04, dark: 0xFFFFFF, darkAlpha: 0.08)
+    static let hairline = Color(light: 0x000000, lightAlpha: 0.09, dark: 0xFFFFFF, darkAlpha: 0.10)
     static let textPrimary = Color(light: 0x0A0A0A, dark: 0xF5F5F7)
     static let textSecondary = Color(light: 0x6B6B70, dark: 0xA1A1A6)
     static let danger = Color(light: 0xD92D20, dark: 0xF97066)
@@ -29,10 +31,14 @@ enum Metrics {
 
 extension Color {
     init(light: UInt32, dark: UInt32) {
+        self.init(light: light, lightAlpha: 1, dark: dark, darkAlpha: 1)
+    }
+
+    init(light: UInt32, lightAlpha: CGFloat, dark: UInt32, darkAlpha: CGFloat) {
         self.init(
             nsColor: NSColor(name: nil) { appearance in
                 let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                return NSColor(rgb: isDark ? dark : light)
+                return NSColor(rgb: isDark ? dark : light).withAlphaComponent(isDark ? darkAlpha : lightAlpha)
             })
     }
 }
@@ -126,3 +132,6 @@ struct AlarmBanner: View {
         .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.dangerFill))
     }
 }
+
+/// The widest a page's column of cards gets: readable lines in a full-screen window.
+let pageWidth: CGFloat = 1040

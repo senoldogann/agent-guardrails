@@ -7,6 +7,7 @@ struct PullRequestSection: View {
     let projects: ProjectsModel
     let approvalsLocked: Bool
     let open: (ActionRequest) -> Void
+    let openPullRequest: (PullRequestRef) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -25,7 +26,7 @@ struct PullRequestSection: View {
             }
             PullRequestList(
                 repo: repo, list: projects.pullRequests[repo], error: projects.pullRequestErrors[repo],
-                approvalsLocked: approvalsLocked, open: open)
+                approvalsLocked: approvalsLocked, open: open, openPullRequest: openPullRequest)
         }
         .task { await projects.loadPullRequests(of: repo) }
     }
@@ -38,6 +39,7 @@ struct PullRequestList: View {
     let error: String?
     let approvalsLocked: Bool
     let open: (ActionRequest) -> Void
+    let openPullRequest: (PullRequestRef) -> Void
 
     var body: some View {
         if let error {
@@ -55,7 +57,9 @@ struct PullRequestList: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(list.items) { item in
-                        PullRequestRow(repo: repo, item: item, approvalsLocked: approvalsLocked, open: open)
+                        PullRequestRow(
+                            repo: repo, item: item, approvalsLocked: approvalsLocked, open: open,
+                            openPullRequest: openPullRequest)
                     }
                 }
             }
@@ -75,13 +79,12 @@ struct PullRequestRow: View {
     let item: PullRequestItem
     let approvalsLocked: Bool
     let open: (ActionRequest) -> Void
-    @Environment(\.openWindow) private var openWindow
+    let openPullRequest: (PullRequestRef) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Button {
-                openWindow(id: WindowID.pullRequest, value: PullRequestRef(repo: repo, number: item.number))
-                activateApp()
+                openPullRequest(PullRequestRef(repo: repo, number: item.number))
             } label: {
                 HStack(spacing: 12) {
                     KindBadge(kind: item.kind)

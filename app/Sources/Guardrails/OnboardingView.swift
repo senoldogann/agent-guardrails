@@ -11,11 +11,10 @@ enum Onboarding {
 /// the one action that does it. Opens at the first launch; Settings opens it again.
 struct OnboardingView: View {
     let model: AppModel
+    let close: () -> Void
     @AppStorage(Onboarding.completedKey) private var completed = false
     @State private var githubSignedIn: Bool?
     @State private var githubProblem: String?
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let steps = onboardingSteps(facts)
@@ -33,17 +32,17 @@ struct OnboardingView: View {
                 Spacer()
                 Button(onboardingIsComplete(steps) ? "Done" : "Finish later") {
                     completed = true
-                    dismiss()
+                    close()
                 }
                 .primaryAction()
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(28)
-        .frame(width: 560)
-        .fixedSize(horizontal: false, vertical: true)
-        .onAppear { bringWindowsForward() }
-        // Closing the window counts like "Finish later": it opens again only from Settings.
+        .frame(maxWidth: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, 24)
+        // Closing the tab counts like "Finish later": it opens again only from Settings.
         .onDisappear { completed = true }
         .task { await check() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -122,11 +121,9 @@ struct OnboardingView: View {
         case .notifications:
             openNotificationSettings()
         case .agentApp:
-            openWindow(id: WindowID.review, value: ActionRequest(kind: .agentCreate, target: "", label: "the agent App"))
-            activateApp()
+            model.openReview(ActionRequest(kind: .agentCreate, target: "", label: "the agent App"))
         case .firstRepo:
-            openWindow(id: WindowID.projects)
-            activateApp()
+            model.workspace.show(.overview)
         }
     }
 }

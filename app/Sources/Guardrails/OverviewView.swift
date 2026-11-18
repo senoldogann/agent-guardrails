@@ -7,7 +7,6 @@ struct OverviewView: View {
     let model: AppModel
     let projects: ProjectsModel
     let select: (String) -> Void
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let groups = groupProjects(projects.projects, matching: "")
@@ -44,7 +43,7 @@ struct OverviewView: View {
                 }
             }
             .padding(Metrics.windowPadding)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: pageWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Overview")
@@ -59,8 +58,7 @@ struct OverviewView: View {
     }
 
     private func open(_ request: ActionRequest) {
-        openWindow(id: WindowID.review, value: request)
-        activateApp()
+        model.openReview(request)
     }
 }
 

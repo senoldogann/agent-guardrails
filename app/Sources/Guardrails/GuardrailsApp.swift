@@ -20,41 +20,41 @@ struct GuardrailsApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("Guardrails", id: WindowID.projects) {
+        // Every page opens in this one window, in tabs: repositories, pull requests, reviews, settings and the
+        // welcome checklist.
+        Window("Guardrails", id: WindowID.main) {
             ProjectsWindow(model: model)
         }
-        .defaultSize(width: 980, height: 660)
-
-        WindowGroup("Review", id: WindowID.review, for: ActionRequest.self) { $request in
-            if let request, case .success(let configuration) = model.configuration {
-                ReviewView(request: request, configuration: configuration) { model.actionFinished($0) }
-            }
-        }
-        .defaultSize(width: 640, height: 780)
-
-        WindowGroup("Pull Request", id: WindowID.pullRequest, for: PullRequestRef.self) { $ref in
-            if let ref {
-                PullRequestWindow(ref: ref, model: model)
-            }
-        }
-        .defaultSize(width: 820, height: 860)
-
-        Window("Welcome to Guardrails", id: WindowID.welcome) {
-            OnboardingView(model: model)
-        }
-        .windowResizability(.contentSize)
-
-        Settings {
-            SettingsView(model: model)
-        }
+        .defaultSize(width: 1280, height: 820)
+        .commands { AppCommands(model: model) }
     }
 }
 
 enum WindowID {
-    static let projects = "projects"
-    static let review = "review"
-    static let welcome = "welcome"
-    static let pullRequest = "pull-request"
+    static let main = "main"
+}
+
+/// Settings… (⌘,) opens the Settings page in the main window instead of a window of its own.
+struct AppCommands: Commands {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                model.workspace.show(.settings)
+                openMainWindow(openWindow)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+}
+
+/// Opens (or brings forward) the main window; the caller has already chosen its page.
+@MainActor
+func openMainWindow(_ openWindow: OpenWindowAction) {
+    openWindow(id: WindowID.main)
+    activateApp()
 }
 
 /// The Projects window, or what to fix when the app does not know where the kit is.
@@ -63,7 +63,7 @@ struct ProjectsWindow: View {
 
     var body: some View {
         if let projects = model.projects {
-            ProjectsView(model: model, projects: projects)
+            MainWindow(model: model, projects: projects)
         } else {
             StatusPanel(symbol: "wrench.and.screwdriver", title: "Setup needed", message: model.setupProblem ?? "")
                 .padding(Metrics.windowPadding)
@@ -94,24 +94,24 @@ struct MenuBarLabel: View {
         .task {
             // The first launch opens the welcome checklist; closing it once is enough.
             guard !UserDefaults.standard.bool(forKey: Onboarding.completedKey) else { return }
-            openWindow(id: WindowID.welcome)
-            activateApp()
+            model.workspace.show(.welcome)
+            openMainWindow(openWindow)
         }
     }
 
     private func follow(_ route: InboxRoute) {
         switch route {
         case .review(let url, let title):
-            openWindow(id: WindowID.review, value: ActionRequest(kind: .approve, target: url, label: title))
+            model.openReview(ActionRequest(kind: .approve, target: url, label: title))
         case .update:
-            openWindow(id: WindowID.review, value: ActionRequest(kind: .update, target: "", label: "the kit install"))
+            model.openReview(ActionRequest(kind: .update, target: "", label: "the kit install"))
         case .browser(let url):
             openInBrowser(url)
             return
         case .projects:
-            openWindow(id: WindowID.projects)
+            model.workspace.show(.overview)
         }
-        activateApp()
+        openMainWindow(openWindow)
     }
 }
 

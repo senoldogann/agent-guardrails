@@ -38,6 +38,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Changed
 
+- Everything opens in one window, laid out like an editor: the sidebar shows the overview, the repositories
+  and settings in the first tab; pull requests, reviews and the welcome checklist open in tabs of their own
+  (⌘W closes one, ⌃Tab and ⌃⇧Tab move between them), and a status bar shows when the inbox was read and what
+  waits. Settings (⌘,) is a page of this window. A review tab keeps its run while you switch tabs.
+- The window is Liquid Glass: a translucent window background, glass tabs and status bar, and translucent
+  cards that keep their text's contrast. Pages use up to 1040 points, so the window fills a full screen well.
 - Repositories show GitHub's own icon (repository, private or fork) on a tile tinted by their state instead of
   their first letter.
 - Buttons are Liquid Glass: the primary action in the app's graphite accent, so its label stays readable in

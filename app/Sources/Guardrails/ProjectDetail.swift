@@ -6,7 +6,6 @@ struct ProjectDetail: View {
     let project: Project
     let model: AppModel
     let projects: ProjectsModel
-    @Environment(\.openWindow) private var openWindow
     @State private var showsSetup = false
 
     var body: some View {
@@ -26,7 +25,7 @@ struct ProjectDetail: View {
                 if project.state == .on || project.state == .alarm {
                     PullRequestSection(
                         repo: project.repo, projects: projects, approvalsLocked: model.snapshot.hasKitInstallAlarm,
-                        open: open)
+                        open: open, openPullRequest: { model.workspace.showPullRequest($0) })
                 }
                 let history = activity(of: project.repo, in: model.activity.entries, limit: 8)
                 if !history.isEmpty {
@@ -37,7 +36,7 @@ struct ProjectDetail: View {
                 }
             }
             .padding(Metrics.windowPadding)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: pageWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(project.name)
@@ -49,8 +48,7 @@ struct ProjectDetail: View {
     }
 
     private func open(_ request: ActionRequest) {
-        openWindow(id: WindowID.review, value: request)
-        activateApp()
+        model.openReview(request)
     }
 }
 

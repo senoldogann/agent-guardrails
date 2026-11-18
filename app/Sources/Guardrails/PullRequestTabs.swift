@@ -69,7 +69,7 @@ struct PullRequestSummary: View {
                 }
             }
         }
-        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: pageWidth, alignment: .leading)
         .frame(maxWidth: .infinity)
     }
 }
@@ -185,7 +185,7 @@ struct PullRequestTimeline: View {
                 TimelineRow(event: event)
             }
         }
-        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: pageWidth, alignment: .leading)
         .frame(maxWidth: .infinity)
     }
 }
