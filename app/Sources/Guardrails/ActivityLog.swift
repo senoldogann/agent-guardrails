@@ -165,7 +165,7 @@ struct ActivityRow: View {
                     .truncationMode(.tail)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(entry.outcome == .failed ? Palette.danger : Palette.textSecondary)
+                    .foregroundStyle(Palette.textSecondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)

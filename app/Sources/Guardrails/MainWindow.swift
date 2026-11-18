@@ -36,7 +36,7 @@ struct MainWindow: View {
                 Button {
                     Task { await refreshAll() }
                 } label: {
-                    OcticonLabel("Refresh", icon: .sync)
+                    OcticonImage(icon: .sync, size: 14).accessibilityLabel("Refresh")
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Refresh (⌘R)")

@@ -38,6 +38,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Changed
 
+- A calmer look, after Claude, Linear and GitHub's Primer: every icon is an Octicon SVG in one color (no SF
+  Symbols); green and amber are gone, and red is kept for what is wrong (alarms, failed checks, destructive
+  actions); headings are small and in sentence case; every page is one centered column; rows of a kind sit in
+  one container split by hairlines instead of a card each; the empty inbox is one line; the status bar sits
+  flush at the bottom; repositories show their plain GitHub icon instead of a tinted tile.
 - Everything opens in one window, laid out like an editor: the sidebar shows the overview, the repositories
   and settings in the first tab; pull requests, reviews and the welcome checklist open in tabs of their own
   (⌘W closes one, ⌃Tab and ⌃⇧Tab move between them), and a status bar shows when the inbox was read and what

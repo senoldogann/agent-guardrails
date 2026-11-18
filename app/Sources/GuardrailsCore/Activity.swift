@@ -102,7 +102,8 @@ public func arrivalEntries(_ items: [InboxItem], at date: Date) -> [ActivityEntr
     items.map { item in
         let text = notificationText(for: item)
         return ActivityEntry(
-            date: date, outcome: .arrived, summary: text.title, repo: item.repo, title: item.title,
+            // A kit install alarm's title is a code for the app ("update"), not words for the owner.
+            date: date, outcome: .arrived, summary: text.title, repo: item.repo, title: item.repo.isEmpty ? "" : item.title,
             detail: item.note, url: item.url)
     }
 }
