@@ -38,7 +38,9 @@ struct MenuView: View {
             }
             .secondaryAction()
             .disabled(model.loadState == .loading)
-            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh (⌘R)")
+            .accessibilityLabel("Refresh")
         }
     }
 
@@ -74,6 +76,7 @@ struct MenuView: View {
                 }
                 .secondaryAction()
                 .help("Settings (⌘,)")
+                .accessibilityLabel("Settings")
                 Button("Quit") { NSApp.terminate(nil) }
                     .secondaryAction()
             }
@@ -96,6 +99,12 @@ struct InboxList: View {
         VStack(alignment: .leading, spacing: 12) {
             InboxProblems(error: model.lastError, alarms: snapshot.alarms) {
                 open(ActionRequest(kind: .update, target: "", label: "the kit install"))
+            }
+            ForEach(snapshot.notes) { note in
+                Label(displaySafe(note.note), systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(Palette.warning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if model.notificationsShown == false {
                 NotificationsOffBanner()
@@ -144,17 +153,19 @@ struct UpdateBanner: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "arrow.down.circle.fill").font(.system(size: 16))
+            // The text color is set on the texts only: on the whole row it would override the white label of the
+            // prominent Update button.
+            Image(systemName: "arrow.down.circle.fill").font(.system(size: 16)).foregroundStyle(Palette.textPrimary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("A kit update is available").font(.system(size: 13, weight: .semibold))
                 Text("Approvals and turning repos on or off wait until you update.")
                     .font(.system(size: 12))
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .foregroundStyle(Palette.textPrimary)
             Spacer(minLength: 8)
             Button("Update", action: update).primaryAction()
         }
-        .foregroundStyle(Palette.textPrimary)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(

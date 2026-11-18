@@ -39,6 +39,7 @@ struct ChecksCard: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Load the checks again")
+                        .accessibilityLabel("Load the checks again")
                     }
                 }
                 switch evidence.checks {
@@ -81,6 +82,7 @@ struct CheckRow: View {
             }
             .buttonStyle(.borderless)
             .help("Open this check on GitHub")
+            .accessibilityLabel("Open \(displaySafe(run.name)) on GitHub")
         }
     }
 }

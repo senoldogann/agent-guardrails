@@ -43,6 +43,8 @@ struct OnboardingView: View {
         .frame(width: 560)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { bringWindowsForward() }
+        // Closing the window counts like "Finish later": it opens again only from Settings.
+        .onDisappear { completed = true }
         .task { await check() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Back from System Settings, Terminal or the browser: the step may be done now.

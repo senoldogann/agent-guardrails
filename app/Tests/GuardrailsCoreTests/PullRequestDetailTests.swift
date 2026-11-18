@@ -101,4 +101,13 @@ struct PullRequestDetailTests {
             .code("approve-head 10"),
         ])
     }
+
+    @Test func keepsACharacterCutBetweenTwoChunksWhole() {
+        let text = Data("ok ş…".utf8)
+        let (whole, rest) = splitAtLastWholeCharacter(text.dropLast(1))
+        #expect(String(decoding: whole, as: UTF8.self) == "ok ş")
+        #expect(rest.count == 2)
+        #expect(splitAtLastWholeCharacter(text) == (text, Data()))
+        #expect(String(decoding: rest + text.suffix(1), as: UTF8.self) == "…")
+    }
 }

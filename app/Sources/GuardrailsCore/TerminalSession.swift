@@ -96,7 +96,14 @@ public final class TerminalSession {
 
         readers.enter()
         Thread.detachNewThread {
-            readChunks(from: terminalRead) { continuation.yield(.terminal(String(decoding: $0, as: UTF8.self))) }
+            // A chunk can end inside a multi-byte character; its first bytes wait for the next chunk.
+            var cutOff = Data()
+            readChunks(from: terminalRead) { chunk in
+                let (whole, rest) = splitAtLastWholeCharacter(cutOff + chunk)
+                cutOff = rest
+                if !whole.isEmpty { continuation.yield(.terminal(String(decoding: whole, as: UTF8.self))) }
+            }
+            if !cutOff.isEmpty { continuation.yield(.terminal(String(decoding: cutOff, as: UTF8.self))) }
             close(terminalRead)
             readers.leave()
         }
@@ -197,4 +204,17 @@ public func exitCode(fromWaitStatus status: Int32) -> Int32 {
 /// Closes descriptors of a session that could not be started.
 private func closeAll(_ descriptors: [Int32]) {
     for descriptor in descriptors { close(descriptor) }
+}
+
+/// Splits bytes read from a stream into the part that ends on a whole UTF-8 character and the first bytes of a
+/// character cut off at the end, which belong in front of the next chunk.
+public func splitAtLastWholeCharacter(_ data: Data) -> (whole: Data, rest: Data) {
+    let bytes = [UInt8](data)
+    var start = bytes.count - 1
+    while start >= 0, bytes.count - start <= 4, bytes[start] & 0xC0 == 0x80 { start -= 1 }
+    guard start >= 0 else { return (data, Data()) }
+    let lead = bytes[start]
+    let length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
+    guard bytes.count - start < length else { return (data, Data()) }
+    return (Data(bytes[..<start]), Data(bytes[start...]))
 }

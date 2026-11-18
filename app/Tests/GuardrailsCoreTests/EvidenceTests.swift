@@ -42,11 +42,9 @@ struct EvidenceTests {
 
     @Test func ordersChecksFailedFirstAndKnowsKitGates() throws {
         let json = """
-            {"total_count":3,"check_runs":[
-            {"id":1,"name":"guard","status":"completed","conclusion":"success","html_url":"h1","started_at":"2026-11-17T10:53:54Z","completed_at":"2026-11-17T10:54:03Z","app":{"slug":"github-actions"}},
-            {"id":2,"name":"checks-python","status":"completed","conclusion":"failure","html_url":"h2","started_at":null,"completed_at":null,"app":{"slug":"github-actions"}},
+            {"id":1,"name":"guard","status":"completed","conclusion":"success","html_url":"h1","started_at":"2026-11-17T10:53:54Z","completed_at":"2026-11-17T10:54:03Z","app":{"slug":"github-actions"}}
+            {"id":2,"name":"checks-python","status":"completed","conclusion":"failure","html_url":"h2","started_at":null,"completed_at":null,"app":{"slug":"github-actions"}}
             {"id":3,"name":"checks-node","status":"in_progress","conclusion":null,"html_url":"h3","started_at":"2026-11-17T10:53:54Z","completed_at":null,"app":{"slug":"other"}}
-            ]}
             """
         let runs = try parseCheckRuns(json)
         #expect(runs.map(\.name) == ["checks-python", "checks-node", "guard"])
@@ -75,8 +73,11 @@ struct ActivityTests {
     @Test func survivesARoundTripThroughTheFile() throws {
         let entries = [entry(0, repo: "acme/shop"), entry(60, repo: "acme/site")]
         let text = try entries.map(activityLine).joined(separator: "\n") + "\n"
-        #expect(try parseActivity(text) == entries)
-        #expect(throws: JSONLinesError.self) { try parseActivity("{not json}\n") }
+        #expect(parseActivity(text) == ActivityFile(entries: entries, unreadable: []))
+        // A line cut short by a crash is left out; the entries around it stay.
+        let cut = try activityLine(entries[0]) + "\n{\"date\":\"2026\n" + activityLine(entries[1]) + "\n"
+        #expect(parseActivity(cut).entries == entries)
+        #expect(parseActivity(cut).unreadable.map(\.lineNumber) == [2])
     }
 
     @Test func listsTheNewestFirstAndTrimsTheOldest() {

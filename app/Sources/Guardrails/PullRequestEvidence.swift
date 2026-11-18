@@ -62,7 +62,10 @@ final class PullRequestEvidence {
     private func loadChecks(_ pr: PullRequestPlan) async {
         let runs: [CheckRun]
         do {
-            runs = try parseCheckRuns(try await readGitHub(["api", "repos/\(pr.repo)/commits/\(pr.sha)/check-runs?per_page=100"]))
+            runs = try parseCheckRuns(
+                try await readGitHub([
+                    "api", "--paginate", "repos/\(pr.repo)/commits/\(pr.sha)/check-runs?per_page=100", "--jq", ".check_runs[]",
+                ]))
             checks = .loaded(runs)
         } catch {
             checks = .failed(String(describing: error))
@@ -122,10 +125,12 @@ struct GitHubCommandError: Error, CustomStringConvertible {
     let message: String
 
     var isNotFound: Bool { message.contains("HTTP 404") }
+    /// GitHub refused the request itself (not found, no access, invalid): asking again cannot change that.
+    var isClientError: Bool { message.range(of: #"HTTP 4\d\d"#, options: .regularExpression) != nil }
     var description: String { "gh \(arguments.joined(separator: " ")) exited with \(status): \(message)" }
 }
 
-/// Runs a read-only gh command with the owner's login. A failure other than "not found" is tried again
+/// Runs a read-only gh command with the owner's login. A failure other than GitHub refusing the request (4xx) is tried again
 /// with a growing pause, each attempt logged, and the last error is raised.
 func readGitHub(_ arguments: [String]) async throws -> String {
     let attempts = 3
@@ -138,7 +143,7 @@ func readGitHub(_ arguments: [String]) async throws -> String {
         let error = GitHubCommandError(
             arguments: arguments, status: result.status,
             message: result.standardError.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard !error.isNotFound, attempt < attempts else { throw error }
+        guard !error.isClientError, attempt < attempts else { throw error }
         NSLog("Guardrails: GitHub read failed, attempt %d of %d: %@", attempt, attempts, error.description)
         try await Task.sleep(for: .seconds(attempt * 2))
         attempt += 1

@@ -91,6 +91,7 @@ struct RollupRow: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Open the check on GitHub")
+                .accessibilityLabel("Open \(displaySafe(entry.title)) on GitHub")
             }
         }
     }

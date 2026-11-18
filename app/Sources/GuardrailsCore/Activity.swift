@@ -53,17 +53,33 @@ public func activityLine(_ entry: ActivityEntry) throws -> String {
     String(decoding: try activityEncoder().encode(entry), as: UTF8.self)
 }
 
-/// Parses the activity file, oldest first.
-public func parseActivity(_ text: String) throws -> [ActivityEntry] {
+/// The activity file as read: its entries, oldest first, and the lines that are not entries (a line cut short
+/// when the app was killed mid-write). One bad line must not hide the rest of the history.
+public struct ActivityFile: Sendable, Equatable {
+    public let entries: [ActivityEntry]
+    public let unreadable: [JSONLinesError]
+}
+
+extension JSONLinesError: Equatable {
+    public static func == (lhs: JSONLinesError, rhs: JSONLinesError) -> Bool {
+        (lhs.source, lhs.lineNumber, lhs.line, lhs.reason) == (rhs.source, rhs.lineNumber, rhs.line, rhs.reason)
+    }
+}
+
+public func parseActivity(_ text: String) -> ActivityFile {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    return try text.split(whereSeparator: \.isNewline).enumerated().map { index, line in
+    var entries: [ActivityEntry] = []
+    var unreadable: [JSONLinesError] = []
+    for (index, line) in text.split(whereSeparator: \.isNewline).enumerated() {
         do {
-            return try decoder.decode(ActivityEntry.self, from: Data(line.utf8))
+            entries.append(try decoder.decode(ActivityEntry.self, from: Data(line.utf8)))
         } catch {
-            throw JSONLinesError(source: "activity log", lineNumber: index + 1, line: String(line), reason: String(describing: error))
+            unreadable.append(
+                JSONLinesError(source: "activity log", lineNumber: index + 1, line: String(line), reason: String(describing: error)))
         }
     }
+    return ActivityFile(entries: entries, unreadable: unreadable)
 }
 
 /// The newest entries first.

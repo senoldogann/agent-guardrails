@@ -75,22 +75,11 @@ public enum CheckOutcome: Int, Sendable, Comparable {
     public static func < (lhs: CheckOutcome, rhs: CheckOutcome) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
-private struct CheckRunsPage: Decodable {
-    let checkRuns: [CheckRun]
-
-    enum CodingKeys: String, CodingKey {
-        case checkRuns = "check_runs"
-    }
-}
-
-/// Parses the check-runs response and orders it for the owner: failed first, then running, passed, skipped.
-public func parseCheckRuns(_ json: String) throws -> [CheckRun] {
-    do {
-        let page = try JSONDecoder().decode(CheckRunsPage.self, from: Data(json.utf8))
-        return page.checkRuns.sorted { ($0.outcome, $0.name) < ($1.outcome, $1.name) }
-    } catch {
-        throw JSONLinesError(source: "GitHub check runs", lineNumber: 1, line: String(json.prefix(300)), reason: String(describing: error))
-    }
+/// Parses check runs, one JSON object per line (`gh api --paginate … --jq '.check_runs[]'`, every page), and
+/// orders them for the owner: failed first, then running, passed, skipped.
+public func parseCheckRuns(_ lines: String) throws -> [CheckRun] {
+    try decodeJSONLines(lines, as: CheckRun.self, source: "GitHub check runs")
+        .sorted { ($0.outcome, $0.name) < ($1.outcome, $1.name) }
 }
 
 /// What the CI run of one `checks-<lang>` job did, read from its log. The log also carries what the code under
