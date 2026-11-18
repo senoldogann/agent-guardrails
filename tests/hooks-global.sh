@@ -36,6 +36,8 @@ block() { check 2 "$1"; }
 
 echo "bash-guard"
 allow 'git status'
+# Non-ASCII text next to escaped quotes once made a UTF-8 awk fail, which blocked the command.
+LC_ALL=en_US.UTF-8 allow 'osascript -e "click menu item \"Close…\" of w \"#7 · x\""'
 allow 'set -euo pipefail; make check'
 allow 'gh pr create --title "feat: x" --body-file /tmp/b.md --draft'
 allow 'gh pr view 12 --json state'

@@ -63,9 +63,10 @@ fi
 # cannot hide the next command), splits at ; & | ( ) backticks and newlines outside quotes, keeps quoted
 # text inside its command (so `rg "a|b"` stays one rg call and `bash -c "..."` one bash call), keeps a
 # heredoc body with the command that reads it, and drops quote characters and backslashes (as the shell
-# does, so `ap\prove` is matched as approve).
+# does, so `ap\prove` is matched as approve). It works on bytes (LC_ALL=C): every separator is ASCII, and a
+# UTF-8 awk stops with "multibyte conversion failure" on some non-ASCII text, which blocked harmless commands.
 split_commands() {
-  awk '{ s = s $0 "\n" }
+  LC_ALL=C awk '{ s = s $0 "\n" }
     END {
       out = ""; q = ""; pending = ""
       n = length(s)

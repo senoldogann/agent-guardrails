@@ -240,7 +240,7 @@ struct ReviewView: View {
                 Label(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), systemImage: "touchid")
             }
             .buttonStyle(.glassProminent)
-            .tint(request.kind == .turnOff ? Palette.dangerFill : nil)
+            .tint(request.kind == .turnOff ? Palette.dangerFill : Palette.accent)
             .disabled(pending.step == .commit && model.needsDiffReview && !model.diffOpened)
         case .verifyingOwner:
             ProgressView().controlSize(.small)

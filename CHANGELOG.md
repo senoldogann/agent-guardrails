@@ -30,6 +30,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - A welcome checklist at the first launch (again from Settings): kit installed, GitHub CLI signed in,
   notifications allowed, the agent's own GitHub App (recommended) and a first repository turned on, each with
   its live state and the button that does it.
+- A pull request window: click a PR on a repository's page to read its description (Markdown), checks,
+  comments, history and diff, and to comment, request changes, turn auto-merge on or off, convert it to a
+  draft or mark it ready, close or reopen it, or copy its link, number or checkout command. **Merge…**
+  appears once the head is approved and GitHub reports it mergeable, and merges exactly that commit; an
+  unapproved PR offers **Review…**, which still runs `approve-head`.
 
 ### Changed
 
@@ -38,6 +43,14 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - Buttons are Liquid Glass: the primary action in the app's graphite accent, so its label stays readable in
   light, dark and inactive windows; the agent panel is a glass card. The off-white page background is gone.
 - Open at login moved from the menu bar panel to Settings; the panel has a Settings button instead.
+- In light mode the selected sidebar row is light gray instead of near-black.
+
+### Fixed
+
+- An approved PR without auto-merge said "merges when checks pass" although nothing would merge it; `guardrails
+  prs --json` now reports `autoMerge` and says "auto-merge is off, so merge it yourself" in that case.
+- bash-guard blocked harmless commands whose text mixed non-ASCII characters (such as `…`) with escaped
+  quotes, because a UTF-8 `awk` stopped on them; it now splits commands byte by byte.
 
 ### Fixed
 

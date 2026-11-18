@@ -105,14 +105,14 @@ final class PullRequestEvidence {
                 "api", "repos/\(pr.repo)/contents/specs/\(ticket)/\(name)?ref=\(pr.sha)",
                 "-H", "Accept: application/vnd.github.raw+json",
             ])
-        } catch let error as GitHubReadError where error.isNotFound {
+        } catch let error as GitHubCommandError where error.isNotFound {
             return nil
         }
     }
 }
 
 /// A gh call that failed, with what it asked for and what GitHub answered.
-struct GitHubReadError: Error, CustomStringConvertible {
+struct GitHubCommandError: Error, CustomStringConvertible {
     let arguments: [String]
     let status: Int32
     let message: String
@@ -131,7 +131,7 @@ func readGitHub(_ arguments: [String]) async throws -> String {
             command: ["/usr/bin/env", "gh"] + arguments,
             environment: cliEnvironment(inherited: ProcessInfo.processInfo.environment, eventsDescriptor: nil))
         if result.status == 0 { return result.standardOutput }
-        let error = GitHubReadError(
+        let error = GitHubCommandError(
             arguments: arguments, status: result.status,
             message: result.standardError.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !error.isNotFound, attempt < attempts else { throw error }
