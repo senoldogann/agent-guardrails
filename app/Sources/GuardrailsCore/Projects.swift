@@ -66,6 +66,18 @@ public struct Project: Codable, Sendable, Hashable, Identifiable {
 
     public var id: String { repo }
     public var name: String { repo.split(separator: "/").last.map(String.init) ?? repo }
+
+    /// What GitHub's own repository icon shows: a fork, a private or a public repository.
+    public var kind: RepoKind {
+        if fork { return .fork }
+        return self.private ? .privateRepo : .publicRepo
+    }
+}
+
+public enum RepoKind: Sendable, Equatable {
+    case fork
+    case privateRepo
+    case publicRepo
 }
 
 /// Projects grouped for the sidebar: what needs the owner first, then on, ready to turn on, and the rest.

@@ -25,16 +25,26 @@ struct GuardrailsApp: App {
 
         WindowGroup("Review", id: WindowID.review, for: ActionRequest.self) { $request in
             if let request, case .success(let configuration) = model.configuration {
-                ReviewView(request: request, configuration: configuration) { model.refreshSoon(repo: request.repo) }
+                ReviewView(request: request, configuration: configuration) { model.actionFinished($0) }
             }
         }
-        .defaultSize(width: 560, height: 660)
+        .defaultSize(width: 640, height: 780)
+
+        Window("Welcome to Guardrails", id: WindowID.welcome) {
+            OnboardingView(model: model)
+        }
+        .windowResizability(.contentSize)
+
+        Settings {
+            SettingsView(model: model)
+        }
     }
 }
 
 enum WindowID {
     static let projects = "projects"
     static let review = "review"
+    static let welcome = "welcome"
 }
 
 /// The Projects window, or what to fix when the app does not know where the kit is.
@@ -70,6 +80,12 @@ struct MenuBarLabel: View {
             guard let route else { return }
             model.pendingRoute = nil
             follow(route)
+        }
+        .task {
+            // The first launch opens the welcome checklist; closing it once is enough.
+            guard !UserDefaults.standard.bool(forKey: Onboarding.completedKey) else { return }
+            openWindow(id: WindowID.welcome)
+            activateApp()
         }
     }
 

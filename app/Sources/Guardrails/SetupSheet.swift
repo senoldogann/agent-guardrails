@@ -25,7 +25,6 @@ struct SetupSheet: View {
         }
         .padding(Metrics.windowPadding)
         .frame(width: 520, height: 440)
-        .background(Palette.canvas)
         .task {
             let created = SetupModel(project: project)
             model = created
@@ -48,7 +47,7 @@ struct FolderStep: View {
                 Button(model.folder == nil ? "Choose…" : "Change…") {
                     Task { await model.chooseFolder() }
                 }
-                .buttonStyle(SecondaryPillStyle())
+                .secondaryAction()
             }
         }
     }
@@ -110,15 +109,14 @@ struct SetupActions: View {
     var body: some View {
         HStack {
             Button(model?.step == .launched ? "Done" : "Cancel", action: dismiss)
-                .buttonStyle(.glass)
+                .secondaryAction()
                 .keyboardShortcut(.cancelAction)
             Spacer()
             if let model {
                 switch model.step {
                 case .clone(.missing):
                     Button("Clone") { Task { await model.cloneRepository() } }
-                        .buttonStyle(.glassProminent)
-                        .tint(Palette.textPrimary)
+                        .primaryAction()
                 case .clone(.ready):
                     Button {
                         Task {
@@ -128,11 +126,10 @@ struct SetupActions: View {
                     } label: {
                         Label("Open Terminal and set up", systemImage: "terminal")
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(Palette.textPrimary)
+                    .primaryAction()
                 case .clone(.problem), .failed:
                     Button("Check again") { Task { await model.check() } }
-                        .buttonStyle(.glass)
+                        .secondaryAction()
                 case .needsFolder, .checking, .cloning, .launched:
                     EmptyView()
                 }

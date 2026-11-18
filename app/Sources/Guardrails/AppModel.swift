@@ -16,6 +16,8 @@ final class AppModel {
     let configuration: Result<AppConfiguration, AppConfiguration.LoadError>
     /// The Projects window's data; nil when the app does not know where the kit is.
     let projects: ProjectsModel?
+    /// What the owner did in the app and what arrived for them, kept on this Mac.
+    let activity = ActivityLog()
     private(set) var snapshot = InboxSnapshot.empty
     private(set) var loadState = LoadState.idle
     private(set) var lastError: String?
@@ -62,7 +64,9 @@ final class AppModel {
             }
             let next = try parseInbox(result.standardOutput)
             if hasLoadedOnce {
-                notify(about: newAttentionItems(previous: snapshot, current: next))
+                let arrived = newAttentionItems(previous: snapshot, current: next)
+                notify(about: arrived)
+                activity.record(arrivalEntries(arrived, at: Date()))
             }
             snapshot = next
             let waiting = waitingCount(next)
@@ -75,6 +79,17 @@ final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    /// Asks macOS again whether it shows the app's notifications, e.g. after the owner changed the setting.
+    func recheckNotifications() async {
+        notificationsShown = await notificationsAreShown()
+    }
+
+    /// Logs how a Review window's action ended and refreshes what it changed.
+    func actionFinished(_ action: ActionModel) {
+        if let entry = activityEntry(for: action, at: Date()) { activity.record([entry]) }
+        refreshSoon(repo: action.request.repo)
     }
 
     /// Refreshes the inbox and the projects shortly after an action, once GitHub reflects it.
@@ -95,7 +110,7 @@ final class AppModel {
         while !Task.isCancelled {
             await refresh()
             do {
-                try await Task.sleep(for: .seconds(300))
+                try await Task.sleep(for: .seconds(RefreshInterval.minutes * 60))
             } catch {
                 return
             }
@@ -188,4 +203,24 @@ private func requestNotificationPermission() async {
         // Notifications are optional: without permission the menu bar count still shows waiting approvals.
         NSLog("Guardrails: notification permission request failed: %@", String(describing: error))
     }
+}
+
+/// How often the inbox is loaded, set in Settings.
+enum RefreshInterval {
+    static let key = "refreshMinutes"
+    static let choices = [1, 5, 15, 30]
+    static let standard = 5
+
+    static var minutes: Int {
+        let stored = UserDefaults.standard.integer(forKey: key)
+        return choices.contains(stored) ? stored : standard
+    }
+}
+
+/// Whether gh is signed in to github.com: `gh auth status` exits 0 only then.
+func githubIsSignedIn() async throws -> Bool {
+    let result = try await runCommand(
+        command: ["/usr/bin/env", "gh", "auth", "status", "--hostname", "github.com"],
+        environment: cliEnvironment(inherited: ProcessInfo.processInfo.environment, eventsDescriptor: nil))
+    return result.status == 0
 }

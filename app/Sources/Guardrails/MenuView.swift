@@ -1,14 +1,12 @@
 import AppKit
 import GuardrailsCore
-import ServiceManagement
 import SwiftUI
 
 /// The menu bar panel: what waits for the owner, in a fixed order (alarms, approve, turn on, answer).
 struct MenuView: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
-    @State private var opensAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginItemProblem: String?
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -38,7 +36,7 @@ struct MenuView: View {
                     .rotationEffect(.degrees(model.loadState == .loading ? 180 : 0))
                     .animation(.easeInOut(duration: 0.4), value: model.loadState)
             }
-            .buttonStyle(.glass)
+            .secondaryAction()
             .disabled(model.loadState == .loading)
             .help("Refresh")
         }
@@ -66,38 +64,19 @@ struct MenuView: View {
                     openWindow(id: WindowID.projects)
                     activateApp()
                 }
-                .buttonStyle(SecondaryPillStyle())
+                .secondaryAction()
                 Spacer()
-                Toggle("Open at login", isOn: $opensAtLogin)
-                    .onChange(of: opensAtLogin) { _, enabled in applyOpensAtLogin(enabled) }
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .font(.caption)
+                Button {
+                    openSettings()
+                    activateApp()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .secondaryAction()
+                .help("Settings (⌘,)")
                 Button("Quit") { NSApp.terminate(nil) }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .foregroundStyle(Palette.textSecondary)
+                    .secondaryAction()
             }
-            if let loginItemProblem {
-                Text(loginItemProblem).font(.caption).foregroundStyle(Palette.danger)
-            }
-        }
-    }
-
-    /// Registers or removes the login item; on failure the switch goes back to what macOS reports.
-    private func applyOpensAtLogin(_ enabled: Bool) {
-        let registered = SMAppService.mainApp.status == .enabled
-        guard enabled != registered else { return }
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-            loginItemProblem = nil
-        } catch {
-            loginItemProblem = "Could not change the login item: \(error.localizedDescription)"
-            opensAtLogin = registered
         }
     }
 
@@ -173,7 +152,7 @@ struct UpdateBanner: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Update", action: update).buttonStyle(PrimaryPillStyle())
+            Button("Update", action: update).primaryAction()
         }
         .foregroundStyle(Palette.textPrimary)
         .padding(12)
@@ -199,7 +178,7 @@ struct NotificationsOffBanner: View {
             }
             Spacer(minLength: 8)
             Button("Allow…", action: openNotificationSettings)
-                .buttonStyle(SecondaryPillStyle())
+                .secondaryAction()
                 .fixedSize()
                 .help("Open System Settings › Notifications › Guardrails")
         }
@@ -259,7 +238,7 @@ struct ItemRow: View {
             }
             Spacer(minLength: 8)
             Button(actionTitle, action: action)
-                .buttonStyle(PrimaryPillStyle())
+                .primaryAction()
                 .disabled(disabled)
                 .help(disabled ? "The kit install has an alarm; on, off and approve refuse until it is fixed." : "")
         }

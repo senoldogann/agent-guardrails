@@ -77,7 +77,7 @@ struct PullRequestRow: View {
                 Button("Review") {
                     open(ActionRequest(kind: .approve, target: item.url, label: displaySafe(item.title)))
                 }
-                .buttonStyle(PrimaryPillStyle())
+                .primaryAction()
                 .disabled(approvalsLocked)
             } else {
                 Button {
@@ -85,7 +85,7 @@ struct PullRequestRow: View {
                 } label: {
                     GitHubLabel(title: "Open")
                 }
-                .buttonStyle(SecondaryPillStyle())
+                .secondaryAction()
             }
         }
         .padding(12)

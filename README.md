@@ -84,8 +84,10 @@ the app. `guardrails version` shows what is installed.
 
 `guardrails` without arguments, or the menu bar app, lists what waits for you: questions from the agent, PRs
 to approve, bootstrap PRs to turn on, and alarms. The app also sends a notification for each new one (a click
-opens its Review window), and its Projects window opens on an overview of the same list and your enforced
-repositories (⌘R refreshes, ⌘F searches).
+opens its Review window), and its Projects window opens on an overview of the same list, your enforced
+repositories and recent activity (⌘R refreshes, ⌘F searches). Before you approve, the Review window shows the
+PR's checks on that exact commit, the steps and mutation verdict of the kit gate from its CI log, and the
+spec the PR carries. Settings (⌘,) and a first-launch checklist cover the rest of the set-up on your Mac.
 
 ## The agent's own GitHub identity
 
