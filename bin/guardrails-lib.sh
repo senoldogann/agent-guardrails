@@ -435,6 +435,47 @@ ruleset_approval_mode() {
     else "-" end'
 }
 
+# Reads {branch, review, tag}: the live rulesets agent-guardrails, agent-guardrails-review and
+# agent-guardrails-tags (each null when missing), and prints one line per way they no longer protect what the
+# kit set up: inactive or missing, a bypass list where there was none, a lost rule, guard or every checks-<lang>
+# job no longer required from GitHub Actions, other merge methods, and no rule left that requires the owner's
+# approval (neither merge-approval nor an intact review ruleset). Prints nothing when they still hold. The
+# exact list of checks-<lang> jobs is not compared: it depends on the repository's languages.
+ruleset_problems() {
+  jq -r '
+    def rule($r; $t): [$r.rules[]? | select(.type == $t)][0];
+    def checks($r): rule($r; "required_status_checks").parameters.required_status_checks // [];
+    def pinned($r; f): any(checks($r)[]; (.context | f) and .integration_id == 15368);
+    def actors($r): [$r.bypass_actors[]? | {actor_id, actor_type, bypass_mode}];
+    (.branch) as $b | (.review) as $v | (.tag) as $t
+    # Without the branch ruleset nothing is enforced: that one line says it all.
+    | if $b == null then "the agent-guardrails ruleset is missing" else
+         (if $b.enforcement != "active" then "the agent-guardrails ruleset is \($b.enforcement)" else empty end),
+         (if (actors($b) | length) > 0 then "the agent-guardrails ruleset has a bypass list" else empty end),
+         (["deletion", "non_fast_forward", "required_linear_history", "pull_request", "required_status_checks"][]
+           | select(rule($b; .) == null) | "the agent-guardrails ruleset lost its \(.) rule"),
+         (if pinned($b; . == "guard") then empty else "guard is no longer a required check from GitHub Actions" end),
+         (if pinned($b; startswith("checks-")) then empty
+          else "no checks-<lang> job is a required check from GitHub Actions any more" end),
+         (if (rule($b; "pull_request").parameters.allowed_merge_methods // []) == ["squash"] then empty
+          else "the agent-guardrails ruleset allows merges other than squash" end),
+      (if any(checks($b)[]; .context == "merge-approval") then empty
+       elif $v == null then "no ruleset requires your approval any more (neither merge-approval nor agent-guardrails-review)"
+       else
+         (if $v.enforcement != "active" then "the agent-guardrails-review ruleset is \($v.enforcement)" else empty end),
+         (if actors($v) == [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}] then empty
+          else "the agent-guardrails-review ruleset has a changed bypass list" end),
+         (rule($v; "pull_request").parameters as $p
+          | if ($p.required_approving_review_count // 0) >= 1 and $p.require_code_owner_review
+              and $p.dismiss_stale_reviews_on_push and $p.require_last_push_approval then empty
+            else "the agent-guardrails-review ruleset no longer requires a fresh code owner review" end)
+       end),
+      (if $t == null then "the agent-guardrails-tags ruleset is missing"
+       elif $t.enforcement != "active" then "the agent-guardrails-tags ruleset is \($t.enforcement)"
+       else empty end)
+      end'
+}
+
 # Tags are created, moved and deleted by repository admins only, so a release workflow cannot be triggered by
 # a tag the agent's bot made. In status mode the agent uses the owner's admin login, so this holds only for
 # other writers there. Argument: ruleset name.
@@ -499,11 +540,26 @@ kit_file_at() {
   kit_git show "$1:$2" 2>/dev/null || printf 'unknown\n'
 }
 
+# Prints the kit checkout whose bash-guard the owner's Claude Code settings run (the active install), nothing
+# when no settings register it.
+active_install() {
+  local settings="$HOME/.claude/settings.json" guard
+  [[ -f $settings ]] || return 0
+  guard=$(jq -r '[.. | .command? // empty | strings | select(endswith("/hooks-global/bash-guard.sh"))][0] // empty' "$settings") ||
+    die "cannot read $settings"
+  [[ -z $guard ]] || printf '%s\n' "${guard%/hooks-global/bash-guard.sh}"
+}
+
 # Fast-forwards the kit install to its origin's main after the owner confirms the exact new commit, then runs
 # install.sh again and, on macOS with the app installed, rebuilds the app. Refuses local changes, a branch
 # other than main, and an origin main that does not contain the installed commit.
 kit_update() {
-  local origin current target commits from_version to_version
+  local origin current target commits from_version to_version active
+  # Only the active install may update: install.sh moves every link and hook to the clone it runs from, and a
+  # test build of the app once updated a scratch clone that way, leaving the owner's commands and hooks in it.
+  active=$(active_install)
+  [[ -z $active || $active == "$kit" ]] ||
+    die "the active kit install is $active (its bash-guard runs in Claude Code), not $kit; update that one: $active/bin/guardrails update"
   [[ -z $(kit_local_changes) ]] ||
     die "the kit install at $kit has local changes, so it cannot be fast-forwarded. Inspect them with: git -C $kit status"
   [[ $(kit_git symbolic-ref --quiet --short HEAD) == main ]] ||

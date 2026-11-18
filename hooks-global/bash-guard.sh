@@ -44,7 +44,8 @@ matches() {
 # Everywhere: the owner's commands, the approval status and the rulesets of kit repositories, and the
 # owner's list of enforced repositories are the owner's alone.
 matches 'merge-approval' && deny "merge approval (owner-only commit status)"
-if matches '\.config' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
+# .config as a path component, not inside a word: `model.configuration` next to an agent-guardrails path is fine.
+if matches '\.config([/[:space:]]|$)' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
 if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit install"; fi
 # The topic is matched as a value (`--add-topic agent-guardrails`, `names[]=…`, `topic:…`), not as a path or
 # repository name (`~/src/agent-guardrails`, `owner/agent-guardrails`), so topics of the kit's own repository

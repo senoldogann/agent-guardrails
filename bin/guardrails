@@ -176,7 +176,7 @@ enforce() {
   else
     put_ruleset "$repo" "$ruleset_name" "$(status_mode_ruleset "$ruleset_name" "$checks")"
     delete_ruleset "$repo" "$review_ruleset_name"
-    mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval); tags: admins, which includes the agent while it uses your login"
+    mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval); tags: admins, which includes the agent while it uses your login. For a team, use review mode: guardrails agent create, install the App here, then guardrails on $repo again"
   fi
   put_ruleset "$repo" "$tag_ruleset_name" "$(tag_ruleset "$tag_ruleset_name")"
   gh api -X PATCH "repos/$repo" -F allow_squash_merge=true -F allow_merge_commit=false \
@@ -379,22 +379,36 @@ bootstrap_items() {
   done <<<"$prs"
 }
 
+# Prints the live rulesets of a repository as {branch, review, tag} for ruleset_problems (null when missing).
+# Dies when GitHub cannot be read.
+live_rulesets() {
+  local branch review tag
+  branch=$(ruleset_by_name "$1" "$ruleset_name") || exit 1
+  review=$(ruleset_by_name "$1" "$review_ruleset_name") || exit 1
+  tag=$(ruleset_by_name "$1" "$tag_ruleset_name") || exit 1
+  jq -n -c --argjson branch "${branch:-null}" --argjson review "${review:-null}" --argjson tag "${tag:-null}" \
+    '{branch: $branch, review: $review, tag: $tag}'
+}
+
 # Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
 # by the ASCII unit separator (\037), so empty fields survive `read`.
 # Kinds: alarm, note, repo (an enforced repo; note = its ruleset state), answer, approve, wait, blocked
 # (see classify_prs) and turn-on (a /guardrails-init PR in a repo that is not enforced yet).
 # Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state items kind url title note
+  local repo state rulesets items kind url title note problem
   kit_install_alarm
   topic_alarms || exit 1
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    state=$(ruleset_state "$repo") || exit 1
+    rulesets=$(live_rulesets "$repo") || exit 1
+    state=$(jq -r '.branch.enforcement // "missing"' <<<"$rulesets")
     printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
-    [[ $state == active ]] ||
-      printf 'alarm\037%s\037\037\037%s: ruleset %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
-        "$repo" "$repo" "$state" "$repo"
+    while IFS= read -r problem; do
+      [[ -n $problem ]] || continue
+      printf 'alarm\037%s\037\037\037%s: %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
+        "$repo" "$repo" "$problem" "$repo"
+    done < <(ruleset_problems <<<"$rulesets")
     items=$(repo_items "$repo") || exit 1
     while IFS=$'\t' read -r kind url title note; do
       [[ -n $kind ]] || continue

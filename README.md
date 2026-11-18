@@ -130,12 +130,18 @@ merges a PR that removes the kit's files; the repository settings stay.
 - **Status mode does not stop a hostile agent.** The agent runs with your login, which can change rulesets.
   `bash-guard` blocks owner-only commands, credential reads and settings changes by matching command text,
   which a deliberately disguised command can evade. It stops mistakes and shortcuts, not an adversary.
+  **Teams use review mode:** register the agent App (`guardrails agent create`), install it on the
+  repositories, and run `guardrails on <repo>` again. Status mode is for one owner who accepts these limits.
+- **The agent's identity is checked per session.** In a kit repository with the agent App registered, gh and
+  `git push` are blocked unless the session's identity was set up for that repository at its start; a session
+  started elsewhere would otherwise reach GitHub with your login.
 - **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
   computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a
   container or in CI with only the App's token.
 - Other administrators of a repository can change or remove its rulesets. The inbox raises an alarm when the
-  main agent-guardrails ruleset is not active or the list of enforced repositories stops matching; it does
-  not yet compare the rulesets' contents (required checks, bypass list) or the review and tag rulesets.
+  list of enforced repositories stops matching, or when the live rulesets stop protecting what the kit set up:
+  a ruleset missing or inactive, a bypass list added, a rule removed, guard or the language checks no longer
+  required from GitHub Actions, or no rule left that requires your approval.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
