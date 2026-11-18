@@ -13,9 +13,10 @@ enum Palette {
     static let dangerFill = Color(light: 0xD92D20, dark: 0xB42318)
     static let warning = Color(light: 0xB54708, dark: 0xFDB022)
     static let success = Color(light: 0x067647, dark: 0x47CD89)
-    /// Fill of primary buttons, switches and progress bars behind white: graphite in both modes. The asset
-    /// catalog's AccentColor is lighter, because macOS draws the sidebar selection in it (`.tint` does not
-    /// reach the selection) and a graphite row in light mode reads as black.
+    /// Fill of primary buttons and switches behind white: graphite in both modes, set where it is used. The
+    /// asset catalog's AccentColor is a light gray in light mode, because macOS draws the sidebar selection in
+    /// it (`.tint` does not reach the selection) and a graphite row reads as black; plain glass buttons take
+    /// that light accent too, so no window sets this tint for all its controls.
     static let accent = Color(light: 0x3F3F46, dark: 0x4C4C52)
 }
 

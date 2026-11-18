@@ -47,12 +47,25 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- Review window: "Open changes on GitHub" shows exactly the planned commit (a compare view), the size of the
+  change shows only while it describes that commit, and a PR that moved after the check says so.
+- Agent-written titles, labels, file names and notification texts drop invisible format characters everywhere,
+  not only in the PR list.
+- Cancelling a Review, or a run that stopped while Touch ID was open, no longer brings back the confirm button
+  or logs a failure; closing the window after the last confirmation keeps reading the CLI, so the result is
+  still logged. Writing to a CLI that already exited cannot crash the app.
+- A refresh or projects load asked for while one runs now runs right after it, so an action shows up at once; a
+  shorter refresh interval takes effect without waiting out the old one; commands that hang are stopped after
+  five minutes.
+- A PR list that cannot load says why instead of loading forever; stale repositories and the inbox's notes
+  (such as an unreachable kit origin) are shown.
+- One unreadable line no longer hides the whole activity log; the closed welcome window stays closed; Review
+  opens a new run for a PR whose old window is still open; icon buttons have VoiceOver labels; characters cut
+  between two chunks of CLI output stay whole; checks read every page, and GitHub's refusals are not retried.
 - An approved PR without auto-merge said "merges when checks pass" although nothing would merge it; `guardrails
   prs --json` now reports `autoMerge` and says "auto-merge is off, so merge it yourself" in that case.
 - bash-guard blocked harmless commands whose text mixed non-ASCII characters (such as `…`) with escaped
   quotes, because a UTF-8 `awk` stopped on them; it now splits commands byte by byte.
-
-### Fixed
 
 - `ci-run` no longer risks dying of SIGPIPE while it looks for a draft spec, and the kit drift check stops on
   a `diff` error instead of reporting no drift.

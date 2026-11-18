@@ -14,39 +14,38 @@ struct GuardrailsApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuView(model: model).tint(Palette.accent)
+            MenuView(model: model)
         } label: {
             MenuBarLabel(model: model)
         }
         .menuBarExtraStyle(.window)
 
         Window("Guardrails", id: WindowID.projects) {
-            ProjectsWindow(model: model).tint(Palette.accent)
+            ProjectsWindow(model: model)
         }
         .defaultSize(width: 980, height: 660)
 
         WindowGroup("Review", id: WindowID.review, for: ActionRequest.self) { $request in
             if let request, case .success(let configuration) = model.configuration {
                 ReviewView(request: request, configuration: configuration) { model.actionFinished($0) }
-                    .tint(Palette.accent)
             }
         }
         .defaultSize(width: 640, height: 780)
 
         WindowGroup("Pull Request", id: WindowID.pullRequest, for: PullRequestRef.self) { $ref in
             if let ref {
-                PullRequestWindow(ref: ref, model: model).tint(Palette.accent)
+                PullRequestWindow(ref: ref, model: model)
             }
         }
         .defaultSize(width: 820, height: 860)
 
         Window("Welcome to Guardrails", id: WindowID.welcome) {
-            OnboardingView(model: model).tint(Palette.accent)
+            OnboardingView(model: model)
         }
         .windowResizability(.contentSize)
 
         Settings {
-            SettingsView(model: model).tint(Palette.accent)
+            SettingsView(model: model)
         }
     }
 }
