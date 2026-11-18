@@ -109,6 +109,9 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, Metrics.windowPadding)
         .padding(.vertical, 16)
+        // The same centered column as the page below it.
+        .frame(maxWidth: pageWidth + 2 * Metrics.windowPadding)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -129,12 +132,12 @@ struct PullRequestStateChip: View {
 
     private var stateLook: (String, Color) {
         switch pr.state {
-        case "MERGED": ("Merged", Palette.success)
+        case "MERGED": ("Merged", Palette.textSecondary)
         case "CLOSED": ("Closed", Palette.danger)
         default:
             if pr.isDraft { ("Draft", Palette.textSecondary) }
-            else if pr.isApproved { (pr.autoMergeRequest == nil ? "Approved" : "Approved · auto-merge on", Palette.success) }
-            else { (pr.autoMergeRequest == nil ? "Open" : "Open · auto-merge on", Palette.warning) }
+            else if pr.isApproved { (pr.autoMergeRequest == nil ? "Approved" : "Approved · auto-merge on", Palette.textSecondary) }
+            else { (pr.autoMergeRequest == nil ? "Open" : "Open · auto-merge on", Palette.textSecondary) }
         }
     }
 }
@@ -149,8 +152,8 @@ struct ChecksSummary: View {
         let (symbol, text, color): (Octicon, String, Color) =
             if checks.isEmpty { (.circle, "No checks", Palette.textSecondary) }
             else if failed > 0 { (.xCircle, "\(failed) failing", Palette.danger) }
-            else if running > 0 { (.clock, "\(running) running", Palette.warning) }
-            else { (.checkCircle, "All checks passed", Palette.success) }
+            else if running > 0 { (.clock, "\(running) running", Palette.textSecondary) }
+            else { (.checkCircle, "All checks passed", Palette.textSecondary) }
         OcticonLabel(text, icon: symbol)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(color)

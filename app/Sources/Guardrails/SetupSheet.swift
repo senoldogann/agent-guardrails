@@ -11,7 +11,7 @@ struct SetupSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Set up \(project.name)").font(.displayTitle).tracking(-0.3)
+            Text("Set up \(project.name)").font(.displayTitle)
             Text("Claude adds the guardrails kit in Terminal and opens a bootstrap PR. You stay in control: it runs with its normal permission prompts, and nothing is enforced until you turn it on.")
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.textSecondary)
@@ -87,7 +87,7 @@ struct CloneStatus: View {
         case .clone(.ready):
             OcticonLabel("Clean clone on \(branch), origin matches", icon: .checkCircle)
                 .font(.caption)
-                .foregroundStyle(Palette.success)
+                .foregroundStyle(Palette.textSecondary)
         case .clone(.problem(let message)), .failed(let message):
             OcticonLabel(message, icon: .alert)
                 .font(.caption)
@@ -96,7 +96,7 @@ struct CloneStatus: View {
         case .launched:
             OcticonLabel("Terminal opened. Follow Claude there.", icon: .terminal)
                 .font(.caption)
-                .foregroundStyle(Palette.success)
+                .foregroundStyle(Palette.textSecondary)
         }
     }
 }

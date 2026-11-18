@@ -17,15 +17,16 @@ struct ReviewView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(request.windowTitle).font(.displayTitle).tracking(-0.3)
+                    Text(request.windowTitle).font(.displayTitle)
                     if let model {
                         planSection(model)
                         statusSection(model)
                         logSection(model)
                     }
                 }
+                .frame(maxWidth: pageWidth, alignment: .leading)
                 .padding(Metrics.windowPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
             if let model { actionBar(model) }
         }
@@ -105,7 +106,7 @@ struct ReviewView: View {
                     if case .turnOn = model.plan {
                         OcticonLabel("Kit files match your installed kit", icon: .checkCircle)
                             .font(.caption)
-                            .foregroundStyle(Palette.success)
+                            .foregroundStyle(Palette.textSecondary)
                     }
                     if pr.isOwnMerge {
                         OcticonLabel("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
@@ -134,7 +135,7 @@ struct ReviewView: View {
                     }
                 }
                 ForEach(removal.notes, id: \.self) { note in
-                    Text(note).font(.caption).foregroundStyle(Palette.warning)
+                    Text(note).font(.caption).foregroundStyle(Palette.textSecondary)
                 }
             }
         }
@@ -156,7 +157,7 @@ struct ReviewView: View {
             }
         case .succeeded:
             ResultCard(
-                symbol: .checkCircle, color: Palette.success, title: successTitle(model),
+                symbol: .checkCircle, color: Palette.textSecondary, title: successTitle(model),
                 message: successMessage(model))
         case .failed(let message):
             ResultCard(symbol: .xCircle, color: Palette.danger, title: "Stopped", message: message)
@@ -285,7 +286,7 @@ struct FileGroups: View {
                 group(title: "Workflows and guardrails · can change what CI enforces", color: Palette.danger, files: workflows)
             }
             if !humanOwned.isEmpty {
-                group(title: "Human-owned · yours from now on", color: Palette.warning, files: humanOwned)
+                group(title: "Human-owned · yours from now on", color: Palette.textSecondary, files: humanOwned)
             }
             if !agent.isEmpty {
                 group(title: "Written by the agent", color: Palette.textSecondary, files: agent)

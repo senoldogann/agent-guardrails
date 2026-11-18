@@ -140,7 +140,7 @@ struct ActivityList: View {
     let emptyText: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        RowGroup {
             if entries.isEmpty {
                 Text(emptyText).font(.caption).foregroundStyle(Palette.textSecondary).padding(12)
             }
@@ -149,9 +149,6 @@ struct ActivityList: View {
                 ActivityRow(entry: entry)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.rowRadius).strokeBorder(Palette.hairline))
     }
 }
 
@@ -200,7 +197,7 @@ struct ActivitySymbol: View {
     var body: some View {
         Group {
             switch outcome {
-            case .succeeded: OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.success)
+            case .succeeded: OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.textSecondary)
             case .failed: OcticonImage(icon: .xCircle, size: 14).foregroundStyle(Palette.danger)
             case .arrived: OcticonImage(icon: .inbox, size: 14).foregroundStyle(Palette.textSecondary)
             }

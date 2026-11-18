@@ -24,7 +24,7 @@ struct MenuView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Guardrails").font(.displayTitle).tracking(-0.3)
+                Text("Guardrails").font(.displayTitle)
                 Text(updatedText).font(.caption).foregroundStyle(Palette.textSecondary)
             }
             Spacer()
@@ -101,7 +101,7 @@ struct InboxList: View {
             ForEach(snapshot.notes) { note in
                 OcticonLabel(displaySafe(note.note), icon: .info)
                     .font(.caption)
-                    .foregroundStyle(Palette.warning)
+                    .foregroundStyle(Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.notificationsShown == false {
@@ -177,7 +177,7 @@ struct UpdateBanner: View {
 struct NotificationsOffBanner: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            OcticonImage(icon: .bellSlash, size: 14).font(.system(size: 15)).foregroundStyle(Palette.warning)
+            OcticonImage(icon: .bellSlash, size: 14).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Notifications are off").font(.system(size: 13, weight: .semibold))
                 Text("New approvals and alarms reach you only here until you allow them.")
@@ -264,7 +264,7 @@ struct StatusPanel: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            OcticonImage(icon: symbol, size: 14).foregroundStyle(Palette.warning)
+            OcticonImage(icon: symbol, size: 14).foregroundStyle(Palette.textSecondary)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 13, weight: .semibold))
                 Text(message)
@@ -285,22 +285,22 @@ struct QuietState: View {
     let notifies: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            OcticonImage(icon: .shieldCheck, size: 14)
-                .font(.system(size: 30, weight: .light))
+        HStack(alignment: .top, spacing: 10) {
+            OcticonImage(icon: .check, size: 14).foregroundStyle(Palette.textSecondary).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Nothing waits for you").font(.system(size: 13, weight: .medium))
+                Text(
+                    hasRepos
+                        ? (notifies ? "New approvals show up here and as a notification." : "New approvals show up here.")
+                        : "No enforced repos yet. Ask your agent for /guardrails-init in a project; its PR appears here to turn on."
+                )
+                .font(.caption)
                 .foregroundStyle(Palette.textSecondary)
-            Text("Nothing waits for you").font(.system(size: 14, weight: .medium))
-            Text(
-                hasRepos
-                    ? (notifies ? "New approvals show up here and as a notification." : "New approvals show up here.")
-                    : "No enforced repos yet. Ask your agent for /guardrails-init in a project; its PR appears here to turn on."
-            )
-            .font(.caption)
-            .foregroundStyle(Palette.textSecondary)
-            .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 }
 

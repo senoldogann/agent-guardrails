@@ -262,10 +262,8 @@ struct WorkspaceStatusBar: View {
         .font(.system(size: 11))
         .foregroundStyle(Palette.textSecondary)
         .padding(.horizontal, 14)
-        .frame(height: 28)
-        .glassEffect(.regular, in: .capsule)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
+        .frame(height: 26)
+        .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
     }
 
     private var updatedText: String {

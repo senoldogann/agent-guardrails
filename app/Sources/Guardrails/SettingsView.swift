@@ -39,7 +39,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .frame(maxWidth: 640)
+        .frame(maxWidth: pageWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { bringWindowsForward() }
         .task { await model.recheckNotifications() }
@@ -115,8 +115,8 @@ struct NotificationSetting: View {
         LabeledContent("Shown by macOS") {
             HStack(spacing: 10) {
                 switch shown {
-                case true?: OcticonLabel("On", icon: .bell).foregroundStyle(Palette.success)
-                case false?: OcticonLabel("Off", icon: .bellSlash).foregroundStyle(Palette.warning)
+                case true?: OcticonLabel("On", icon: .bell).foregroundStyle(Palette.textSecondary)
+                case false?: OcticonLabel("Off", icon: .bellSlash).foregroundStyle(Palette.textSecondary)
                 case nil: ProgressView().controlSize(.small)
                 }
                 Button(shown == false ? "Allow…" : "Change…", action: openNotificationSettings)

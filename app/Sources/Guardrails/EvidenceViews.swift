@@ -8,7 +8,7 @@ struct DiffStatsLabel: View {
     var body: some View {
         if case .loaded(let stats) = diff {
             HStack(spacing: 6) {
-                Text("+\(stats.additions)").foregroundStyle(Palette.success)
+                Text("+\(stats.additions)").foregroundStyle(Palette.textSecondary)
                 Text("−\(stats.deletions)").foregroundStyle(Palette.danger)
                 Text("· \(stats.changedFiles == 1 ? "1 file" : "\(stats.changedFiles) files")")
                     .foregroundStyle(Palette.textSecondary)
@@ -49,7 +49,7 @@ struct ChecksCard: View {
                 case .failed(let message):
                     Text(message).font(.caption).foregroundStyle(Palette.danger).textSelection(.enabled)
                 case .loaded(let runs) where runs.isEmpty:
-                    Text("No checks ran on this commit.").font(.caption).foregroundStyle(Palette.warning)
+                    Text("No checks ran on this commit.").font(.caption).foregroundStyle(Palette.textSecondary)
                 case .loaded(let runs):
                     ForEach(runs) { run in
                         CheckRow(run: run)
@@ -94,7 +94,7 @@ struct CheckSymbol: View {
     var body: some View {
         switch outcome {
         case .passed:
-            OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.success).frame(width: 16)
+            OcticonImage(icon: .checkCircle, size: 14).foregroundStyle(Palette.textSecondary).frame(width: 16)
         case .failed:
             OcticonImage(icon: .xCircle, size: 14).foregroundStyle(Palette.danger).frame(width: 16)
         case .running:
@@ -142,7 +142,7 @@ struct GateSteps: View {
                     HStack(spacing: 5) {
                         OcticonImage(icon: step.passed ? .check : (step.exitCode == nil ? .kebabHorizontal : .x), size: 12)
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(step.passed ? Palette.success : Palette.danger)
+                            .foregroundStyle(step.passed ? Palette.textSecondary : Palette.danger)
                         Text(displaySafe(step.name)).font(.system(size: 11, design: .monospaced)).lineLimit(1)
                     }
                     .help(step.exitCode.map { "exit \($0)" } ?? "the log ends before this step finished")
@@ -176,7 +176,7 @@ struct MutationLine: View {
                         .foregroundStyle(counts.failing > 0 ? Palette.danger : Palette.textPrimary)
                 }
                 ProgressView(value: Double(counts.killed + counts.accepted), total: Double(max(counts.counted, 1)))
-                    .tint(counts.failing > 0 ? Palette.danger : Palette.success)
+                    .tint(counts.failing > 0 ? Palette.danger : Palette.textSecondary)
             }
         case .nothingToMutate:
             note("Mutation · no changed source to mutate")

@@ -60,9 +60,9 @@ struct ProjectHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            RepoIcon(project: project, size: 46)
+            RepoIcon(project: project, size: 22)
             VStack(alignment: .leading, spacing: 6) {
-                Text(project.name).font(.system(size: 28, weight: .medium)).tracking(-0.5)
+                Text(project.name).font(.displayTitle)
                 HStack(spacing: 8) {
                     StateChip(state: project.state)
                     if project.private { Chip(text: "Private") }
@@ -161,7 +161,7 @@ struct ProjectStateCard: View {
             Card {
                 VStack(alignment: .leading, spacing: 10) {
                     Explainer(
-                        symbol: .box, color: Palette.warning, title: "Ready to turn on",
+                        symbol: .box, color: Palette.textSecondary, title: "Ready to turn on",
                         text: "The bootstrap PR is open. Turning on checks its kit files against your installed kit, merges exactly the commit you confirm and applies the ruleset.")
                     HStack {
                         Text(displaySafe(project.setupTitle)).font(.system(size: 13, weight: .medium))
@@ -196,7 +196,7 @@ struct OffCard: View {
         Card {
             if let setupStarted {
                 Explainer(
-                    symbol: .hourglass, color: Palette.warning, title: "Setting up…",
+                    symbol: .hourglass, color: Palette.textSecondary, title: "Setting up…",
                     text: "Started \(setupStarted.formatted(date: .omitted, time: .shortened)) in Terminal. When Claude opens the bootstrap PR, this project moves to Ready to turn on. Refresh to check; if Terminal closed early, set it up again.")
             } else {
                 Explainer(
@@ -303,7 +303,7 @@ struct OnCard: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                Explainer(symbol: .shieldCheck, color: Palette.success, title: title, text: text)
+                Explainer(symbol: .shieldCheck, color: Palette.textSecondary, title: title, text: text)
                 if project.canSwitchToReviewMode {
                     HStack {
                         Text("The agent App is installed here.").font(.caption).foregroundStyle(Palette.textSecondary)

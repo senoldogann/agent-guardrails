@@ -233,8 +233,8 @@ struct TimelineRow: View {
 
     private var color: Color {
         switch event.kind {
-        case .review(let state) where state == "APPROVED": Palette.success
-        case .review(let state) where state == "CHANGES_REQUESTED": Palette.warning
+        case .review(let state) where state == "APPROVED": Palette.textSecondary
+        case .review(let state) where state == "CHANGES_REQUESTED": Palette.textSecondary
         default: Palette.textSecondary
         }
     }
@@ -297,7 +297,7 @@ struct FileDiffCard: View {
                     OcticonImage(icon: isExpanded ? .chevronDown : .chevronRight, size: 12)
                     Text(displaySafe(file.path)).font(.mono).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
-                    Text("+\(file.additions)").foregroundStyle(Palette.success)
+                    Text("+\(file.additions)").foregroundStyle(Palette.textSecondary)
                     Text("−\(file.deletions)").foregroundStyle(Palette.danger)
                 }
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
@@ -347,7 +347,7 @@ struct DiffLineRow: View {
 
     private var background: Color {
         switch line.kind {
-        case .added: Palette.success.opacity(0.12)
+        case .added: Palette.textSecondary.opacity(0.12)
         case .removed: Palette.danger.opacity(0.12)
         case .hunk: Palette.surfaceMuted
         default: .clear

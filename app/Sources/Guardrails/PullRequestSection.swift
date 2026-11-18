@@ -55,8 +55,9 @@ struct PullRequestList: View {
                     Text("No open pull requests.").font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
                 }
             } else {
-                VStack(spacing: 8) {
-                    ForEach(list.items) { item in
+                RowGroup {
+                    ForEach(Array(list.items.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { Divider().padding(.leading, 46) }
                         PullRequestRow(
                             repo: repo, item: item, approvalsLocked: approvalsLocked, open: open,
                             openPullRequest: openPullRequest)
@@ -116,9 +117,8 @@ struct PullRequestRow: View {
                 .secondaryAction()
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.rowRadius).strokeBorder(Palette.hairline))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
 
@@ -147,10 +147,10 @@ struct KindBadge: View {
     private var color: Color {
         switch kind {
         case .approve: Palette.textPrimary
-        case .answer: Palette.warning
+        case .answer: Palette.textSecondary
         case .wait, .draft: Palette.textSecondary
         case .blocked: Palette.danger
-        case .approved: Palette.success
+        case .approved: Palette.textSecondary
         }
     }
 
