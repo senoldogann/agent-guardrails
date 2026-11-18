@@ -22,8 +22,11 @@ struct MainWindow: View {
             VStack(spacing: 0) {
                 WorkspaceTabBar(model: model, projects: projects)
                 Divider()
+                // A minimum of zero: a page taller than the window scrolls inside it instead of pushing the
+                // tab and status bars (and the sidebar with them) out of the window.
                 WorkspacePageView(page: workspace.strip.selected, model: model, projects: projects)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .clipped()
                 WorkspaceStatusBar(model: model, projects: projects)
             }
         }
@@ -175,6 +178,7 @@ struct WorkspaceTabBar: View {
             .padding(.vertical, 6)
         }
         .scrollIndicators(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
         .background(Palette.surfaceMuted)
     }
 }
@@ -244,7 +248,7 @@ struct WorkspaceStatusBar: View {
                 Label(snapshot.alarms.count == 1 ? "1 alarm" : "\(snapshot.alarms.count) alarms", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(Palette.danger)
             }
-            Label(waiting == 1 ? "1 waits for you" : "\(waiting) wait for you", systemImage: "tray")
+            Label(waiting == 0 ? "Nothing waits for you" : (waiting == 1 ? "1 waits for you" : "\(waiting) wait for you"), systemImage: "tray")
             Label(enforcedText, systemImage: "checkmark.shield")
             Spacer()
             if model.loadState == .loading || projects.isLoading {
@@ -268,8 +272,10 @@ struct WorkspaceStatusBar: View {
         return "Updated \(updated.formatted(date: .omitted, time: .shortened))"
     }
 
+    /// Counted as the overview counts them: enforced repositories, alarms included.
     private var enforcedText: String {
-        let count = model.snapshot.repos.count
+        let groups = groupProjects(projects.projects, matching: "")
+        let count = groups.needsYou.count + groups.on.count
         return count == 1 ? "1 enforced repository" : "\(count) enforced repositories"
     }
 }

@@ -36,7 +36,7 @@ struct ProjectDetail: View {
                 }
             }
             .padding(Metrics.windowPadding)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: pageWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(project.name)

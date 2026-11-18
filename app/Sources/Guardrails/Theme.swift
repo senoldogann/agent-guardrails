@@ -126,3 +126,6 @@ struct AlarmBanner: View {
         .background(RoundedRectangle(cornerRadius: Metrics.rowRadius).fill(Palette.dangerFill))
     }
 }
+
+/// The widest a page's column of cards gets: readable lines in a full-screen window.
+let pageWidth: CGFloat = 1040
