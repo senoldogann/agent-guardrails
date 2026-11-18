@@ -24,7 +24,6 @@ struct PullRequestPage: View {
                 PullRequestTabContent(pr: pr, ref: ref, pullRequest: pullRequest, model: model, tab: pullRequest.tab)
             }
         }
-        .background(Palette.surface)
         .task {
             // Loaded once when the tab opens; Refresh (⌘R in the page) loads it again.
             if case .loading = pullRequest.detail { await pullRequest.load() }

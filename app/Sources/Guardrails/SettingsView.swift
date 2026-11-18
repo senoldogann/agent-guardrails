@@ -38,8 +38,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        // Switches in graphite: the asset catalog's accent is a light gray for the sidebar selection.
-        .tint(Palette.accent)
+        .scrollContentBackground(.hidden)
         .frame(maxWidth: 640)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { bringWindowsForward() }
@@ -68,6 +67,8 @@ struct LoginItemToggle: View {
 
     var body: some View {
         Toggle("Open at login", isOn: $opensAtLogin)
+            // Graphite when on: the asset catalog's accent is a light gray for the sidebar selection.
+            .tint(Palette.accent)
             .onChange(of: opensAtLogin) { _, enabled in apply(enabled) }
         if let problem {
             Text(problem).font(.caption).foregroundStyle(Palette.danger)

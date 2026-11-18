@@ -21,7 +21,6 @@ struct MainWindow: View {
         } detail: {
             VStack(spacing: 0) {
                 WorkspaceTabBar(model: model, projects: projects)
-                Divider()
                 // A minimum of zero: a page taller than the window scrolls inside it instead of pushing the
                 // tab and status bars (and the sidebar with them) out of the window.
                 WorkspacePageView(page: workspace.strip.selected, model: model, projects: projects)
@@ -49,6 +48,8 @@ struct MainWindow: View {
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .frame(minWidth: 900, minHeight: 600)
+        // The window itself is glass: the desktop shows through, blurred, behind the pages.
+        .containerBackground(.thinMaterial, for: .window)
         .onAppear { bringWindowsForward() }
         .task { await refreshWhileOpen() }
     }
@@ -163,7 +164,8 @@ struct WorkspaceTabBar: View {
     var body: some View {
         let workspace = model.workspace
         ScrollView(.horizontal) {
-            HStack(spacing: 4) {
+            GlassEffectContainer(spacing: 6) {
+            HStack(spacing: 6) {
                 ForEach(workspace.strip.tabs, id: \.self) { page in
                     WorkspaceTab(
                         title: pageTitle(page, workspace: workspace, projects: projects),
@@ -174,12 +176,12 @@ struct WorkspaceTabBar: View {
                         close: { workspace.close(page) })
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
         .scrollIndicators(.hidden)
         .fixedSize(horizontal: false, vertical: true)
-        .background(Palette.surfaceMuted)
     }
 }
 
@@ -216,15 +218,13 @@ struct WorkspaceTab: View {
                 .accessibilityLabel("Close \(title)")
             }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, canClose ? 6 : 10)
-        .frame(height: 28)
+        .padding(.leading, 12)
+        .padding(.trailing, canClose ? 7 : 12)
+        .frame(height: 30)
         .frame(maxWidth: 240)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(isSelected ? Palette.surface : (isHovered ? Palette.hairline.opacity(0.6) : .clear)))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isSelected ? Palette.hairline : .clear))
-        .contentShape(Rectangle())
+        // The selected tab is a piece of glass; the others are labels on the window until hovered.
+        .glassEffect(isSelected ? .regular.interactive() : (isHovered ? .clear.interactive() : .identity), in: .capsule)
+        .contentShape(Capsule())
         .onTapGesture(perform: select)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .contain)
@@ -261,10 +261,11 @@ struct WorkspaceStatusBar: View {
         .labelStyle(.titleAndIcon)
         .font(.system(size: 11))
         .foregroundStyle(Palette.textSecondary)
-        .padding(.horizontal, 12)
-        .frame(height: 26)
-        .background(Palette.surfaceMuted)
-        .overlay(alignment: .top) { Divider() }
+        .padding(.horizontal, 14)
+        .frame(height: 28)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
     }
 
     private var updatedText: String {

@@ -79,19 +79,19 @@ the app. `guardrails version` shows what is installed.
 ## Daily use
 
 1. In a project, ask Claude for `/guardrails-init`. It opens a bootstrap PR with the kit's files, the project's
-   `Makefile` and `AGENTS.md`. In the app: **Set up…** in the Projects window.
+   `Makefile` and `AGENTS.md`. In the app: **Set up…** on the repository's page.
 2. Read that PR, then turn the project on: **Turn on** in the app, or `guardrails on <PR URL>`.
 3. Work ticket by ticket: `/ticket-spec <ID>`, answer the open questions, lock the spec, `/ticket-implement <ID>`.
 4. When CI is green, approve: **Review** in the app (Touch ID), or `guardrails approve <PR URL>` (typed
    confirmation of the commit).
 
 `guardrails` without arguments, or the menu bar app, lists what waits for you: questions from the agent, PRs
-to approve, bootstrap PRs to turn on, and alarms. The app also sends a notification for each new one (a click
-opens its Review window), and its Projects window opens on an overview of the same list, your enforced
-repositories and recent activity (⌘R refreshes, ⌘F searches). Before you approve, the Review window shows the
-PR's checks on that exact commit, the steps and mutation verdict of the kit gate from its CI log, and the
-spec the PR carries. Click a pull request in a repository's page to open it in the app: its description,
-checks, comments, history and diff, and the actions around it (comment, request changes, merge an approved
+to approve, bootstrap PRs to turn on, and alarms. The app also sends a notification for each new one. Its
+one window works like an editor: the sidebar lists the overview, your repositories and settings, and pull
+requests and reviews open in tabs (⌘W closes one, ⌃Tab moves between them, ⌘R refreshes, ⌘F searches).
+Before you approve, the Review tab shows the PR's checks on that exact commit, the steps and mutation verdict
+of the kit gate from its CI log, and the spec the PR carries. A pull request's tab shows its description,
+checks, comments, history and diff, with the actions around it (comment, request changes, merge an approved
 PR, auto-merge, draft or ready, close or reopen). Approving still goes through Review. Settings (⌘,) and a
 first-launch checklist cover the rest of the set-up on your Mac.
 
@@ -102,7 +102,7 @@ the kit records your approval as the commit status `merge-approval` (**status mo
 agent pushes and opens PRs as the App's bot, and you approve them with an ordinary GitHub review, also from
 github.com or GitHub Mobile (**review mode**):
 
-1. **Create…** under Agent identity in the app's Projects window, or `guardrails agent create`, registers a
+1. **Create…** under Agent identity in the app's sidebar, or `guardrails agent create`, registers a
    private GitHub App in your browser. It may write contents and pull requests only: no workflows,
    administration or statuses.
 2. Install it with **Only select repositories** on the projects the agent works in (**Manage** in the app).
