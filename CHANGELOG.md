@@ -12,6 +12,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   as a rail at the top of the window, filled where it is proved, ringed where the owner stands and red where it
   is broken. The evidence sits on the left; the commit the approval lands on, with the one Approve button
   (`Approve c4a1f2e`), sits on the right. The bottom action bar is gone for pull requests.
+- The tab strip is gone. What the window shows lives in the sidebar, where the queue already was: the browse
+  pages, then **Open** with every page open right now and a close button on hover, then the repositories. `⌘K`
+  opens one field over the pages, the repositories and the open pages.
+- A repository page opens with the same chain the review board draws, one level up: kit, ruleset, approval, and
+  the merge queue where the repository has one.
 - Reports start with the window's totals — merges, failed runs, re-approvals, merges without an approval — and
   each merge made by an admin bypass opens its pull request.
 - When sensitive files change, the review's primary button is now "Open changes on GitHub" until the diff is
