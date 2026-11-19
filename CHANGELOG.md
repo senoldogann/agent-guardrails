@@ -8,6 +8,10 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Added
 
+- Team notifications: the kit workflow `agent-notify.yml` posts to a Slack incoming webhook and/or a Microsoft
+  Teams Workflows webhook when a PR waits for approval, is blocked, asks a question, is approved or merged. It
+  stays off until the owner adds the secret `GUARDRAILS_SLACK_WEBHOOK` or `GUARDRAILS_TEAMS_WEBHOOK`.
+  `guardrails on` compares it with the installed kit like the guard workflow.
 - A required `security` check in every kit project: gitleaks (secrets in the PR's commits), osv-scanner
   (known vulnerabilities in dependency lockfiles) and Semgrep CE (insecure code in changed files, pinned
   community security rules, no login). The tools are pinned and checked by SHA-256 or pip hashes. Inline
