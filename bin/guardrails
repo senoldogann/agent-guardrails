@@ -393,10 +393,11 @@ live_rulesets() {
 # Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
 # by the ASCII unit separator (\037), so empty fields survive `read`.
 # Kinds: alarm, note, repo (an enforced repo; note = its ruleset state), answer, approve, wait, blocked
-# (see classify_prs) and turn-on (a /guardrails-init PR in a repo that is not enforced yet).
+# (see classify_prs) and turn-on (a /guardrails-init PR in a repo that is not enforced yet). PR items carry a
+# sixth field, the PR's HEAD SHA, so the app notifies again when a push changes a PR that waits.
 # Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state rulesets items kind url title note problem
+  local repo state rulesets items kind url title note sha problem
   kit_install_alarm
   topic_alarms || exit 1
   while IFS= read -r repo; do
@@ -410,9 +411,9 @@ inbox_items() {
         "$repo" "$repo" "$problem" "$repo"
     done < <(ruleset_problems <<<"$rulesets")
     items=$(repo_items "$repo") || exit 1
-    while IFS=$'\t' read -r kind url title note; do
+    while IFS=$'\t' read -r kind url title note sha; do
       [[ -n $kind ]] || continue
-      printf '%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note"
+      printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note" "$sha"
     done <<<"$items"
   done < <(registered_repos)
   bootstrap_items || exit 1
@@ -423,19 +424,19 @@ inbox_json() {
   local items
   items=$(inbox_items) || exit 1
   [[ -z $items ]] ||
-    jq -R -c 'split("\u001f") | {kind: .[0], repo: .[1], url: .[2], title: .[3], note: .[4]}' <<<"$items"
+    jq -R -c 'split("\u001f") | {kind: .[0], repo: .[1], url: .[2], title: .[3], note: .[4], sha: (.[5] // "")}' <<<"$items"
 }
 
 inbox() {
-  local items kind repo url title note current="" any=0 turn_on=""
+  local items kind repo url title note sha current="" any=0 turn_on=""
   items=$(inbox_items) || exit 1
-  while IFS=$'\037' read -r kind repo url title note; do
+  while IFS=$'\037' read -r kind repo url title note sha; do
     case $kind in
       alarm) printf 'ALARM  %s\n' "$note" ;;
       note) printf 'note   %s\n' "$note" ;;
     esac
   done <<<"$items"
-  while IFS=$'\037' read -r kind repo url title note; do
+  while IFS=$'\037' read -r kind repo url title note sha; do
     case $kind in
       answer | approve | wait | blocked)
         any=1
@@ -499,11 +500,11 @@ prs_json() {
 }
 
 approve_pick() {
-  local repo items choices="" count=0 kind url title note choice
+  local repo items choices="" count=0 kind url title note sha choice
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     items=$(repo_items "$repo" | awk -F'\t' '$1 == "approve"')
-    while IFS=$'\t' read -r kind url title note; do
+    while IFS=$'\t' read -r kind url title note sha; do
       [[ -n $url ]] || continue
       count=$((count + 1))
       choices+="$url"$'\n'

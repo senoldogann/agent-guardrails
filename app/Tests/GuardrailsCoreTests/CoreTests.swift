@@ -14,11 +14,11 @@ private let workflowPlan = PullRequestPlan(
 struct InboxTests {
     @Test func groupsLinesByWhatTheOwnerDoes() throws {
         let output = """
-            {"kind":"alarm","repo":"","url":"","title":"","note":"the kit install has local changes"}
-            {"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active"}
-            {"kind":"approve","repo":"acme/shop","url":"u3","title":"feat: ready","note":"checks green"}
-            {"kind":"wait","repo":"acme/shop","url":"u6","title":"feat: new","note":"guard is running"}
-            {"kind":"turn-on","repo":"acme/new","url":"u9","title":"chore: install","note":""}
+            {"kind":"alarm","repo":"","url":"","title":"","note":"the kit install has local changes","sha":""}
+            {"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active","sha":""}
+            {"kind":"approve","repo":"acme/shop","url":"u3","title":"feat: ready","note":"checks green","sha":""}
+            {"kind":"wait","repo":"acme/shop","url":"u6","title":"feat: new","note":"guard is running","sha":""}
+            {"kind":"turn-on","repo":"acme/new","url":"u9","title":"chore: install","note":"","sha":""}
             """
         let snapshot = try parseInbox(output)
         #expect(snapshot.alarms.count == 1)
@@ -32,19 +32,19 @@ struct InboxTests {
 
     @Test func refusesUnknownKinds() {
         #expect(throws: InboxParseError.self) {
-            try parseInbox(#"{"kind":"approved","repo":"a/b","url":"","title":"","note":""}"#)
+            try parseInbox(#"{"kind":"approved","repo":"a/b","url":"","title":"","note":"","sha":""}"#)
         }
     }
 
     @Test func reportsOnlyNewAlarmsApprovalsAndQuestions() throws {
-        let before = try parseInbox(#"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}"#)
+        let before = try parseInbox(#"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n","sha":""}"#)
         let after = try parseInbox("""
-            {"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n"}
-            {"kind":"approve","repo":"a/b","url":"u2","title":"t2","note":"n"}
-            {"kind":"answer","repo":"a/b","url":"u3","title":"spec: x","note":"2 questions"}
-            {"kind":"alarm","repo":"a/c","url":"","title":"","note":"ruleset disabled"}
-            {"kind":"wait","repo":"a/b","url":"u4","title":"t4","note":"checks running"}
-            {"kind":"turn-on","repo":"a/d","url":"u5","title":"chore: install","note":""}
+            {"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"n","sha":""}
+            {"kind":"approve","repo":"a/b","url":"u2","title":"t2","note":"n","sha":""}
+            {"kind":"answer","repo":"a/b","url":"u3","title":"spec: x","note":"2 questions","sha":""}
+            {"kind":"alarm","repo":"a/c","url":"","title":"","note":"ruleset disabled","sha":""}
+            {"kind":"wait","repo":"a/b","url":"u4","title":"t4","note":"checks running","sha":""}
+            {"kind":"turn-on","repo":"a/d","url":"u5","title":"chore: install","note":"","sha":""}
             """)
         #expect(newAttentionItems(previous: before, current: after).map(\.kind) == [.alarm, .approve, .answer])
         #expect(newAttentionItems(previous: after, current: after).isEmpty)
@@ -53,12 +53,33 @@ struct InboxTests {
         #expect(waitingCount(after, repo: "a/c") == 0)
     }
 
+    @Test func notifiesAgainWhenAPushChangesAWaitingPR() throws {
+        let before = try parseInbox(#"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"checks green","sha":"aaa"}"#)
+        let after = try parseInbox(#"{"kind":"approve","repo":"a/b","url":"u1","title":"t","note":"checks green","sha":"bbb"}"#)
+        #expect(newAttentionItems(previous: before, current: after).map(\.sha) == ["bbb"])
+        #expect(newAttentionItems(previous: after, current: after).isEmpty)
+    }
+
+    @Test func tellsGitHubFailuresApart() {
+        func described(_ standardError: String) -> String {
+            describeCommandFailure(
+                CommandResult(status: 1, standardOutput: "", standardError: standardError), command: "guardrails inbox")
+        }
+        #expect(described("To get started with GitHub CLI, please run:  gh auth login").hasPrefix("GitHub CLI is not signed in"))
+        #expect(described("gh: Bad credentials (HTTP 401)").hasPrefix("GitHub refused the GitHub CLI's login"))
+        #expect(described("error connecting to api.github.com\ncheck your internet connection").hasPrefix("Offline"))
+        #expect(described(#"Get "https://api.github.com/user": dial tcp: lookup api.github.com: no such host"#).hasPrefix("Offline"))
+        #expect(described("gh: API rate limit exceeded for user").hasPrefix("GitHub's API rate limit"))
+        #expect(described("error: not an owner/repo name: x") == "error: not an owner/repo name: x")
+        #expect(described("") == "guardrails inbox exited with status 1")
+    }
+
     @Test func routesEachNotificationToItsAction() {
-        let approve = InboxItem(kind: .approve, repo: "a/b", url: "https://github.com/a/b/pull/1", title: "feat: x", note: "")
-        let answer = InboxItem(kind: .answer, repo: "a/b", url: "https://github.com/a/b/pull/2", title: "spec: y", note: "")
-        let update = InboxItem(kind: .alarm, repo: "", url: "", title: "update", note: "the kit install is behind")
-        let kitAlarm = InboxItem(kind: .alarm, repo: "", url: "", title: "", note: "the kit install has local changes")
-        let repoAlarm = InboxItem(kind: .alarm, repo: "a/c", url: "", title: "", note: "ruleset disabled")
+        let approve = InboxItem(kind: .approve, repo: "a/b", url: "https://github.com/a/b/pull/1", title: "feat: x", note: "", sha: "")
+        let answer = InboxItem(kind: .answer, repo: "a/b", url: "https://github.com/a/b/pull/2", title: "spec: y", note: "", sha: "")
+        let update = InboxItem(kind: .alarm, repo: "", url: "", title: "update", note: "the kit install is behind", sha: "")
+        let kitAlarm = InboxItem(kind: .alarm, repo: "", url: "", title: "", note: "the kit install has local changes", sha: "")
+        let repoAlarm = InboxItem(kind: .alarm, repo: "a/c", url: "", title: "", note: "ruleset disabled", sha: "")
         #expect(inboxRoute(for: approve) == .review(url: "https://github.com/a/b/pull/1", title: "feat: x"))
         #expect(inboxRoute(for: answer) == .browser(url: "https://github.com/a/b/pull/2"))
         #expect(inboxRoute(for: update) == .update)

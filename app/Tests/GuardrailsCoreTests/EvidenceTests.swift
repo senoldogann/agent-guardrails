@@ -88,7 +88,7 @@ struct ActivityTests {
     }
 
     @Test func recordsWhatArrivedInTheInbox() {
-        let item = InboxItem(kind: .approve, repo: "acme/shop", url: "u", title: "feat: x", note: "checks green")
+        let item = InboxItem(kind: .approve, repo: "acme/shop", url: "u", title: "feat: x", note: "checks green", sha: "")
         let logged = arrivalEntries([item], at: base)
         #expect(logged.map(\.summary) == ["Waiting for your approval"])
         #expect(logged.map(\.outcome) == [.arrived])
