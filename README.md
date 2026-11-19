@@ -47,7 +47,8 @@ flowchart LR
   It fails a PR that changes locked spec files or tests without a new lock, carries a lock that leaves out a
   locked file or is not what `spec-lock` writes, removes a lock, adds a workflow that could stand in for a
   required check, or carries merge commits, symlinks and similar. A new lock that stops locking a file passes
-  as an amendment, and the guard lists each such file for the owner. Workflows are read with a real YAML
+  as an amendment, and the guard lists each such file for the owner; `guardrails approve` shows them too and
+  asks you to confirm each dropped file separately. Workflows are read with a real YAML
   parser, as data: what counts is the permission or job name a file means, however it is spelled, and YAML
   that could read two ways (duplicate keys, anchors and aliases, merge keys, tags, several documents) fails the
   guard. GitHub accepts anchors and aliases since 2025; write the values in place instead. Changes to the
@@ -154,7 +155,15 @@ github.com or GitHub Mobile (**review mode**):
 3. Each project needs `.github/CODEOWNERS` whose first line is `* @<you>` (new bootstrap PRs add it).
 4. **Switch to review mode** on the project in the app, or `guardrails on <owner/repo>`. A code owner's review
    is then required, and GitHub dismisses it when a push changes the PR. **Review** on your own PR merges it
-   with your admin bypass, which skips the review but never the checks.
+   with your admin bypass, which skips the review but never the checks. So does **Review** on an agent's PR
+   whose newest push your account made (GitHub's push log names the account, not who wrote the commits): GitHub
+   takes no review from the account that pushed last. The plan names that push (account, commit, time) and says
+   the merge takes the agent's whole PR before you confirm.
+
+A repository in review mode stays there: `guardrails on` on a Mac without the agent App (or where it is not
+installed on that repository) refuses instead of switching it to status mode. Run it from the Mac that holds
+the App, or register one there. `guardrails on <owner/repo> --status-mode` switches it to status mode on
+purpose and deletes the review ruleset.
 
 ## Merge queue (teams)
 
@@ -314,8 +323,8 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
   required checks still apply, but `approve-head`'s file list, its `!!` second confirmation for guardrail files
   and its workflow checks do not. Approve in the CLI or the app when a PR changes guardrail files.
 - **Administrators can merge without a review in review mode** (the review ruleset lets admins bypass it
-  through a PR; the guard and the checks still apply). The owner's own PRs merge this way, and so do PRs from
-  Cursor and Codex, which push with your login. `guardrails report` lists merges without an approval on the
+  through a PR; the guard and the checks still apply). The owner's own PRs merge this way, so do agent PRs whose
+  newest push the owner's account made, and so do PRs from Cursor and Codex, which push with your login. `guardrails report` lists merges without an approval on the
   final commit afterwards; nothing prevents them.
 - **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
   computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a

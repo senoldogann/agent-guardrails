@@ -5,10 +5,11 @@
 # the owner's login) it posts the commit status `merge-approval` = success, which the ruleset requires. In
 # review mode (the agent pushes as its App's bot) it submits an approving GitHub review pinned to that commit
 # (commit_id), which the ruleset requires from a code owner; GitHub dismisses it when a push changes the PR.
-# Either way a new push needs a new approval.
+# Either way a new push needs a new approval. In review mode the owner's own PR, and a PR whose head the owner
+# pushed, merge through the owner's admin bypass instead: GitHub takes no review from either.
 # Everything it shows comes from one snapshot: the base and head commits of a single read of the PR. The guard
-# run, the workflows and the changed files are read for exactly those commits, never by PR number, and the PR
-# is read again before anything is written; every write names the approved head.
+# run, the workflows, the changed files and the spec locks are read for exactly those commits, never by PR
+# number, and the PR is read again before anything is written; every write names the approved head.
 # Lives in the kit install directory, outside every project, so an agent cannot edit the copy you run.
 # Refuses in the agent's environment (GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR set) and when the PR is not
 # ready: base must be the default branch, the `guard` run for that SHA must have succeeded, no workflow may
@@ -77,9 +78,41 @@ done <<<"$workflows"
 
 # GitHub does not let the owner approve their own PR. In review mode the owner, as admin, may bypass the review
 # ruleset for it (never the checks), so "approving" their own PR merges it at exactly the confirmed commit.
+# The review ruleset also requires approval from someone other than the account that pushed the head (GitHub's
+# "most recent reviewable push"). When the owner's account made that push (the owner's lockfile fix, but also an
+# agent or a workflow using the owner's login, or the owner pushing commits an agent left), GitHub does not count
+# the owner's review and the PR would wait forever with nothing saying why. That case takes the same pinned merge
+# through the admin bypass. The plan and the confirmation name the push (account, commit, time) and say the merge
+# takes the whole PR of its author, so the push does not read as the owner having written it. Refusing instead
+# would leave the owner the unpinned bypass on github.com, or an agent push on top only to launder the change as
+# approved by someone else.
 own_merge=false
-if [[ $mode == review && $(jq -r .user.login <<<"$pr_json") == "$(gh api user --jq .login)" ]]; then
-  own_merge=true
+own_push=false
+pushed_by=""
+pushed_at=""
+author=$(jq -r '.user.login | tostring' <<<"$pr_json")
+if [[ $mode == review ]]; then
+  owner=$(gh api user --jq .login) || die "cannot read your GitHub login (gh auth status); nothing approved"
+  if [[ $author == "$owner" ]]; then
+    own_merge=true
+  else
+    # GitHub's push log of the branch names who pushed. The commit's committer does not: the agent's commits may
+    # carry the owner's git identity. Only a branch of this repository has its pushes logged here. Both names come
+    # from GitHub, compared without case, so a pasted URL in other case or a renamed repository still matches.
+    jq -e '(.head.repo.full_name | ascii_downcase) == (.base.repo.full_name | ascii_downcase)' <<<"$pr_json" >/dev/null ||
+      die "PR #$pr comes from another repository; agent-guardrails supports PRs from branches of $repo only"
+    head_ref=$(jq -r .head.ref <<<"$pr_json")
+    activity=$(gh api "repos/$repo/activity?ref=$(jq -rn --arg ref "refs/heads/$head_ref" '$ref | @uri')&per_page=1") ||
+      die "cannot read the push log of $(printable "$head_ref") in $repo; nothing approved"
+    pusher=$(last_pusher "$sha" <<<"$activity")
+    [[ $pusher == ok$'\t'* ]] ||
+      die "cannot tell who pushed ${sha:0:7} to $(printable "$head_ref") of $repo: ${pusher#no$'\t'}. GitHub requires approval from someone other than that account, so nothing was approved; run approve-head again in a minute, or review the new head."
+    IFS=$'\t' read -r _ pushed_by pushed_at <<<"$pusher"
+    if [[ $pushed_by == "$owner" ]]; then
+      own_merge=true
+      own_push=true
+    fi
+  fi
 fi
 # With a merge queue nobody merges directly: the branch ruleset's queue rule has no bypass, and gh refuses
 # --delete-branch there. The owner's own PR is added to the queue instead, still pinned to the confirmed commit.
@@ -89,7 +122,31 @@ if [[ $own_merge == true ]]; then
   queue=$(ruleset_has_merge_queue <<<"$branch_rules")
 fi
 
-files=$(pr_snapshot_files "$repo" "$pr" "$base_sha" "$sha" "$changed_files")
+comparison=$(pr_snapshot_comparison "$repo" "$pr" "$base_sha" "$sha" "$changed_files")
+files=$(compared_files "$changed_files" <<<"$comparison")
+
+# A re-lock that changes which files a ticket's spec lock covers passes the guard, which lists it only in its job
+# summary. Both versions of every changed lock are read by commit, as data, so the owner sees each file it stops or
+# starts locking here, and confirms a dropped one separately. A lock the base has and the head lacks fails the
+# guard; finding one here means this snapshot is not what the guard passed.
+locks=$(changed_spec_locks <<<"$comparison")
+lock_scope=""
+while IFS=$'\t' read -r lock_status lock; do
+  [[ -n $lock ]] || continue
+  case $lock_status in
+    added | copied | renamed | unchanged) continue ;;
+    modified | changed) ;;
+    removed) die "PR #$pr deletes the spec lock $lock that the base has, which the guard refuses; nothing approved" ;;
+    *) die "GitHub lists $lock with the unknown status '$(printable "$lock_status")'; nothing approved" ;;
+  esac
+  base_lock=$(repo_file_at "$repo" "$lock" "$base_sha")
+  head_lock=$(repo_file_at "$repo" "$lock" "$sha")
+  change=$(lock_scope_change "$lock" "$base_lock" "$head_lock")
+  [[ -z $change ]] || lock_scope+="$change"$'\n'
+done <<<"$locks"
+lock_scope_json=$(jq -s -c . <<<"$lock_scope")
+dropped=$(jq -r '[.[] | select(.change == "dropped")] | length' <<<"$lock_scope_json")
+
 # Titles are written by the agent: drop control characters so they cannot redraw the lines below.
 title=$(jq -r '.title | gsub("[[:cntrl:]]"; "?")' <<<"$pr_json")
 url=$(jq -r .html_url <<<"$pr_json")
@@ -108,21 +165,44 @@ while IFS= read -r file; do
   marked+="${marker// /}"$'\t'"$file"$'\n'
 done <<<"$files"
 printf '\n(! human-owned, !! workflow or guardrail file: can change what CI enforces)\n'
+if [[ -n $lock_scope ]]; then
+  printf '\nSpec lock scope changed against the base (a re-lock; !! no longer locked: the agent could change it without a new spec lock):\n'
+  while IFS= read -r entry; do
+    [[ -n $entry ]] || continue
+    lock=$(jq -r .lock <<<"$entry")
+    path=$(jq -r .path <<<"$entry")
+    if [[ $(jq -r .change <<<"$entry") == dropped ]]; then
+      printf '!! %s no longer locks %s\n' "$lock" "$(quoted_path "$path")"
+    else
+      printf '   %s now also locks %s\n' "$lock" "$(quoted_path "$path")"
+    fi
+  done <<<"$lock_scope"
+fi
 
 short=${sha:0:7}
 emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
   --arg base "$base_sha" --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" --argjson queue "$queue" \
+  --argjson own_push "$own_push" --argjson lock_scope "$lock_scope_json" --arg author "$author" \
+  --arg pushed_by "$pushed_by" --arg pushed_at "$pushed_at" \
   '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, base: $base, files: $files,
-    merge: $merge, mergeQueue: $queue}')"
+    merge: $merge, mergeQueue: $queue, ownPush: $own_push, lockScope: $lock_scope, author: $author}
+    + (if $own_push then {pushedBy: $pushed_by, pushedAt: $pushed_at} else {} end)')"
+why="This is your own PR."
+if [[ $own_push == true ]]; then
+  why="Your account $pushed_by made the newest push to this PR ($short, $pushed_at), and GitHub does not count a review from the account that pushed last. This merges all of $(printable "$author")'s PR, not only that push."
+fi
 if [[ $queue == true ]]; then
-  confirm commit "$short" "This is your own PR. Type $short to add exactly this commit to the merge queue (your admin bypass skips the review, not the checks): "
+  confirm commit "$short" "$why Type $short to add exactly this commit to the merge queue (your admin bypass skips the review, not the checks): "
 elif [[ $own_merge == true ]]; then
-  confirm commit "$short" "This is your own PR. Type $short to merge exactly this commit now (your admin bypass skips the review, not the checks): "
+  confirm commit "$short" "$why Type $short to merge exactly this commit now (your admin bypass skips the review, not the checks): "
 else
   confirm commit "$short" "Type $short to approve merging exactly this commit: "
 fi
 if [[ -n $workflow_changes ]]; then
   confirm workflows workflows "Workflow or guardrail files change ($workflow_changes). Type 'workflows' to confirm you reviewed them: "
+fi
+if [[ $dropped -gt 0 ]]; then
+  confirm unlock unlock "A re-lock stops locking $dropped file(s) marked !! above: the agent could then change them without a new spec lock. Type 'unlock' to confirm you reviewed it: "
 fi
 
 # Act only on what the owner saw: the PR must still be open, ready, into the same branch, with the same base and
@@ -147,12 +227,12 @@ if [[ $queue == true ]]; then
   gh api graphql -f id="$pr_id" -f head="$sha" -f query='mutation($id: ID!, $head: GitObjectID!) {
     enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $head}) { mergeQueueEntry { position } }
   }' >/dev/null || die "GitHub did not add PR #$pr to the merge queue (see its reason above); nothing merged"
-  printf 'added your own PR #%s at %s to the merge queue; it merges when its group passes the checks\n' "$pr" "$sha"
+  printf 'added PR #%s at %s to the merge queue; it merges when its group passes the checks\n' "$pr" "$sha"
   exit 0
 fi
 if [[ $own_merge == true ]]; then
   gh pr merge "$pr" -R "$repo" --squash --admin --delete-branch --match-head-commit "$sha" >/dev/null
-  printf 'merged your own PR #%s at %s\n' "$pr" "$sha"
+  printf 'merged PR #%s at %s\n' "$pr" "$sha"
   exit 0
 fi
 # The review names the commit the owner saw, so a push between showing and approving cannot receive it.

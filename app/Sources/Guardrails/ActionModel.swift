@@ -146,6 +146,10 @@ final class ActionModel {
                 stop(with: "guardrails announced a second plan; stopped without confirming anything.")
                 return
             }
+            if announced.leavesReviewMode {
+                stop(with: "\(ConfirmationError.leavesReviewMode(repo: announced.repo)); stopped without confirming anything.")
+                return
+            }
             if request.kind == .turnOnMergeQueue {
                 guard case .turnOnRepo(let repoPlan) = announced, repoPlan.withMergeQueue, repoPlan.repo == request.target else {
                     stop(with: "guardrails did not plan to turn on the merge queue for \(request.target); stopped without confirming anything.")

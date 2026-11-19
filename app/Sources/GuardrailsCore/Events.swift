@@ -14,6 +14,23 @@ public struct PlannedFile: Codable, Sendable, Hashable {
     public var isHumanOwned: Bool { marker == "!" }
 }
 
+/// A file a re-lock of a ticket's spec lock stops or starts covering, read from both versions of the lock.
+public struct LockScopeChange: Codable, Sendable, Hashable {
+    public let lock: String
+    public let path: String
+    /// "dropped": the base version locks the file and the head version does not, so the agent could change it
+    /// without a new spec lock. "added": the reverse.
+    public let change: String
+
+    public init(lock: String, path: String, change: String) {
+        self.lock = lock
+        self.path = path
+        self.change = change
+    }
+
+    public var isDropped: Bool { change == "dropped" }
+}
+
 /// What `guardrails approve <PR>` or `guardrails on <PR>` is about to do to one PR.
 public struct PullRequestPlan: Codable, Sendable, Equatable {
     public let repo: String
@@ -32,10 +49,24 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     /// In `approve`: the owner's own PR goes into the repository's merge queue instead of merging at once. In
     /// `on`: the default branch will require the merge queue. Older CLIs leave it out.
     public let mergeQueue: Bool?
+    /// In `approve` (review mode): the owner's account made the newest push to a PR they did not open. GitHub takes
+    /// no review from the account that pushed last, so `merge` is true and the PR merges through the admin bypass.
+    /// The account says nothing about who wrote the commits. Older CLIs leave it out.
+    public let ownPush: Bool?
+    /// In `approve`: the PR's author (GitHub login). Older CLIs leave it out.
+    public let author: String?
+    /// With `ownPush`: the account that made the newest push and when (GitHub's push log, ISO 8601).
+    public let pushedBy: String?
+    public let pushedAt: String?
+    /// In `approve`: every file a re-lock of a changed spec lock stops or starts covering. Older CLIs leave it out.
+    public let lockScope: [LockScopeChange]?
+    /// In `on`: the repository is in review mode and the owner asked to switch it to status mode (--status-mode).
+    public let leavesReviewMode: Bool?
 
     public init(
         repo: String, pr: Int, url: String, title: String, sha: String, base: String?, files: [PlannedFile], merge: Bool?,
-        mergeQueue: Bool?
+        mergeQueue: Bool?, ownPush: Bool?, author: String?, pushedBy: String?, pushedAt: String?,
+        lockScope: [LockScopeChange]?, leavesReviewMode: Bool?
     ) {
         self.repo = repo
         self.pr = pr
@@ -46,6 +77,12 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
         self.files = files
         self.merge = merge
         self.mergeQueue = mergeQueue
+        self.ownPush = ownPush
+        self.author = author
+        self.pushedBy = pushedBy
+        self.pushedAt = pushedAt
+        self.lockScope = lockScope
+        self.leavesReviewMode = leavesReviewMode
     }
 
     public var shortSHA: String { String(sha.prefix(7)) }
@@ -61,9 +98,25 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     public var isOwnMerge: Bool { merge == true }
     /// The owner's own PR is added to the merge queue rather than merged now.
     public var isOwnQueueEntry: Bool { isOwnMerge && mergeQueue == true }
+    /// The PR merges through the admin bypass because the owner's account made its newest push, not because they
+    /// opened it.
+    public var isOwnPush: Bool { isOwnMerge && ownPush == true }
+    /// The plan card's sentence for `isOwnPush`, worded like the CLI's confirmation: which account pushed what and
+    /// when, and that the merge takes the author's whole PR.
+    public var ownPushNote: String {
+        let account = pushedBy ?? "your account"
+        let when = pushedAt.map { ", \($0)" } ?? ""
+        let whose = author.map { "all of \($0)'s PR" } ?? "the whole PR"
+        let action = isOwnQueueEntry ? "adds \(whose) to the merge queue" : "merges \(whose)"
+        return "Your account \(account) made the newest push (\(shortSHA)\(when)). GitHub takes no review from the account that pushed last, so this \(action), not only that push. Your admin bypass skips the review, not the checks."
+    }
     public var hasWorkflowChanges: Bool { files.contains(where: \.isWorkflow) }
-    /// Workflow or human-owned files change: the owner opens the diff before the app lets them confirm.
-    public var needsDiffReview: Bool { files.contains { $0.isWorkflow || $0.isHumanOwned } }
+    public var lockScopeChanges: [LockScopeChange] { lockScope ?? [] }
+    /// Files a re-lock stops locking: each needs the separate `unlock` confirmation.
+    public var droppedLockedFiles: [LockScopeChange] { lockScopeChanges.filter(\.isDropped) }
+    public var hasDroppedLockedFiles: Bool { !droppedLockedFiles.isEmpty }
+    /// Workflow, human-owned or no longer locked files change: the owner opens the diff before the app lets them confirm.
+    public var needsDiffReview: Bool { files.contains { $0.isWorkflow || $0.isHumanOwned } || hasDroppedLockedFiles }
 }
 
 /// What `guardrails on <owner/repo>` is about to enforce.
@@ -72,11 +125,18 @@ public struct RepoPlan: Codable, Sendable, Equatable {
     public let branch: String
     /// The default branch will require GitHub's merge queue. Older CLIs leave it out.
     public let mergeQueue: Bool?
+    /// The approval mode `on` applies: "review" or "status". Older CLIs leave it out.
+    public let mode: String?
+    /// The repository is in review mode and the owner asked to switch it to status mode (--status-mode), which
+    /// deletes the review ruleset. Older CLIs leave it out.
+    public let leavesReviewMode: Bool?
 
-    public init(repo: String, branch: String, mergeQueue: Bool?) {
+    public init(repo: String, branch: String, mergeQueue: Bool?, mode: String?, leavesReviewMode: Bool?) {
         self.repo = repo
         self.branch = branch
         self.mergeQueue = mergeQueue
+        self.mode = mode
+        self.leavesReviewMode = leavesReviewMode
     }
 
     public var withMergeQueue: Bool { mergeQueue == true }
@@ -134,11 +194,23 @@ public enum Plan: Sendable, Equatable {
         case .turnOnRepo, .turnOff, .update: nil
         }
     }
+
+    /// The plan switches a repository from review mode to status mode. Only `guardrails on --status-mode` plans that,
+    /// and the app never passes that flag, so a turn-on run that announces it stops (ActionModel).
+    public var leavesReviewMode: Bool {
+        switch self {
+        case .turnOn(let plan): plan.leavesReviewMode == true
+        case .turnOnRepo(let plan): plan.leavesReviewMode == true
+        case .approve, .turnOff, .update: false
+        }
+    }
 }
 
 public enum ConfirmStep: String, Codable, Sendable {
     case commit
     case workflows
+    /// A re-lock stops locking files; announced in the plan's `lockScope`.
+    case unlock
     case repo
 }
 

@@ -7,6 +7,7 @@
 #   guardrails on <owner/repo>         enforce a repo whose default branch already carries the kit
 #   guardrails on <...> --merge-queue  also require GitHub's merge queue (organization repos in review mode);
 #                                      a later plain `on` keeps it, --no-merge-queue removes it
+#   guardrails on <...> --status-mode  allow a repo in review mode to switch to status mode (no agent App here)
 #   guardrails off <owner/repo>        stop enforcing and remove the kit: the agent works there as before
 #   guardrails approve [PR link]       approve a PR's HEAD; without a link, pick from the waiting PRs
 #   guardrails revoke <PR link>        withdraw an approval
@@ -245,18 +246,61 @@ $problems${problems:+${errors:+$'\n'}}$errors
 Fix this in a PR you author (while status mode is on: guardrails approve <PR link>), then run: guardrails on $repo"
 }
 
+# Prints the approval mode `on` applies and whether that leaves review mode: "review false", "status false" or
+# "status true". Review mode applies where it is ready (review_mode_ready). A repository whose live rulesets are in
+# review mode (review_mode_rulesets) is not turned to status mode on a Mac that cannot apply review mode, since that
+# deletes the review ruleset and status mode is not hostile-agent secure: only with --status-mode (second argument "true"), which the plan and the confirmation then name. --status-mode
+# where review mode is ready is refused rather than ignored. Arguments: owner/repo, checkout of the default branch,
+# "true" or "false".
+on_mode() {
+  local repo=$1 dir=$2 status_mode=$3 branch review live why
+  if review_mode_ready "$repo" "$dir"; then
+    [[ $status_mode != true ]] ||
+      die "the agent App registered here is installed on $repo, so it is ready for review mode; --status-mode would turn that off. Run it without --status-mode, or remove the App from $repo first if you want status mode."
+    printf 'review false\n'
+    return 0
+  fi
+  branch=$(ruleset_by_name "$repo" "$ruleset_name") || exit 1
+  review=$(ruleset_by_name "$repo" "$review_ruleset_name") || exit 1
+  # Only an exact answer counts: a failed evaluation must not read as "not review mode", which deletes the review
+  # ruleset.
+  live=$(jq -n -c --argjson branch "${branch:-null}" --argjson review "${review:-null}" '{branch: $branch, review: $review}' |
+    review_mode_rulesets) ||
+    die "cannot tell whether the live rulesets of $repo are in review mode (jq's error is above); nothing changed"
+  case $live in
+    true) ;;
+    false)
+      printf 'status false\n'
+      return 0
+      ;;
+    *) die "cannot tell whether the live rulesets of $repo are in review mode (the check answered '$live'); nothing changed" ;;
+  esac
+  if agent_app_registered; then
+    why="the agent App registered on this Mac is not installed on $repo"
+  else
+    why="no agent App is registered on this Mac"
+  fi
+  [[ $status_mode == true ]] ||
+    die "$repo is in review mode, but $why, so turning it on here would switch it to status mode and delete the $review_ruleset_name ruleset. Run guardrails on $repo from the Mac that holds the agent App, or register one here (guardrails agent create) and install it on $repo. To switch $repo to status mode on purpose, run: guardrails on $repo --status-mode"
+  printf 'status true\n'
+}
+
 # Applies the rulesets and repository settings the kit relies on. Required checks: guard, security and the
 # checkout's own checks-<lang> workflows. Nobody bypasses the branch ruleset (checks, history, deletion); in
 # review mode a separate review ruleset lets admins merge their own PRs without a review. With the merge queue
-# (third argument "true", review mode only) the branch ruleset also requires it. Arguments: owner/repo, checkout of
-# the default branch, "true" or "false".
+# (third argument "true", review mode only) the branch ruleset also requires it. The fourth argument is the mode the
+# owner confirmed (on_mode); when review mode became ready or stopped being ready since then, nothing is changed.
+# Arguments: owner/repo, checkout of the default branch, "true" or "false", "review" or "status".
 enforce() {
-  local repo=$1 dir=$2 queue=$3 jobs checks mode
+  local repo=$1 dir=$2 queue=$3 planned=$4 jobs checks mode now=status
   jobs=$(check_jobs "$dir")
   [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
   # ci-guard keeps PR workflows from defining jobs with these names.
   checks=$(pinned_checks "$jobs")
-  if review_mode_ready "$repo" "$dir"; then
+  if review_mode_ready "$repo" "$dir"; then now=review; fi
+  [[ $now == "$planned" ]] ||
+    die "$repo is ready for $now mode now, not for the $planned mode you confirmed; nothing changed. Run guardrails on $repo again"
+  if [[ $now == review ]]; then
     if [[ $queue == true ]]; then
       put_ruleset "$repo" "$ruleset_name" "$(queued_branch_ruleset "$ruleset_name" "$checks")" ||
         die "GitHub refused the merge queue on $repo: it needs a public organization repository, or GitHub Enterprise Cloud for a private one. Enforce it without the queue: guardrails on $repo --no-merge-queue"
@@ -289,10 +333,11 @@ enforce() {
   printf 'on: %s (%s; required checks: guard security %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
-# Arguments: PR link, merge queue choice (on, off or keep; see merge_queue_wanted).
+# Arguments: PR link, merge queue choice (on, off or keep; see merge_queue_wanted), --status-mode given ("true" or
+# "false"; see on_mode).
 on_pr() {
   local repo pr target pr_json sha base base_sha changed_files default_branch dir files file marker title url state queue
-  local marked="" extra_workflows=""
+  local marked="" extra_workflows="" mode_plan mode leaves leaving=""
   target=$(pr_target "$1") || exit 1
   read -r repo pr <<<"$target"
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
@@ -329,6 +374,10 @@ on_pr() {
 $extra_workflows"
   queue=$(merge_queue_wanted "$repo" "$2") || exit 1
   [[ $queue != true ]] || require_merge_queue_ready "$repo" "$dir"
+  mode_plan=$(on_mode "$repo" "$dir" "$3") || exit 1
+  read -r mode leaves <<<"$mode_plan"
+  [[ $leaves != true ]] ||
+    leaving="--status-mode: this switches $repo from review mode to status mode and deletes the $review_ruleset_name ruleset. "
 
   title=$(clean "$(jq -r .title <<<"$pr_json")")
   url=$(jq -r .html_url <<<"$pr_json")
@@ -349,9 +398,10 @@ $extra_workflows"
   [[ $queue != true ]] || printf 'The default branch will also require the merge queue (squash, every PR green, up to 3 per group).\n\n'
   emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
     --arg base "$base_sha" --argjson files "$(files_json <<<"$marked")" --argjson queue "$queue" \
+    --arg mode "$mode" --argjson leaves "$leaves" \
     '{event: "plan", action: "on", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, base: $base, files: $files,
-      mergeQueue: $queue}')"
-  confirm commit "${sha:0:7}" "Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
+      mergeQueue: $queue, mode: $mode, leavesReviewMode: $leaves}')"
+  confirm commit "${sha:0:7}" "${leaving}Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
 
   # Act only on what the owner saw; the merge below is pinned to the head as well.
   jq -e --arg base "$base_sha" --arg branch "$base" --arg head "$sha" \
@@ -365,14 +415,15 @@ $extra_workflows"
   gh pr merge "$pr" -R "$repo" --squash --delete-branch --match-head-commit "$sha" >/dev/null
   printf 'merged PR #%s\n' "$pr"
   trap 'printf "guardrails on stopped after merging, before %s was fully enforced. Finish with: guardrails on %s\n" "$repo" "$repo" >&2; cleanup' EXIT
-  enforce "$repo" "$dir" "$queue"
+  enforce "$repo" "$dir" "$queue" "$mode"
   trap cleanup EXIT
   printf 'Next: ask the agent for /ticket-spec <ID>. Run guardrails to see what waits for you.\n'
 }
 
-# Arguments: owner/repo, merge queue choice (on, off or keep; see merge_queue_wanted).
+# Arguments: owner/repo, merge queue choice (on, off or keep; see merge_queue_wanted), --status-mode given ("true"
+# or "false"; see on_mode).
 on_repo() {
-  local repo=$1 default_branch dir queue with=""
+  local repo=$1 default_branch dir queue with="" mode_plan mode leaves leaving=""
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch") || exit 1
   tmp_dirs+=" $dir"
@@ -383,11 +434,18 @@ on_repo() {
     require_merge_queue_ready "$repo" "$dir"
     with=" with the merge queue (squash, every PR green, up to 3 per group)"
   fi
-  emit_event "$(jq -n -c --arg repo "$repo" --arg branch "$default_branch" --argjson queue "$queue" \
-    '{event: "plan", action: "on-repo", repo: $repo, branch: $branch, mergeQueue: $queue}')"
-  confirm repo "$repo" "Kit files on $default_branch match your installed kit. Type $repo to turn the guardrails on$with: "
+  mode_plan=$(on_mode "$repo" "$dir" "$3") || exit 1
+  read -r mode leaves <<<"$mode_plan"
+  if [[ $leaves == true ]]; then
+    leaving="--status-mode: this switches $repo from review mode to status mode and deletes the $review_ruleset_name ruleset. "
+    with=" in status mode"
+  fi
+  emit_event "$(jq -n -c --arg repo "$repo" --arg branch "$default_branch" --argjson queue "$queue" --arg mode "$mode" \
+    --argjson leaves "$leaves" \
+    '{event: "plan", action: "on-repo", repo: $repo, branch: $branch, mergeQueue: $queue, mode: $mode, leavesReviewMode: $leaves}')"
+  confirm repo "$repo" "Kit files on $default_branch match your installed kit. ${leaving}Type $repo to turn the guardrails on$with: "
   register "$repo"
-  enforce "$repo" "$dir" "$queue"
+  enforce "$repo" "$dir" "$queue" "$mode"
 }
 
 off_repo() {
@@ -1013,22 +1071,29 @@ case $command in
     ;;
   on)
     # --merge-queue or --no-merge-queue, anywhere, applies to every target; without either a queue is kept.
-    on_queue=keep on_targets=0
+    # --status-mode lets a repository in review mode switch to status mode (on_mode).
+    on_queue=keep on_targets=0 on_status_mode=false
     for target in "$@"; do
       case $target in
         --merge-queue | --no-merge-queue)
           [[ $on_queue == keep ]] || die "give --merge-queue or --no-merge-queue once"
           if [[ $target == --merge-queue ]]; then on_queue=on; else on_queue=off; fi
           ;;
+        --status-mode) on_status_mode=true ;;
         -*) usage ;;
         *) on_targets=$((on_targets + 1)) ;;
       esac
     done
     [[ $on_targets -ge 1 ]] || usage
+    [[ $on_queue != on || $on_status_mode != true ]] || die "the merge queue needs review mode; give --merge-queue or --status-mode, not both"
     require_owner_terminal on
     for target in "$@"; do
-      case $target in --merge-queue | --no-merge-queue) continue ;; esac
-      if [[ $target == https://* ]]; then on_pr "$target" "$on_queue"; else on_repo "$target" "$on_queue"; fi
+      case $target in --merge-queue | --no-merge-queue | --status-mode) continue ;; esac
+      if [[ $target == https://* ]]; then
+        on_pr "$target" "$on_queue" "$on_status_mode"
+      else
+        on_repo "$target" "$on_queue" "$on_status_mode"
+      fi
     done
     ;;
   off)
