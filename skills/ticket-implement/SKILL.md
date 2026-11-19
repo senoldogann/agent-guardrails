@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 - Never change, loosen, skip or delete tests, contracts, specs, configs or checks; never touch test runners,
   global test state, process exit or dynamic imports from implementation code. The write-guard blocks file edits,
-  lint rules block the constructs, and the owner reviews every diff before merge.
+  lint rules block the constructs, and the owner approves the exact commit before merge.
 - If a test, type or check looks wrong, or a requirement is ambiguous: `.agent/bin/block "<question>"` and stop.
 - No type escape hatches. Follow `AGENTS.md` and existing conventions; pure domain logic, effects at the edges.
 - Never approve, admin-merge or change repository settings; those belong to the owner.
