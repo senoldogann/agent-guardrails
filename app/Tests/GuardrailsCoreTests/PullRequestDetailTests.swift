@@ -41,8 +41,15 @@ struct PullRequestDetailTests {
 
     @Test func pinsMergesToTheHeadTheOwnerSaw() {
         let ref = PullRequestRef(repo: "a/b", number: 3)
-        #expect(ghArguments(for: .merge, of: ref, head: "abc") == ["pr", "merge", "3", "-R", "a/b", "--squash", "--delete-branch", "--match-head-commit", "abc"])
+        // No --delete-branch: gh refuses it where a merge queue is required; the repository deletes merged branches.
+        #expect(ghArguments(for: .merge, of: ref, head: "abc") == ["pr", "merge", "3", "-R", "a/b", "--squash", "--match-head-commit", "abc"])
+        #expect(ghArguments(for: .enableAutoMerge, of: ref, head: "abc") == ["pr", "merge", "3", "-R", "a/b", "--auto", "--squash", "--match-head-commit", "abc"])
         #expect(ghArguments(for: .requestChanges, of: ref, body: "--admin") == ["pr", "review", "3", "-R", "a/b", "--request-changes", "--body", "--admin"])
+    }
+
+    @Test func saysWhetherAMergeMergedOrQueued() {
+        #expect(mergeSummary(stateAfter: "MERGED") == "Merged")
+        #expect(mergeSummary(stateAfter: "OPEN") == "Added to the merge queue")
     }
 
     @Test func ordersChecksAndHistory() throws {

@@ -33,6 +33,15 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
     commit, CODEOWNERS required, in its own ruleset that admins may bypass through a PR) and status mode
     otherwise (the commit status `merge-approval`). Nobody bypasses the branch ruleset with the checks; only
     admins create, move or delete tags. `off` deletes the rulesets and merges a PR that removes the kit.
+  - `on --merge-queue` (organization repositories in review mode only; `merge_queue_refusal` says why not) adds
+    a `merge_queue` rule to the branch ruleset (`queued_branch_ruleset`) and lists the repo in
+    `~/.config/agent-guardrails/merge-queue`; a plain `on` keeps the queue when that list or the live ruleset has
+    it, `--no-merge-queue` drops it, and `ruleset_problems` alarms when a listed repo loses it. On merge groups
+    `agent-guard.yml` runs the default branch's `.agent/bin/ci-guard-group` (checks shared with `ci-guard` live
+    in `guard-lib.sh`), the checks workflows run `make check`, and `security` scans `base_sha..head_sha`.
+    `pr_states` marks PRs in the queue `queued` (GraphQL `mergeQueue`, `queued_prs`); `approve-head` adds the
+    owner's own PR with `enqueuePullRequest` instead of an admin merge, and merges never pass `--delete-branch`
+    (gh refuses it with a queue; the repository deletes merged branches).
   - `approve`/`revoke` wrap `bin/approve-head` and `bin/revoke-head` (approval of a PR's exact HEAD).
   - `update` fast-forwards this install to its origin's main, reinstalls it and rebuilds the app.
   - `agent create` registers the agent's own GitHub App through the manifest flow
@@ -104,3 +113,11 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   state-changing commands refuse to run. bash-guard blocks the agent from the update and the install clone.
 - bash-guard reads every line of a command, heredoc bodies included: write text that names the owner's
   commands with the Write tool, not a heredoc.
+- A project's PRs are judged by the `ci-guard` of its default branch, so a kit change that a project's old guard
+  would reject (like a new `agent-guard.yml` trigger) reaches projects in two PRs: first the guard that accepts
+  it, then the change. Say so in README.
+- On merge_group GitHub runs the group's own `agent-guard.yml` steps against the default branch's
+  `ci-guard-group`, so its call stays `ci-guard-group "$GITHUB_EVENT_PATH"` and the script reads everything else
+  from the event payload; changing that call would fail every group, its own update too.
+- The merge queue cannot be tested offline or on a personal repository: GitHub offers it only to organization
+  repositories.

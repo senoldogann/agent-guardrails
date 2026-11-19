@@ -53,9 +53,13 @@ final class PullRequestModel {
     /// Runs one action against the head the window shows, then reloads. Returns the activity line to log.
     func perform(_ action: PullRequestAction) async -> ActivityEntry? {
         guard case .loaded(let pr) = detail, running == nil else { return nil }
-        return await run(progress: progressText(action), summary: activitySummary(action), pr: pr) {
+        let entry = await run(progress: progressText(action), summary: activitySummary(action), pr: pr) {
             ghArguments(for: action, of: ref, head: pr.headRefOid)
         }
+        guard action == .merge, let entry, entry.outcome == .succeeded, case .loaded(let after) = detail else { return entry }
+        return ActivityEntry(
+            date: entry.date, outcome: entry.outcome, summary: mergeSummary(stateAfter: after.state), repo: entry.repo,
+            title: entry.title, detail: entry.detail, url: entry.url)
     }
 
     /// Posts a comment or a changes-requested review. Returns the activity line, or nil when it failed.

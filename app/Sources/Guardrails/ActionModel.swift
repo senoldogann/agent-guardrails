@@ -146,6 +146,12 @@ final class ActionModel {
                 stop(with: "guardrails announced a second plan; stopped without confirming anything.")
                 return
             }
+            if request.kind == .turnOnMergeQueue {
+                guard case .turnOnRepo(let repoPlan) = announced, repoPlan.withMergeQueue, repoPlan.repo == request.target else {
+                    stop(with: "guardrails did not plan to turn on the merge queue for \(request.target); stopped without confirming anything.")
+                    return
+                }
+            }
             plan = announced
         case .event(.confirm(let pending)):
             phase = .awaitingConfirmation(pending)

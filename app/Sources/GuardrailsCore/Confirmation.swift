@@ -67,6 +67,8 @@ public func isFinalConfirmation(_ request: ConfirmRequest, plan: Plan) -> Bool {
 /// what the owner approves: repository, PR and commit.
 public func ownerCheckReason(for request: ConfirmRequest, plan: Plan) -> String {
     switch (request.step, plan) {
+    case (.commit, .approve(let pr)) where pr.isOwnQueueEntry:
+        "add your own \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA) to the merge queue"
     case (.commit, .approve(let pr)) where pr.isOwnMerge:
         "merge your own \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA)"
     case (.commit, .approve(let pr)):
@@ -77,6 +79,8 @@ public func ownerCheckReason(for request: ConfirmRequest, plan: Plan) -> String 
         "confirm you reviewed the workflow changes in \(pr.repo) PR #\(pr.pr)"
     case (.commit, .turnOn(let pr)):
         "merge \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA) and turn the guardrails on"
+    case (_, .turnOnRepo(let repoPlan)) where repoPlan.withMergeQueue:
+        "turn the guardrails on for \(repoPlan.repo) with the merge queue"
     case (_, .turnOnRepo(let repoPlan)):
         "turn the guardrails on for \(repoPlan.repo)"
     case (_, .turnOff(let removal)):

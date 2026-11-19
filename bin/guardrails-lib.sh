@@ -246,7 +246,9 @@ remove_agents_section() {
 
 # Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,
 # autoMergeRequest[,author,updatedAt]` on stdin and prints one compact JSON object per PR: {number, url, title,
-# kind, note, sha, draft, author, updated, autoMerge}. Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's
+# kind, note, sha, draft, author, updated, autoMerge}. Argument: the numbers of the PRs in the repository's merge
+# queue (JSON array, [] without a queue; see queued_prs). Kinds: queued (in the merge queue, so it merges once
+# its group passes; nothing waits for the owner), answer (the agent asked a question: label needs-decision), draft (the agent's
 # work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
 # review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
 # HEAD not approved yet; the note sums up the security and checks-<lang> runs). Any failed run named guard wins
@@ -254,7 +256,7 @@ remove_agents_section() {
 # the real guard run). Titles are written by the agent, so control characters are replaced before they reach a
 # terminal or the app.
 pr_states() {
-  jq -c '
+  jq -c --argjson queued "$1" '
     def latest(f): [.statusCheckRollup[]? | select(f)] | sort_by(.startedAt // .createdAt // "") | last;
     def clean: gsub("[[:cntrl:]]"; "?");
     .[]
@@ -269,7 +271,8 @@ pr_states() {
        elif any($checks[]; .status != "COMPLETED") then "checks running"
        elif all($checks[]; .conclusion == "SUCCESS") then "checks green"
        else "checks failing" end) as $checks_note
-    | (if any(.labels[]?; .name == "needs-decision") then ["answer", "the agent is waiting for your decision"]
+    | (if (.number as $n | $queued | index($n)) != null then ["queued", "in the merge queue; merges when its group passes"]
+       elif any(.labels[]?; .name == "needs-decision") then ["answer", "the agent is waiting for your decision"]
        elif .isDraft then ["draft", "the agent is working on it"]
        elif ($approval.state // "") == "SUCCESS" or .reviewDecision == "APPROVED" then
          if .autoMergeRequest != null then ["approved", "approved; merges when checks pass"]
@@ -283,20 +286,22 @@ pr_states() {
 
 # Reads the same input as pr_states and prints one tab-separated line per PR that needs the owner:
 # "<kind>\t<url>\t<title>\t<note>\t<sha>" for answer, approve, wait and blocked (sha: the PR's HEAD, last because
-# it can be empty). Drafts and approved PRs are left out.
+# it can be empty). Drafts, approved and queued PRs are left out. Argument: as for pr_states.
 classify_prs() {
-  pr_states | jq -r 'select(.kind | IN("answer", "approve", "wait", "blocked")) | [.kind, .url, .title, .note, .sha] | @tsv'
+  pr_states "$1" | jq -r 'select(.kind | IN("answer", "approve", "wait", "blocked")) | [.kind, .url, .title, .note, .sha] | @tsv'
 }
 
 # Reads the nodes of the owner's repositories (GraphQL, see `guardrails projects`) and prints one compact
 # JSON object per repo with its state for the app:
 #   on        listed on this Mac and its agent-guardrails ruleset is active
-#   alarm     listed but the ruleset is not active, or tagged with the topic but not listed
+#   alarm     listed but the ruleset is not active, or tagged with the topic but not listed, or (an enforced
+#             repository another account owns, marked unreadable) GitHub could not read it
 #   ready     an open /guardrails-init PR from this repo (not a fork), authored by the owner
 #   no-admin  the owner cannot apply rulesets here
 #   off       none of the above
 # mode is "review" for an enforced repo whose agent-guardrails-review ruleset is active, "status" for another
-# enforced repo, null otherwise. agentApp is "installed" or "missing" for the agent App on this Mac, "none" when
+# enforced repo, null otherwise. mergeQueue is true when the active agent-guardrails ruleset has a merge queue
+# rule; organization is true for a repository an organization owns (only those can have one). agentApp is "installed" or "missing" for the agent App on this Mac, "none" when
 # no App is registered here.
 # Arguments: the owner's login, the enforced-repo list (one owner/repo per line), "registered" or "none" for
 # the agent App, and the repositories it is installed on (one owner/repo per line).
@@ -310,7 +315,8 @@ project_states() {
     | ([.rulesets.nodes[]? | select(.name == "agent-guardrails") | .enforcement | ascii_downcase] | first // "missing") as $ruleset
     | any(.repositoryTopics.nodes[]?; .topic.name == "agent-guardrails") as $tagged
     | ([.bootstrap.nodes[]? | select((.isCrossRepository | not) and .author.login == $login)] | first) as $bootstrap
-    | (if $registered and $ruleset == "active" then ["on", "ruleset active"]
+    | (if .unreadable == true then ["alarm", "cannot read it from GitHub: deleted, moved, or your access changed"]
+       elif $registered and $ruleset == "active" then ["on", "ruleset active"]
        elif $registered then ["alarm", "ruleset \($ruleset): restore it or check the audit log"]
        elif $tagged then ["alarm", "tagged agent-guardrails but not in this Mac'"'"'s list"]
        elif $ruleset == "active" then ["alarm", "agent-guardrails ruleset active but not in this Mac'"'"'s list"]
@@ -324,7 +330,10 @@ project_states() {
               elif any(.rulesets.nodes[]?; .name == "agent-guardrails-review" and (.enforcement | ascii_downcase) == "active")
               then "review" else "status" end),
        agentApp: (if $app != "registered" then "none" elif ($agent_repos | index($key)) != null then "installed"
-                  else "missing" end)}'
+                  else "missing" end),
+       mergeQueue: any(.rulesets.nodes[]?; .name == "agent-guardrails" and (.enforcement | ascii_downcase) == "active"
+                       and any(.rules.nodes[]?; .type == "MERGE_QUEUE")),
+       organization: (.owner.__typename == "Organization")}'
 }
 
 # jq definitions shared by the report functions.
@@ -539,6 +548,43 @@ branch_ruleset() {
     ]}'
 }
 
+# The opt-in merge queue (`guardrails on --merge-queue`) as a branch ruleset rule, with conservative settings:
+# squash like every other merge here; ALLGREEN, so each PR's own commit in a group must pass every required
+# check (HEADGREEN would let a failing PR in if a later one in its group passes); at most 3 PRs per group and 3
+# groups building at once, so a failure costs few reruns and few CI minutes; a group merges as soon as it is
+# green (minimum 1); a required check that reports nothing for 60 minutes counts as failed (the language checks
+# stop at 45, security at 30).
+merge_queue_rule() {
+  jq -c -n '{type: "merge_queue", parameters: {
+    merge_method: "SQUASH", grouping_strategy: "ALLGREEN",
+    max_entries_to_build: 3, max_entries_to_merge: 3, min_entries_to_merge: 1, min_entries_to_merge_wait_minutes: 5,
+    check_response_timeout_minutes: 60}}'
+}
+
+# The branch ruleset with the merge queue rule added; nobody bypasses it, so every merge goes through the queue.
+# Arguments: ruleset name, required checks (JSON array).
+queued_branch_ruleset() {
+  branch_ruleset "$1" "$2" | jq -c --argjson queue "$(merge_queue_rule)" '.rules += [$queue]'
+}
+
+# Prints why the merge queue cannot work on a repository, nothing when it can. GitHub offers merge queues only for
+# repositories an organization owns. The queue also needs review mode: in status mode the owner approves a PR's
+# head with the commit status merge-approval, which the queue's group commit never carries, so every group would
+# wait until its timeout. Arguments: owner/repo, the owner's account type (Organization or User), approval mode
+# (review or status).
+merge_queue_refusal() {
+  if [[ $2 != Organization ]]; then
+    printf '%s belongs to a personal account, and GitHub offers merge queues only for repositories an organization owns. Run guardrails on %s without --merge-queue (or with --no-merge-queue if it had one); nothing changed.\n' "$1" "$1"
+  elif [[ $3 != review ]]; then
+    printf 'the merge queue needs review mode: in status mode your approval is the commit status merge-approval on the PR head, which the queue'"'"'s group commit never carries, so the queue would wait until its timeout. Install the agent App on %s first (guardrails agent create), or run guardrails on %s --no-merge-queue; nothing changed.\n' "$1" "$1"
+  fi
+}
+
+# Reads a live ruleset (or nothing) and prints "true" when it has a merge queue rule, "false" otherwise.
+ruleset_has_merge_queue() {
+  jq -r -s 'any(.[0].rules[]?; .type == "merge_queue")'
+}
+
 # Status mode (the agent works with the owner's login, so a GitHub review cannot express the owner's
 # approval): the branch ruleset also requires the owner's commit status merge-approval on the exact HEAD.
 # Arguments: ruleset name, pinned checks (JSON array).
@@ -615,19 +661,21 @@ ruleset_approval_mode() {
     else "-" end'
 }
 
-# Reads {branch, review, tag}: the live rulesets agent-guardrails, agent-guardrails-review and
-# agent-guardrails-tags (each null when missing), and prints one line per way they no longer protect what the
-# kit set up: inactive or missing, a bypass list where there was none, a lost rule, guard, security or every
-# checks-<lang> job not required from GitHub Actions, other merge methods, and no rule left that requires the owner's
-# approval (neither merge-approval nor an intact review ruleset). Prints nothing when they still hold. The
-# exact list of checks-<lang> jobs is not compared: it depends on the repository's languages.
+# Reads {branch, review, tag, mergeQueue}: the live rulesets agent-guardrails, agent-guardrails-review and
+# agent-guardrails-tags (each null when missing) and whether the owner turned the merge queue on for the
+# repository (true or false), and prints one line per way they no longer protect what the kit set up: inactive or
+# missing, a bypass list where there was none, a lost rule, guard, security or every checks-<lang> job not required
+# from GitHub Actions, other merge methods, no rule left that requires the owner's approval (neither
+# merge-approval nor an intact review ruleset), and a merge queue that is gone or no longer squashes only PRs
+# that pass. Prints nothing when they still hold. The exact list of checks-<lang> jobs is not compared: it
+# depends on the repository's languages.
 ruleset_problems() {
   jq -r '
     def rule($r; $t): [$r.rules[]? | select(.type == $t)][0];
     def checks($r): rule($r; "required_status_checks").parameters.required_status_checks // [];
     def pinned($r; f): any(checks($r)[]; (.context | f) and .integration_id == 15368);
     def actors($r): [$r.bypass_actors[]? | {actor_id, actor_type, bypass_mode}];
-    (.branch) as $b | (.review) as $v | (.tag) as $t
+    (.branch) as $b | (.review) as $v | (.tag) as $t | (.mergeQueue) as $wanted
     # Without the branch ruleset nothing is enforced: that one line says it all.
     | if $b == null then "the agent-guardrails ruleset is missing" else
          (if $b.enforcement != "active" then "the agent-guardrails ruleset is \($b.enforcement)" else empty end),
@@ -641,6 +689,12 @@ ruleset_problems() {
           else "no checks-<lang> job is a required check from GitHub Actions any more" end),
          (if (rule($b; "pull_request").parameters.allowed_merge_methods // []) == ["squash"] then empty
           else "the agent-guardrails ruleset allows merges other than squash" end),
+         (rule($b; "merge_queue") as $q
+          | if $wanted != true then empty
+            elif $q == null then "the merge queue is gone from the agent-guardrails ruleset, so PRs merge without being checked together"
+            elif $q.parameters.merge_method != "SQUASH" or $q.parameters.grouping_strategy != "ALLGREEN"
+            then "the merge queue no longer squashes only PRs that pass every check (merge method or grouping changed)"
+            else empty end),
       (if any(checks($b)[]; .context == "merge-approval") then empty
        elif $v == null then "no ruleset requires your approval any more (neither merge-approval nor agent-guardrails-review)"
        else

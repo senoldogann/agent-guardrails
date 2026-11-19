@@ -136,6 +136,7 @@ struct KindBadge: View {
     private var symbol: Octicon {
         switch kind {
         case .approve: .passkey
+        case .queued: .gitMerge
         case .answer: .comment
         case .wait: .clock
         case .blocked: .xCircle
@@ -148,7 +149,7 @@ struct KindBadge: View {
         switch kind {
         case .approve: Palette.textPrimary
         case .answer: Palette.textSecondary
-        case .wait, .draft: Palette.textSecondary
+        case .wait, .draft, .queued: Palette.textSecondary
         case .blocked: Palette.danger
         case .approved: Palette.textSecondary
         }
@@ -162,6 +163,7 @@ struct KindBadge: View {
         case .blocked: "The guard failed; the agent has to fix it"
         case .draft: "The agent is working on it"
         case .approved: "Approved"
+        case .queued: "In the merge queue"
         }
     }
 }

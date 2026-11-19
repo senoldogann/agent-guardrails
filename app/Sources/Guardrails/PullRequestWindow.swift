@@ -180,7 +180,7 @@ struct PullRequestMainAction: View {
                         Task { await record(await pullRequest.perform(.merge)) }
                     }
                 } message: {
-                    Text("Squash-merges exactly \(pr.shortSHA) into \(pr.baseRefName) and deletes the branch. GitHub refuses if the PR moved.")
+                    Text("Squash-merges exactly \(pr.shortSHA) into \(pr.baseRefName), through the merge queue where the repository has one. GitHub refuses if the PR moved.")
                 }
         } else if pr.isOpen, !pr.isDraft, !pr.isApproved {
             Button("Review…") {

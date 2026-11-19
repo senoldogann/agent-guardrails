@@ -304,6 +304,25 @@ struct OnCard: View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 Explainer(symbol: .shieldCheck, color: Palette.textSecondary, title: title, text: text)
+                if project.mergeQueue == true {
+                    OcticonLabel("Merge queue: on. Approved PRs merge through it, checked together with the PRs ahead of them.", icon: .gitMerge)
+                        .font(.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if project.canTurnOnMergeQueue {
+                    HStack {
+                        Text("A merge queue checks approved PRs together before they merge, so two PRs that pass alone cannot break \(project.branch) together.")
+                            .font(.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Turn on merge queue") {
+                            open(ActionRequest(kind: .turnOnMergeQueue, target: project.repo, label: project.repo))
+                        }
+                        .secondaryAction()
+                        .disabled(actionsLocked)
+                    }
+                }
                 if project.canSwitchToReviewMode {
                     HStack {
                         Text("The agent App is installed here.").font(.caption).foregroundStyle(Palette.textSecondary)

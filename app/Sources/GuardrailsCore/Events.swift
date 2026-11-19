@@ -25,8 +25,14 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     /// True when `approve` merges the owner's own PR (review mode: GitHub does not take their review, their
     /// admin bypass skips the review but not the checks). Absent in `on` plans.
     public let merge: Bool?
+    /// In `approve`: the owner's own PR goes into the repository's merge queue instead of merging at once. In
+    /// `on`: the default branch will require the merge queue. Older CLIs leave it out.
+    public let mergeQueue: Bool?
 
-    public init(repo: String, pr: Int, url: String, title: String, sha: String, files: [PlannedFile], merge: Bool?) {
+    public init(
+        repo: String, pr: Int, url: String, title: String, sha: String, files: [PlannedFile], merge: Bool?,
+        mergeQueue: Bool?
+    ) {
         self.repo = repo
         self.pr = pr
         self.url = url
@@ -34,10 +40,13 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
         self.sha = sha
         self.files = files
         self.merge = merge
+        self.mergeQueue = mergeQueue
     }
 
     public var shortSHA: String { String(sha.prefix(7)) }
     public var isOwnMerge: Bool { merge == true }
+    /// The owner's own PR is added to the merge queue rather than merged now.
+    public var isOwnQueueEntry: Bool { isOwnMerge && mergeQueue == true }
     public var hasWorkflowChanges: Bool { files.contains(where: \.isWorkflow) }
     /// Workflow or human-owned files change: the owner opens the diff before the app lets them confirm.
     public var needsDiffReview: Bool { files.contains { $0.isWorkflow || $0.isHumanOwned } }
@@ -47,6 +56,16 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
 public struct RepoPlan: Codable, Sendable, Equatable {
     public let repo: String
     public let branch: String
+    /// The default branch will require GitHub's merge queue. Older CLIs leave it out.
+    public let mergeQueue: Bool?
+
+    public init(repo: String, branch: String, mergeQueue: Bool?) {
+        self.repo = repo
+        self.branch = branch
+        self.mergeQueue = mergeQueue
+    }
+
+    public var withMergeQueue: Bool { mergeQueue == true }
 }
 
 /// What `guardrails off <owner/repo>` is about to remove.

@@ -41,11 +41,16 @@ public struct Project: Codable, Sendable, Hashable, Identifiable {
     public let mode: ApprovalMode?
     /// Older CLIs leave it out.
     public let agentApp: AgentAppState?
+    /// The active branch ruleset requires GitHub's merge queue. Older CLIs leave it out.
+    public let mergeQueue: Bool?
+    /// An organization owns the repository; only those can have a merge queue. Older CLIs leave it out.
+    public let organization: Bool?
 
     public init(
         repo: String, state: ProjectState, note: String, private: Bool, fork: Bool, branch: String, pushed: String,
         openPRs: Int,
-        setupURL: String, setupTitle: String, mode: ApprovalMode?, agentApp: AgentAppState?
+        setupURL: String, setupTitle: String, mode: ApprovalMode?, agentApp: AgentAppState?, mergeQueue: Bool?,
+        organization: Bool?
     ) {
         self.repo = repo
         self.state = state
@@ -59,10 +64,18 @@ public struct Project: Codable, Sendable, Hashable, Identifiable {
         self.setupTitle = setupTitle
         self.mode = mode
         self.agentApp = agentApp
+        self.mergeQueue = mergeQueue
+        self.organization = organization
     }
 
     /// Enforced in status mode while the agent App is installed: `guardrails on` again switches to review mode.
     public var canSwitchToReviewMode: Bool { state == .on && mode == .status && agentApp == .installed }
+
+    /// An organization's repository enforced in review mode without the merge queue: `guardrails on --merge-queue`
+    /// adds it. Personal repositories cannot have one, and status mode approvals never reach a group commit.
+    public var canTurnOnMergeQueue: Bool {
+        state == .on && mode == .review && organization == true && mergeQueue != true
+    }
 
     public var id: String { repo }
     public var name: String { repo.split(separator: "/").last.map(String.init) ?? repo }
@@ -138,6 +151,8 @@ public func attentionLine(for project: Project, waiting: Int) -> String? {
 
 /// The state of one open PR as `guardrails prs <repo> --json` reports it.
 public enum PullRequestKind: String, Codable, Sendable {
+    /// In the merge queue: it merges once its group passes the checks.
+    case queued
     case answer
     case approve
     case wait

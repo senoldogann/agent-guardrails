@@ -40,6 +40,35 @@ new_project() {
   printf '%s\n' "$dir"
 }
 
+echo "workflow templates on merge groups"
+# Every required check must also report on a merge queue's group commit, or the queue waits until its timeout.
+for workflow in "$template"/ci/checks-*.yml "$template/.github/workflows/security.yml" "$template/.github/workflows/agent-guard.yml"; do
+  name=${workflow##*/}
+  if grep -Fx '  merge_group:' "$workflow" >/dev/null && grep -Fx '    types: [checks_requested]' "$workflow" >/dev/null &&
+    grep -F 'github.event.merge_group.head_ref }}' "$workflow" >/dev/null; then
+    ok
+  else
+    fail "$name runs on merge groups with a concurrency group per group"
+  fi
+done
+for workflow in "$template"/ci/checks-*.yml "$template/.github/workflows/security.yml"; do
+  # shellcheck disable=SC2016 # a workflow expression, not the shell's
+  grep -F 'ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}' "$workflow" >/dev/null ||
+    fail "${workflow##*/} checks out the group commit on merge_group"
+done
+for workflow in "$template"/ci/checks-*.yml; do
+  expect_eq "${workflow##*/} runs the full gate on a group commit" \
+    "$(grep -A1 -F "if: github.event_name == 'merge_group'" "$workflow" | tail -1)" "        run: make check"
+done
+guard_workflow="$template/.github/workflows/agent-guard.yml"
+# shellcheck disable=SC2016 # workflow expressions and the step's own shell variables, not this shell's
+expect_eq "the guard checks out the default branch on merge_group, never the group's commit" \
+  "$(grep -A4 -F "name: Check out the default branch (merge group)" "$guard_workflow" | grep -F 'ref:' | tr -s ' ')" \
+  ' ref: refs/heads/${{ github.event.repository.default_branch }}'
+# shellcheck disable=SC2016 # the step's own shell variables
+expect_eq "the guard judges a group with the default branch's ci-guard-group" \
+  "$(grep -c -F '.agent/bin/ci-guard-group "$GITHUB_EVENT_PATH" | tee guard.txt' "$guard_workflow")" "1"
+
 echo "kit_drift"
 project=$(new_project drift)
 expect_eq "fresh install has no drift" "$(kit_drift "$project")" ""
@@ -178,7 +207,7 @@ fixture='[
    {"__typename":"CheckRun","name":"security","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-02T00:00:00Z"}]}
 ]'
 tab=$'\t'
-expect_eq "inbox items" "$(classify_prs <<<"$fixture")" "answer${tab}u1${tab}spec(A-1): x${tab}the agent is waiting for your decision${tab}
+expect_eq "inbox items" "$(classify_prs "[]" <<<"$fixture")" "answer${tab}u1${tab}spec(A-1): x${tab}the agent is waiting for your decision${tab}
 approve${tab}u3${tab}feat(A-3): ready${tab}checks running${tab}abc123
 blocked${tab}u5${tab}feat(A-5): bad${tab}guard failed: the agent has to fix the PR${tab}
 wait${tab}u6${tab}feat(A-6): new${tab}guard is running${tab}
@@ -186,12 +215,18 @@ approve${tab}u7${tab}feat(A-7): revoked${tab}checks green${tab}
 approve${tab}u8${tab}feat(A-8): leak${tab}checks failing${tab}"
 
 echo "pr_states"
-expect_eq "every open PR has a kind" "$(pr_states <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
+expect_eq "every open PR has a kind" "$(pr_states "[]" <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
   "u1 answer u2 draft u3 approve u4 approved u5 blocked u6 wait u7 approve u8 approve "
 auto=$(jq -c '[.[] | select(.url == "u4")] | [.[0], (.[0] | .autoMergeRequest = {"mergeMethod": "SQUASH"})]' <<<"$fixture" |
-  pr_states | jq -r '"\(.autoMerge) \(.note)"')
+  pr_states "[]" | jq -r '"\(.autoMerge) \(.note)"')
 expect_eq "an approved PR says whether it merges itself" "$auto" "false approved; auto-merge is off, so merge it yourself
 true approved; merges when checks pass"
+numbered=$(jq -c 'map(.number = (.url[1:] | tonumber))' <<<"$fixture")
+expect_eq "a PR in the merge queue is queued, whatever else it shows" \
+  "$(pr_states '[3, 7]' <<<"$numbered" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
+  "u1 answer u2 draft u3 queued u4 approved u5 blocked u6 wait u7 queued u8 approve "
+expect_eq "queued PRs do not wait for the owner" "$(classify_prs '[3, 7]' <<<"$numbered" | cut -f1,2 | tr '\t\n' ' ,')" \
+  "answer u1,blocked u5,wait u6,approve u8,"
 
 echo "project_states"
 node() {
@@ -228,6 +263,21 @@ expect_eq "mode and agent App per project" \
     jq -r '"\(.repo) \(.mode) \(.agentApp)"' | tr '\n' ' ')" \
   "acme/reviewed review installed acme/status status missing acme/plain null installed "
 expect_eq "no agent App on this Mac" "$(project_states owner acme/status none '' <<<"$review_nodes" | jq -r .agentApp | sort -u)" "none"
+queue_nodes=$(
+  node acme/queued ADMIN '[{"name":"agent-guardrails","enforcement":"ACTIVE","rules":{"nodes":[{"type":"PULL_REQUEST"},{"type":"MERGE_QUEUE"}]}},
+    {"name":"agent-guardrails-review","enforcement":"ACTIVE"}]' '[]' '[]' | jq -c '.owner = {__typename: "Organization"}'
+  node acme/other-queue ADMIN '[{"name":"agent-guardrails","enforcement":"ACTIVE"},
+    {"name":"theirs","enforcement":"ACTIVE","rules":{"nodes":[{"type":"MERGE_QUEUE"}]}}]' '[]' '[]' | jq -c '.owner = {__typename: "Organization"}'
+  node owner/personal ADMIN "$active" '[]' '[]' | jq -c '.owner = {__typename: "User"}'
+)
+expect_eq "merge queue and organization per project" \
+  "$(project_states owner $'acme/queued\nacme/other-queue\nowner/personal' registered '' <<<"$queue_nodes" |
+    jq -r '"\(.repo) \(.mergeQueue) \(.organization)"' | tr '\n' ' ')" \
+  "acme/queued true true acme/other-queue false true owner/personal false false "
+expect_eq "an enforced repository GitHub could not read is an alarm, not a missing row" \
+  "$(jq -n -c '{nameWithOwner: "acme/gone", unreadable: true, isFork: false, isPrivate: true, pushedAt: "",
+      viewerPermission: "READ", pullRequests: {totalCount: 0}}' | project_states owner acme/gone none '' |
+    jq -r '"\(.state) \(.private) \(.openPRs) \(.mergeQueue)"')" "alarm true 0 false"
 
 echo "events for the app"
 expect_eq "no events without the descriptor" "$(GUARDRAILS_EVENTS_FD='' emit_event '{"event":"x"}' 3>&1)" ""
@@ -315,6 +365,23 @@ if broken=$(HOME=$broken_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "
   fail "an unreadable repository must fail the inbox, not shorten it: $broken"
 else
   expect_eq "the inbox names what it could not read" "$(tail -1 <<<"$broken")" "error: cannot list the open PRs of acme/broken"
+fi
+
+echo "merge queue in the inbox and on the command line"
+queue_home="$work/queue-home"
+mkdir -p "$queue_home/.config/agent-guardrails"
+printf 'acme/shop\n' >"$queue_home/.config/agent-guardrails/repos"
+printf 'acme/shop\n' >"$queue_home/.config/agent-guardrails/merge-queue"
+queue_alarm=$(HOME=$queue_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" inbox --json 2>&1 |
+  jq -r 'select(.kind == "alarm" and .repo == "acme/shop") | .note')
+expect_eq "a repository listed with the merge queue whose ruleset lost it raises an alarm" "$queue_alarm" \
+  "acme/shop: the merge queue is gone from the agent-guardrails ruleset, so PRs merge without being checked together. If you did not change it, check the audit log; restore with: guardrails on acme/shop"
+expect_eq "both queue flags at once are refused before anything runs" \
+  "$(run_cli on acme/shop --merge-queue --no-merge-queue)" "error: give --merge-queue or --no-merge-queue once"
+if usage_text=$(run_cli on --merge-queue); then
+  fail "on without a target must be refused"
+else
+  expect_eq "the queue flag alone is no target" "$(grep -c -- '--merge-queue' <<<"$usage_text")" "1"
 fi
 
 echo "pr_files"
@@ -418,6 +485,33 @@ expect_eq "a check reported by another App does not count" "$(jq -c \
   <<<"$review_mode" | ruleset_problems)" "guard is no longer a required check from GitHub Actions
 security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)
 no checks-<lang> job is a required check from GitHub Actions any more"
+queued_mode=$(jq -c --argjson b "$(queued_branch_ruleset agent-guardrails "$checks")" '.branch = $b | .mergeQueue = true' <<<"$review_mode")
+expect_eq "the kit's rulesets with the merge queue hold" "$(ruleset_problems <<<"$queued_mode")" ""
+expect_eq "a repository that had the merge queue and lost it is an alarm" \
+  "$(jq -c '.branch.rules |= map(select(.type != "merge_queue"))' <<<"$queued_mode" | ruleset_problems)" \
+  "the merge queue is gone from the agent-guardrails ruleset, so PRs merge without being checked together"
+expect_eq "a merge queue that lets failing PRs through is an alarm" \
+  "$(jq -c '(.branch.rules[] | select(.type == "merge_queue") | .parameters.grouping_strategy) = "HEADGREEN"' <<<"$queued_mode" |
+    ruleset_problems)" \
+  "the merge queue no longer squashes only PRs that pass every check (merge method or grouping changed)"
+expect_eq "without the merge queue turned on, its absence is no alarm" \
+  "$(jq -c '.mergeQueue = false' <<<"$review_mode" | ruleset_problems)" ""
+
+echo "merge queue"
+queued_rules=$(queued_branch_ruleset agent-guardrails "$checks")
+expect_eq "the merge queue rule: squash, all green, small groups, a check timeout, nobody bypasses" \
+  "$(jq -c '[[.rules[].type], (.rules[] | select(.type == "merge_queue") | .parameters), .bypass_actors]' <<<"$queued_rules")" \
+  '[["deletion","non_fast_forward","required_linear_history","pull_request","required_status_checks","merge_queue"],{"merge_method":"SQUASH","grouping_strategy":"ALLGREEN","max_entries_to_build":3,"max_entries_to_merge":3,"min_entries_to_merge":1,"min_entries_to_merge_wait_minutes":5,"check_response_timeout_minutes":60},[]]'
+expect_eq "the queued ruleset keeps every rule of the branch ruleset" \
+  "$(jq -c '.rules |= map(select(.type != "merge_queue"))' <<<"$queued_rules")" "$(branch_ruleset agent-guardrails "$checks")"
+expect_eq "a live ruleset says whether it has the queue" \
+  "$(ruleset_has_merge_queue <<<"$queued_rules") $(branch_ruleset agent-guardrails "$checks" | ruleset_has_merge_queue) $(ruleset_has_merge_queue </dev/null)" \
+  "true false false"
+expect_eq "an organization's repository in review mode can have the queue" "$(merge_queue_refusal acme/team Organization review)" ""
+expect_eq "a personal repository cannot" "$(merge_queue_refusal owner/mine User review | cut -d, -f1)" \
+  "owner/mine belongs to a personal account"
+expect_eq "status mode cannot" "$(merge_queue_refusal acme/team Organization status | cut -d: -f1)" \
+  "the merge queue needs review mode"
 
 echo "rulesets and CODEOWNERS"
 checks=$(pinned_checks $'checks-node\n')
@@ -479,9 +573,9 @@ rm "$owners/.github/CODEOWNERS"
 printf '* @alice\n' >"$owners/CODEOWNERS"
 expect_eq "root CODEOWNERS is used before docs/" "$(codeowners_problems "$owners" alice)" ""
 reviewed=$(jq -c '[.[] | select(.url == "u3" or .url == "u7") | .reviewDecision = "APPROVED"]' <<<"$fixture" |
-  pr_states | jq -r .kind | tr '\n' ' ')
+  pr_states "[]" | jq -r .kind | tr '\n' ' ')
 expect_eq "review mode: an approving review decision counts as approved" "$reviewed" "approved approved "
-pending=$(jq -c '[.[] | select(.url == "u3") | .reviewDecision = "REVIEW_REQUIRED"]' <<<"$fixture" | pr_states | jq -r .kind)
+pending=$(jq -c '[.[] | select(.url == "u3") | .reviewDecision = "REVIEW_REQUIRED"]' <<<"$fixture" | pr_states "[]" | jq -r .kind)
 expect_eq "review mode: a required review still waits for the owner" "$pending" "approve"
 
 echo "graphql_with_retry"
