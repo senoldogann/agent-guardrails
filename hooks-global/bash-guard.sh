@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Global Claude Code PreToolUse hook for Bash (registered in ~/.claude/settings.json by install.sh).
+# Global PreToolUse hook for Bash, registered by install.sh in ~/.claude/settings.json (Claude Code) and in
+# Codex's hooks.json (Codex sends the same input). Cursor reaches it through cursor-guard.sh. It is the single
+# source of truth for what the agent may run. Given a file read (tool_input.file_path) instead of a command, it
+# checks only the rules on the owner's files and credential files.
 # Scope: the full rule set applies in kit repositories (.agent/bin/ci-guard exists, or the origin is in the
 # owner's list of enforced repositories) and to any command that names an enforced repository, from any
 # directory. Everywhere else the agent works as if the kit did not exist, with one exception that protects
@@ -24,13 +27,20 @@ source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
 input=$(cat)
 raw=$(jq -r '.tool_input.command // empty' <<<"$input")
-[[ -n $raw ]] || exit 0
+# A file read (tool_input.file_path, as other agents' read tools are handed over by their adapters) is checked
+# by its path, against the rules on the owner's files and credential files only.
+read_path=$(jq -r '.tool_input.file_path // empty' <<<"$input")
+[[ -n $raw || -n $read_path ]] || exit 0
 # Normalize common spellings so quoting or path tricks do not hide a gh call:
 # drop quotes and backslashes, and turn $(which gh)/$(command -v gh)/`which gh` into gh.
 quote_chars=$'\\\\"\''
 # shellcheck disable=SC2016 # $( and backticks are literal text to rewrite, not expansions
 gh_lookup='s/\$\((which|command -v|type -p) gh\)/gh/g; s/`(which|command -v|type -p) gh`/gh/g'
-cmd=$(tr -d "$quote_chars" <<<"$raw" | sed -E "$gh_lookup")
+if [[ -n $raw ]]; then
+  cmd=$(tr -d "$quote_chars" <<<"$raw" | sed -E "$gh_lookup")
+else
+  cmd=$read_path
+fi
 
 deny() {
   printf 'BLOCKED by bash-guard: %s\nThis is reserved for the human (approvals, merges, credentials, repository settings). Do not work around it; ask the user to do it.\n' "$1" >&2
@@ -41,12 +51,22 @@ matches() {
   grep -Eiq -- "$1" <<<"$cmd"
 }
 
+# Files that hold GitHub credentials or the tokens of Claude Code's local settings.
+credential_files='\.config/gh|hosts\.yml|\.git-credentials|\.netrc|settings\.local\.json'
+
 # Everywhere: the owner's commands, the approval status and the rulesets of kit repositories, and the
 # owner's list of enforced repositories are the owner's alone.
-matches 'merge-approval' && deny "merge approval (owner-only commit status)"
 # .config as a path component, not inside a word: `model.configuration` next to an agent-guardrails path is fine.
 if matches '\.config([/[:space:]]|$)' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
 if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit install"; fi
+# The command rules below would read a path as a command (src/environments/ as environment access), so a
+# file read stops here: credential files are refused where the full rule set applies.
+if [[ -z $raw ]]; then
+  is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" || exit 0
+  matches "$credential_files" && deny "reading stored GitHub credentials"
+  exit 0
+fi
+matches 'merge-approval' && deny "merge approval (owner-only commit status)"
 # The topic is matched as a value (`--add-topic agent-guardrails`, `names[]=…`, `topic:…`), not as a path or
 # repository name (`~/src/agent-guardrails`, `owner/agent-guardrails`), so topics of the kit's own repository
 # and commands run from its clone stay possible.
@@ -146,7 +166,7 @@ is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_rep
 # Credentials and token fallbacks.
 matches 'security[[:space:]]+(find|dump|export)-' && deny "reading the macOS keychain"
 matches 'git[[:space:]]+credential' && deny "git credential helper access"
-matches '\.config/gh|hosts\.yml|\.git-credentials|\.netrc|settings\.local\.json' && deny "reading stored GitHub credentials"
+matches "$credential_files" && deny "reading stored GitHub credentials"
 matches '(GH|GITHUB)_(ENTERPRISE_)?TOKEN|GH_CONFIG_DIR' && deny "referencing the GitHub token or gh config (read, override or unset)"
 matches 'pending_deployments|deployment_protection|/environments/' && deny "deployment approval or environment access"
 matches '/statuses/' && deny "commit statuses (merge approval is owner-only)"

@@ -51,7 +51,8 @@ mutmut), Rust (proptest, cargo-mutants) and Swift packages (swift-testing; no mu
 ## Requirements
 
 - macOS or Linux with `git`, `jq`, `curl`, `openssl` and the GitHub CLI `gh`, signed in (`gh auth login`).
-- [Claude Code](https://claude.com/claude-code), which runs the skills and hooks.
+- [Claude Code](https://claude.com/claude-code), which runs the skills and hooks. Cursor's agent and the Codex
+  CLI are guarded too, with fewer checks (see [Supported agents](#supported-agents)).
 - A writable directory on `PATH`: `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`.
 - `python3` for registering the agent's GitHub App (`guardrails agent create`).
 - For the menu bar app: macOS 26 and Xcode 26 or newer.
@@ -71,6 +72,9 @@ make -C ~/.local/share/agent-guardrails app   # optional, macOS: installs ~/Appl
 `install.sh` checks everything first, then links the skills into `~/.claude/skills`, registers the global hooks
 in `~/.claude/settings.json` (after backing it up) and links the owner command onto `PATH` as both `guardrails`
 and `agent-guardrails` (other tools also install a `guardrails` command; use the longer name if one does).
+Where Cursor or Codex is set up (`~/.cursor` or `~/.codex` exists), it also adds the kit's hooks to
+`~/.cursor/hooks.json` or `~/.codex/hooks.json`, after backing the file up and keeping your other hooks. If you
+start using one of them later, run `install.sh` again.
 
 To update, press **Update** in the menu bar app when it offers one, or run `guardrails update`. It shows the
 new commits, asks you to confirm the exact one, fast-forwards the clone, runs `install.sh` again and rebuilds
@@ -129,6 +133,48 @@ read-only workflow tokens that cannot approve PRs; SHA-pinned actions; the label
 topic `agent-guardrails`. `guardrails off <owner/repo>` deletes the three rulesets, removes the topic and
 merges a PR that removes the kit's files; the repository settings stay.
 
+## Supported agents
+
+The same rules guard every agent: `hooks-global/bash-guard.sh` decides which commands are blocked, and the other
+agents' hooks only translate their protocol to it. What each agent enforces locally:
+
+| | Claude Code | Cursor agent | Codex CLI |
+| --- | --- | --- | --- |
+| Shell commands checked by bash-guard | yes | yes (`beforeShellExecution`) | yes (`PreToolUse` `Bash`), once trusted |
+| Files read with the agent's read tool checked for credentials | no | yes (`beforeReadFile`) | no |
+| Reminder on every prompt | yes | no | yes |
+| gh and git push as the agent App | yes | no, your gh login | no, your gh login |
+| Hooks committed with the project | bash-guard, write-guard, stop-check | bash-guard (through `cursor-guard.sh`) | none |
+
+- **Cursor** ([hooks](https://cursor.com/docs/agent/hooks)): `hooks-global/cursor-guard.sh` hands
+  `beforeShellExecution` and `beforeReadFile` to bash-guard and answers with Cursor's JSON. A read is checked by
+  its path against bash-guard's rules on credential files and your own kit files, in every workspace root, so a
+  kit repository opened next to another folder is covered. The hooks are registered with `failClosed`, so a
+  crash or timeout blocks the action. `/guardrails-init` also commits `.cursor/hooks.json`, which runs
+  `.agent/hooks/cursor-guard.sh` in every teammate's Cursor; Cursor runs project hooks only in a trusted
+  workspace. A teammate whose installed kit predates Cursor support has every shell command denied there until
+  the kit is updated. Cursor also imports Claude Code hooks from `.claude/settings.json` and `~/.claude/settings.json`
+  (Settings, Agents, Third-Party Imports; on by default), but does not document how it translates their input,
+  so the kit does not rely on that. The kit's tests feed the documented hook input to the adapter; they do not
+  run Cursor itself.
+- **Codex** ([hooks](https://developers.openai.com/codex/hooks)): Codex sends the same hook input as Claude Code,
+  so `~/.codex/hooks.json` runs `bash-guard.sh` and `prompt-reminder.sh` unchanged. Codex skips new or changed
+  hooks until you trust them: after `install.sh`, open `/hooks` in Codex and trust both. Codex lets a tool
+  call run when a hook times out or cannot start (bash-guard turns its own errors into a block), and does not
+  run the hook again when the agent writes to a command that is already running. The kit commits no
+  `.codex/hooks.json` to projects, because Codex runs project hooks only in trusted projects and only after each
+  user has trusted each hook.
+- **Not in Cursor or Codex:** write-guard and stop-check, which use Claude Code's hook protocol. Nothing stops
+  these agents from editing files outside `write-allow` as they work, or from finishing before `make check`
+  passes. In the PR, `ci-guard` still fails changed locked specs and tests and lists every human-owned path it
+  changes, and the language checks still have to pass.
+- **Agent identity:** `agent-identity.sh` hands the App's token to Claude Code's shell commands through
+  `CLAUDE_ENV_FILE`. Cursor's `sessionStart` hook passes environment variables only to later hooks, not to the
+  agent's commands, and Codex has no hook that sets them, so Cursor and Codex run gh and git push with your own
+  gh login. In review mode their PRs are then yours: you merge them with **Review** or `guardrails approve`
+  through your admin bypass, and the protection rests on the rulesets and `ci-guard` on GitHub. The limits of
+  status mode below apply to them, whatever the repository's mode.
+
 ## Security model and limits
 
 - **The boundary is on GitHub.** Rulesets and `ci-guard` (which runs from the default branch, so a PR cannot
@@ -139,9 +185,9 @@ merges a PR that removes the kit's files; the repository settings stay.
   which a deliberately disguised command can evade. It stops mistakes and shortcuts, not an adversary.
   **Teams use review mode:** register the agent App (`guardrails agent create`), install it on the
   repositories, and run `guardrails on <repo>` again. Status mode is for one owner who accepts these limits.
-- **The agent's identity is checked per session.** In a kit repository with the agent App registered, gh and
-  `git push` are blocked unless the session's identity was set up for that repository at its start; a session
-  started elsewhere would otherwise reach GitHub with your login.
+- **The agent's identity is checked per session** (Claude Code only). In a kit repository with the agent App
+  registered, gh and `git push` are blocked unless the session's identity was set up for that repository at its
+  start; a session started elsewhere would otherwise reach GitHub with your login.
 - **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
   computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a
   container or in CI with only the App's token.
@@ -157,7 +203,8 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 Turn each project off first (`guardrails off <owner/repo>`). Then remove the links `guardrails`,
 `agent-guardrails`, `approve-head` and `revoke-head` from your `PATH` directory, the skill links in
 `~/.claude/skills` that point into the kit, the hooks in `~/.claude/settings.json` whose command points into
-the kit (`bash-guard.sh`, `prompt-reminder.sh`, `agent-identity.sh`), `~/Applications/Guardrails.app`,
+the kit (`bash-guard.sh`, `prompt-reminder.sh`, `agent-identity.sh`), the hooks in `~/.cursor/hooks.json` and
+`~/.codex/hooks.json` that point into the kit, `~/Applications/Guardrails.app`,
 `~/.config/agent-guardrails` and the kit clone.
 
 ## Glossary

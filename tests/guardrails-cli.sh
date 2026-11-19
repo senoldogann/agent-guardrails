@@ -22,9 +22,10 @@ expect_eq() {
 # A project as /guardrails-init leaves it: template files, a language Makefile, AGENTS.md with the section.
 new_project() {
   local dir="$work/$1"
-  mkdir -p "$dir/.github/workflows" "$dir/.claude" "$dir/specs/ABC-1" "$dir/src"
+  mkdir -p "$dir/.github/workflows" "$dir/.claude" "$dir/.cursor" "$dir/specs/ABC-1" "$dir/src"
   cp -R "$template/.agent" "$dir/.agent"
   cp "$template/.claude/settings.json" "$dir/.claude/settings.json"
+  cp "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json"
   cp "$template/.github/workflows/agent-guard.yml" "$dir/.github/workflows/"
   cp "$template/ci/checks-node.yml" "$dir/.github/workflows/"
   cp "$template/makefiles/Makefile.typescript" "$dir/Makefile"
@@ -62,6 +63,17 @@ mkdir -p "$project/scripts"
 mv "$project/.agent/bin/ci-guard" "$project/scripts/guard"
 ln -s ../../scripts/guard "$project/.agent/bin/ci-guard"
 expect_eq "symlinked kit file is drift" "$(kit_drift "$project")" "symlink not allowed: .agent/bin/ci-guard"
+project=$(new_project drift7)
+printf '{"version": 1, "hooks": {}}\n' >"$project/.cursor/hooks.json"
+expect_eq "edited Cursor hooks are drift" "$(kit_drift "$project")" "differs or missing: .cursor/hooks.json"
+project=$(new_project drift8)
+rm "$project/.cursor/hooks.json"
+ln -s ../.claude/settings.json "$project/.cursor/hooks.json"
+expect_eq "symlinked Cursor hooks are drift" "$(kit_drift "$project")" "symlink not allowed: .cursor/hooks.json
+differs or missing: .cursor/hooks.json"
+project=$(new_project drift9)
+ln -s ../shared/rules "$project/.cursor/rules"
+expect_eq "linked Cursor rules are the project's own" "$(kit_drift "$project")" ""
 expect_eq "check jobs come from the workflows" "$(check_jobs "$(new_project jobs)")" "checks-node"
 
 echo "remove_kit_files"
@@ -84,6 +96,7 @@ project=$(new_project legacy)
 } >"$project/AGENTS.md"
 printf 'deploy:\n\t./deploy.sh\n' >>"$project/Makefile"
 printf '{"hooks": {}}\n' >"$project/.claude/settings.json"
+printf '{"version": 1, "hooks": {}}\n' >"$project/.cursor/hooks.json"
 notes=$(remove_kit_files "$project")
 expect_eq "legacy section removed up to the next heading" "$(cat "$project/AGENTS.md")" "# shop
 
@@ -91,6 +104,7 @@ expect_eq "legacy section removed up to the next heading" "$(cat "$project/AGENT
 
 make deploy"
 expect_eq "customised files are kept and noted" "$notes" "kept (differs from the kit, remove the kit hooks by hand): .claude/settings.json
+kept (differs from the kit, remove the kit hooks by hand): .cursor/hooks.json
 edited (kit include removed; targets that called .agent/ scripts need a look): Makefile
 kept (decided requirements stay as documentation): specs/"
 if grep -F 'include .agent/common.mk' "$project/Makefile" >/dev/null; then fail "kit include left in Makefile"; else ok; fi
@@ -289,7 +303,7 @@ else ok; fi
 
 echo "changes_enforcement"
 for path in .github/workflows/ci.yml .github/CODEOWNERS .agent/bin/run-checks .claude/settings.json Makefile \
-  sub/Makefile .agent/common.mk CODEOWNERS; do
+  sub/Makefile .agent/common.mk CODEOWNERS .cursor/hooks.json .codex/hooks.json; do
   if changes_enforcement "$path"; then ok; else fail "$path changes what CI enforces"; fi
 done
 for path in src/Makefile.ts specs/A-1/spec.lock README.md; do
@@ -470,6 +484,37 @@ ln -s "$kit/skills/guardrails-init" "$kit_home/.claude/skills/guardrails-init"
 expect_eq "kit installed: its bash-guard decides (allowed)" "$(run_shim "$kit_home" 'gh pr create --title x')" 0
 expect_eq "kit installed: its bash-guard decides (blocked)" "$(run_shim "$kit_home" 'gh pr merge 1 --admin')" 2
 expect_eq "kit installed: owner commands blocked" "$(run_shim "$kit_home" 'guardrails off acme/shop')" 2
+
+echo "project Cursor shim"
+cursor_shim="$template/.agent/hooks/cursor-guard.sh"
+# Prints the permission the shim answers. Arguments: HOME, the hook input as a jq filter over $d (the project).
+run_cursor_shim() {
+  jq -n -c --arg d "$shim_project" "$2" | HOME=$1 "$cursor_shim" 2>/dev/null | jq -r .permission
+}
+# shellcheck disable=SC2016 # $d is a jq variable
+shell_input() {
+  printf '{hook_event_name: "beforeShellExecution", workspace_roots: [$d], cwd: $d, command: "%s"}' "$1"
+}
+# shellcheck disable=SC2016 # $d is a jq variable
+read_input() {
+  printf '{hook_event_name: "beforeReadFile", workspace_roots: [$d], file_path: "%s", content: ""}' "$1"
+}
+expect_eq "kit files point Cursor at the shim" "$(jq -r '[.hooks[][].command] | unique | .[]' "$shim_project/.cursor/hooks.json")" \
+  ".agent/hooks/cursor-guard.sh"
+expect_eq "no kit: gh is denied" "$(run_cursor_shim "$bare_home" "$(shell_input 'gh pr create --title x')")" deny
+expect_eq "no kit: git push is denied" "$(run_cursor_shim "$bare_home" "$(shell_input 'git push -u origin feat/x')")" deny
+expect_eq "no kit: other commands run" "$(run_cursor_shim "$bare_home" "$(shell_input 'make check')")" allow
+expect_eq "no kit: reads run" "$(run_cursor_shim "$bare_home" "$(read_input "$shim_project/README.md")")" allow
+expect_eq "kit installed: its guard decides (allowed)" "$(run_cursor_shim "$kit_home" "$(shell_input 'gh pr create --title x')")" allow
+expect_eq "kit installed: its guard decides (blocked)" "$(run_cursor_shim "$kit_home" "$(shell_input 'gh pr merge 1 --admin')")" deny
+old_kit="$work/old-kit"
+mkdir -p "$old_kit/hooks-global" "$old_kit/skills/guardrails-init" "$work/old-kit-home/.claude/skills"
+cp "$kit/hooks-global/bash-guard.sh" "$old_kit/hooks-global/"
+ln -s "$old_kit/skills/guardrails-init" "$work/old-kit-home/.claude/skills/guardrails-init"
+expect_eq "kit without cursor-guard: shell commands denied" \
+  "$(run_cursor_shim "$work/old-kit-home" "$(shell_input 'make check')")" deny
+expect_eq "kit installed: credential reads denied" \
+  "$(run_cursor_shim "$kit_home" "$(read_input "$kit_home/.config/gh/hosts.yml")")" deny
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

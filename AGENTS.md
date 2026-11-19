@@ -11,7 +11,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - `skills/ticket-implement/` implement phase against a locked spec.
 - `skills/process-fix/` turns a recurring agent mistake into a context or check change.
 - `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks
-  (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too);
+  (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too) and the Cursor shim
+  `cursor-guard.sh`, run from `template/.cursor/hooks.json`;
   `template/.github/workflows/agent-guard.yml` base-branch guard.
 - `bin/guardrails` (also linked as `agent-guardrails`): the owner's command. Enforced repos are listed in
   `~/.config/agent-guardrails/repos`. Offline-testable parts (rulesets, PR and project states, CODEOWNERS
@@ -54,13 +55,18 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   rewrite), so gh and git push run as the App's bot; it fails closed when the App is installed but no token
   can be minted. `kit-project.sh` (sourced by the hooks and `bin/guardrails`) decides what counts as a kit
   repository.
+  Other agents reuse bash-guard, the single source of truth for what is blocked: `cursor-guard.sh` translates
+  Cursor's `beforeShellExecution` and `beforeReadFile` (registered in `~/.cursor/hooks.json`), and Codex runs
+  `bash-guard.sh` and `prompt-reminder.sh` unchanged from `~/.codex/hooks.json` (same input as Claude Code).
+  Neither gets the agent identity; README "Supported agents" says what each agent enforces.
 - `README.md` is for people installing and using the kit; this file is for working on it.
 
 ## Commands
 
 - Install: `./install.sh` from a clone nobody develops in (symlinks skills into `~/.claude/skills`, registers
-  global hooks, links the owner commands onto PATH; idempotent, moves links over from another kit clone,
-  backs up settings.json before changing it). The state-changing owner commands (`on`, `off`, `approve`,
+  global hooks, also in `~/.cursor/hooks.json` and `~/.codex/hooks.json` when those directories exist, links the
+  owner commands onto PATH; idempotent, moves links over from another kit clone, backs up every hook file
+  before changing it). `tests/install.sh` runs it in a throwaway HOME. The state-changing owner commands (`on`, `off`, `approve`,
   `approve-head`) refuse to run from a clone with local changes or not at its origin's main.
 - Check: `make check` (= shellcheck + the offline tests in `tests/`).
 - Language adapters: `make test-lang` (slow; real mini projects per language).
@@ -79,7 +85,9 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - `grep -q` in a pipeline under `pipefail` can report SIGPIPE as failure; use `grep ... >/dev/null`.
 - Pattern files (`write-allow`) are bash globs where `*` also matches `/`.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
-  via `pull_request_target`, is the authority.
+  via `pull_request_target`, is the authority. The same holds for the Cursor and Codex hooks.
+- A new kit file in projects (like `.cursor/hooks.json`) goes into `kit_drift`, `remove_kit_files`, the kit-file
+  list of `guardrails on` and, if it is a guardrail, `changes_enforcement` (the `!!` marker) and write-guard.
 - Every kit merge reaches the owner through `guardrails update` (the app's Update button): it fast-forwards
   the install clone to the confirmed commit, runs `./install.sh` and rebuilds the app. Until then the owner's
   state-changing commands refuse to run. bash-guard blocks the agent from the update and the install clone.

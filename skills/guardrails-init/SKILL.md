@@ -32,8 +32,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
    local package first; the app target itself is outside the test gates and only has to compile.
    Swift CI runs on GitHub's macOS runner, whose toolchain lags behind a developer's newest Xcode: keep
    `swift-tools-version` in Package.swift at the oldest version the package needs (6.0 for swift-testing).
-2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json` or `.github/workflows/agent-guard.yml`
-   exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`).
+2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json`, `.cursor/hooks.json` or
+   `.github/workflows/agent-guard.yml` exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`).
 3. **Branch** `chore/agent-guardrails` from the up-to-date default branch. If that branch already exists
    locally or remotely, stop and ask (it may hold an earlier, unmerged installation).
 4. **Copy the template** with `cp -R`:
@@ -42,14 +42,16 @@ The template lives in `template/` next to this file (resolve this skill's base d
      updates a clean diff. Lint configs (`.agent/lint/`) and test support (`.agent/test-support/`) are used in
      place by the Makefile; do not copy them elsewhere.
    - `template/.claude/settings.json` → `.claude/settings.json`
+   - `template/.cursor/hooks.json` → `.cursor/hooks.json` (guards teammates' Cursor agents, as the Claude
+     settings guard their Claude Code)
    - `template/.github/workflows/agent-guard.yml` → `.github/workflows/agent-guard.yml`
    - `template/makefiles/Makefile.<lang>` → `Makefile`
    - `template/ci/checks-<node|python|rust|swift>.yml` → `.github/workflows/checks-<node|python|rust|swift>.yml`
      (node for typescript and javascript; one file per language in the repo)
    - append `template/gitignore.append` to `.gitignore`
 5. **Keep kit files out of the project's own formatter and linter** (they follow the kit's style and are
-   updated from the kit, never reformatted): `.agent/` and `.claude/settings.json`.
-   - Biome: `"files": { "includes": ["**", "!.agent", "!.claude/settings.json"] }` (a list of only
+   updated from the kit, never reformatted): `.agent/`, `.claude/settings.json` and `.cursor/hooks.json`.
+   - Biome: `"files": { "includes": ["**", "!.agent", "!.claude/settings.json", "!.cursor/hooks.json"] }` (a list of only
      negations matches nothing; keep any existing positive patterns instead of `"**"`).
    - ruff: `extend-exclude = [".agent"]`. SwiftLint and rustfmt need nothing (no kit sources in their scope).
 6. **Install the dev dependencies** listed at the top of the copied `Makefile` with the package manager

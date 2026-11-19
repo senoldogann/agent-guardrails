@@ -226,10 +226,10 @@ $extra_workflows"
   title=$(clean "$(jq -r .title <<<"$pr_json")")
   url=$(jq -r .url <<<"$pr_json")
   printf '\nPR #%s %s\n%s\nhead: %s\n\n' "$pr" "$title" "$url" "$sha"
-  printf 'Kit files (.agent/, .claude/settings.json, guard and checks workflows) match your installed kit.\n'
+  printf 'Kit files (.agent/, .claude/settings.json, .cursor/hooks.json, guard and checks workflows) match your installed kit.\n'
   printf 'The agent wrote the rest; review it (! = human-owned from now on):\n'
   while IFS= read -r file; do
-    case $file in .agent/* | .claude/settings.json | .github/workflows/agent-guard.yml | .github/workflows/checks-*.yml) continue ;; esac
+    case $file in .agent/* | .claude/settings.json | .cursor/hooks.json | .github/workflows/agent-guard.yml | .github/workflows/checks-*.yml) continue ;; esac
     marker="  "
     if is_human_owned "$file"; then marker="! "; fi
     printf '%s %s\n' "$marker" "$file"

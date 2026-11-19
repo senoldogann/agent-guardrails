@@ -5,7 +5,8 @@
 #                    created, and edit the ticket's own locked files (amending a spec; re-lock needed).
 #   implement phase: may write only paths matching specs/<TICKET>/write-allow that are not locked by
 #                    any specs/*/spec.lock and not human-owned (tests, configs, manifests, dotfiles).
-#   both phases:     never .agent/, .claude/, .github/, AGENTS.md, CLAUDE.md, Makefile, ~/.claude/.
+#   both phases:     never .agent/, .claude/, .cursor/, .codex/, .github/, AGENTS.md, CLAUDE.md, Makefile,
+#                    ~/.claude/.
 # Exit code 2 blocks the tool call and shows stderr to the agent.
 # This is a local fast-feedback layer; ci-guard in CI is the authority (Bash writes bypass hooks).
 set -euo pipefail
@@ -39,7 +40,7 @@ esac
 
 rel=${file#"$root"/}
 case $rel in
-  .agent/* | .claude/* | .github/* | AGENTS.md | CLAUDE.md | Makefile)
+  .agent/* | .claude/* | .cursor/* | .codex/* | .github/* | AGENTS.md | CLAUDE.md | Makefile)
     deny "guardrail and context files are human-owned (use the process-fix skill to propose changes)"
     ;;
 esac

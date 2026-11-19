@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Global Claude Code UserPromptSubmit hook: adds a one-line reminder to every prompt in kit repositories (see
-# is_kit_project in kit-project.sh); silent everywhere else.
+# Global UserPromptSubmit hook for Claude Code and Codex: adds a one-line reminder to every prompt in kit
+# repositories (see is_kit_project in kit-project.sh); silent everywhere else.
 # The enforcement lives in bash-guard.sh and on GitHub; this keeps the rule in the agent's working context.
 set -euo pipefail
 # shellcheck source=kit-project.sh

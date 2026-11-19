@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [{ "command": ".agent/hooks/cursor-guard.sh", "failClosed": true }],
+    "beforeReadFile": [{ "command": ".agent/hooks/cursor-guard.sh", "failClosed": true }]
+  }
+}
