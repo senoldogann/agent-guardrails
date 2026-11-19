@@ -22,7 +22,10 @@ disable-model-invocation: true
 2. Check out the ticket's branch (`feat/<ID>-...`, which has the reviewed spec) and run
    `.agent/bin/start-implement <ID>`. If it fails (undecided question, broken lock), report and stop.
 3. Implement in write-allowed files only. Run `make check` and iterate on the implementation until it passes.
-   The Stop hook re-runs it and will not let you finish while it fails.
+   In Claude Code the Stop hook re-runs it when you try to finish and sends you back while it fails. After three
+   failures in a row it lets you stop with a warning that the work is not done: stopping there is not
+   finishing. If a check looks wrong, use `.agent/bin/block` instead. The PR merges only when CI is green and
+   the owner approves it.
 4. Commit (Conventional Commits), then `.agent/bin/finish`: it runs `make check` on the committed HEAD and logs
    it under the ticket, so `.agent/bin/report-checks <ID>` can prove the evidence matches what you push.
    Then push, mark the PR ready (`gh pr ready`), enable auto-merge
