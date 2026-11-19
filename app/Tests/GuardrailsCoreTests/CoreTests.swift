@@ -92,6 +92,17 @@ struct InboxTests {
         #expect(notificationText(for: kitAlarm).body == "Kit install: the kit install has local changes")
         #expect(notificationText(for: repoAlarm) == NotificationText(title: "Guardrails alarm", body: "a/c: ruleset disabled"))
     }
+
+    @Test func dropsOnlyTheRestoreCommandBesideARestoreButton() {
+        func alarm(_ repo: String, _ note: String) -> InboxItem {
+            InboxItem(kind: .alarm, repo: repo, url: "", title: "", note: note, sha: "")
+        }
+        let cli = "a/c: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on a/c"
+        #expect(alarm("a/c", cli).noteBesideRestore
+            == "a/c: the agent-guardrails ruleset is missing. If you did not change it, check the audit log.")
+        #expect(alarm("a/other", cli).noteBesideRestore == cli)
+        #expect(alarm("a/c", "a/c: something else").noteBesideRestore == "a/c: something else")
+    }
 }
 
 @Suite("events and confirmations")

@@ -82,12 +82,7 @@ struct ReviewView: View {
                             DiffStatsLabel(diff: .loaded(now.stats))
                         }
                         Spacer()
-                        Button("Open changes on GitHub") {
-                            if let compareURL = pr.compareURL {
-                                openInBrowser(compareURL)
-                                model.markDiffOpened()
-                            }
-                        }
+                        Button("Open changes on GitHub") { openDiff(pr, model: model) }
                         .secondaryAction()
                         .disabled(pr.compareURL == nil)
                         .help("GitHub's diff of exactly the listed files (base...\(pr.shortSHA)), even if the PR moves on")
@@ -100,8 +95,8 @@ struct ReviewView: View {
                             .textSelection(.enabled)
                     }
                     if case .loaded(let now) = evidence.snapshot, now.head.sha != pr.sha {
-                        OcticonLabel("The PR moved to \(now.head.sha.prefix(7)) after this check. Cancel, then review the new commit.", icon: .alert)
-                            .font(.caption)
+                        OcticonLabel("The PR moved to \(now.head.sha.prefix(7)) after this check. Close this and review the new commit.", icon: .alert)
+                            .font(.system(size: 13))
                             .foregroundStyle(Palette.danger)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -248,14 +243,19 @@ struct ReviewView: View {
                         .keyboardShortcut(.cancelAction)
                 }
                 Spacer()
-                if model.needsDiffReview, !model.diffOpened, case .awaitingConfirmation(let pending) = model.phase,
-                    pending.step == .commit
-                {
-                    Text("Open the changes first: human-owned, workflow, guardrail or spec-locked files change.")
-                        .font(.caption)
-                        .foregroundStyle(Palette.textSecondary)
+                actionHint(model)
+                if mustOpenDiff(model), let pr = model.plan?.pullRequest {
+                    // The next step is the primary button, so nobody wonders why Approve does not react.
+                    Button {
+                        openDiff(pr, model: model)
+                    } label: {
+                        OcticonLabel("Open changes on GitHub", icon: .linkExternal)
+                    }
+                    .primaryAction()
+                    .disabled(pr.compareURL == nil)
+                } else {
+                    confirmButton(model)
                 }
-                confirmButton(model)
             }
             .padding(.horizontal, Metrics.windowPadding)
             .padding(.vertical, 14)
@@ -272,7 +272,8 @@ struct ReviewView: View {
             } label: {
                 OcticonLabel(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), icon: .passkey)
             }
-            .disabled(pending.step == .commit && model.needsDiffReview && !model.diffOpened)
+            .disabled(prMoved(model))
+            .help(prMoved(model) ? "The PR has a newer commit than the one shown here." : "")
             if request.kind == .turnOff {
                 button.destructiveAction()
             } else {
@@ -283,6 +284,49 @@ struct ReviewView: View {
         default:
             EmptyView()
         }
+    }
+
+    /// Why the next step is what it is, next to its button.
+    @ViewBuilder
+    private func actionHint(_ model: ActionModel) -> some View {
+        if prMoved(model) {
+            OcticonLabel("The PR moved on. Close this and review the new commit.", icon: .alert)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.danger)
+        } else if mustOpenDiff(model) {
+            Text("Workflow, guardrail, human-owned or spec-locked files change. Look at them before you approve.")
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if model.needsDiffReview, model.diffOpened, awaitsCommit(model) {
+            OcticonLabel("Changes opened on GitHub", icon: .check)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+        }
+    }
+
+    /// The first confirmation waits on the commit itself (later ones confirm workflows or dropped spec locks).
+    private func awaitsCommit(_ model: ActionModel) -> Bool {
+        if case .awaitingConfirmation(let pending) = model.phase { return pending.step == .commit }
+        return false
+    }
+
+    /// Sensitive files change and their diff was not opened yet: approving waits for that.
+    private func mustOpenDiff(_ model: ActionModel) -> Bool {
+        model.needsDiffReview && !model.diffOpened && awaitsCommit(model)
+    }
+
+    /// GitHub reports a newer head than the commit this review shows.
+    private func prMoved(_ model: ActionModel) -> Bool {
+        guard case .loaded(let now) = evidence.snapshot, let pr = model.plan?.pullRequest else { return false }
+        return now.head.sha != pr.sha
+    }
+
+    private func openDiff(_ pr: PullRequestPlan, model: ActionModel) {
+        guard let compareURL = pr.compareURL else { return }
+        openInBrowser(compareURL)
+        model.markDiffOpened()
     }
 
     private func confirmTitle(_ pending: ConfirmRequest, ownMerge: Bool) -> String {

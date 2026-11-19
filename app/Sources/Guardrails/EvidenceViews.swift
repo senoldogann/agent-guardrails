@@ -8,8 +8,8 @@ struct DiffStatsLabel: View {
     var body: some View {
         if case .loaded(let stats) = diff {
             HStack(spacing: 6) {
-                Text("+\(stats.additions)").foregroundStyle(Palette.textSecondary)
-                Text("−\(stats.deletions)").foregroundStyle(Palette.danger)
+                Text("+\(stats.additions)").foregroundStyle(Palette.textPrimary)
+                Text("−\(stats.deletions)").foregroundStyle(Palette.textSecondary)
                 Text("· \(stats.changedFiles == 1 ? "1 file" : "\(stats.changedFiles) files")")
                     .foregroundStyle(Palette.textSecondary)
             }

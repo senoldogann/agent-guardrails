@@ -538,11 +538,9 @@ expect_eq "a repository listed with the merge queue whose ruleset lost it raises
   "acme/shop: the merge queue is gone from the agent-guardrails ruleset, so PRs merge without being checked together. If you did not change it, check the audit log; restore with: guardrails on acme/shop"
 expect_eq "both queue flags at once are refused before anything runs" \
   "$(run_cli on acme/shop --merge-queue --no-merge-queue)" "error: give --merge-queue or --no-merge-queue once"
-if usage_text=$(run_cli on --merge-queue); then
-  fail "on without a target must be refused"
-else
-  expect_eq "the queue flag alone is no target" "$(grep -c -- '--merge-queue' <<<"$usage_text")" "1"
-fi
+no_target="error: guardrails on needs the repository (owner/repo) or a /guardrails-init PR link, for example: guardrails on octo/app"
+expect_eq "on without a target names what is missing" "$(run_cli on)" "$no_target"
+expect_eq "the queue flag alone is no target" "$(run_cli on --merge-queue)" "$no_target"
 
 echo "ruleset coverage in the inbox and in approval mode"
 # An active ruleset with every rule in place protects nothing once its conditions no longer select the default
@@ -564,6 +562,23 @@ expect_eq "the kit's status mode setup raises no alarm and is status mode" \
 expect_eq "a branch ruleset retargeted away from the default branch raises an alarm" "$(coverage_alarms "$retargeted")" \
   'acme/shop: the agent-guardrails ruleset no longer covers the default branch main (ref_name {"include":["refs/heads/scratch"],"exclude":[]}). If you did not change it, check the audit log; restore with: guardrails on acme/shop'
 expect_eq "a retargeted status mode ruleset is no approval mode" "$(coverage_mode "$retargeted")" "-"
+# A branch ruleset without the security check: a repository behind the kit has no security workflow yet, so that is
+# a note pointing at the kit update; with the workflow on the default branch it is an alarm.
+unsecured="$work/rulesets-unsecured"
+mkdir -p "$unsecured"
+cp "$FAKE_RULESETS"/*.json "$unsecured/"
+jq -c '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(select(.context != "security"))' \
+  "$FAKE_RULESETS/branch.json" >"$unsecured/branch.json"
+jq -c 'map(if .nameWithOwner == "acme/shop" then . + {securityWorkflow: {id: "w"}} else . end)' "$FAKE_WORLD" \
+  >"$work/world-secured.json"
+shop_items() {
+  HOME=$coverage_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" FAKE_RULESETS=$unsecured FAKE_WORLD=$1 \
+    "$kit/bin/guardrails" inbox --json 2>&1 | jq -r 'select((.kind == "alarm" or .kind == "note") and .repo == "acme/shop") | "\(.kind): \(.note)"'
+}
+expect_eq "no security check and no security workflow is a note about the kit update" "$(shop_items "$FAKE_WORLD")" \
+  "note: acme/shop needs the kit update: its default branch has no security workflow yet, so the ruleset cannot require the security check. Open the kit update PR (README, \"Updating a project's kit files\"), approve it, then run: guardrails on acme/shop"
+expect_eq "no security check while the workflow is there is an alarm" "$(shop_items "$work/world-secured.json")" \
+  "alarm: acme/shop: security is not a required check from GitHub Actions. If you did not change it, check the audit log; restore with: guardrails on acme/shop"
 reviewed="$work/rulesets-review"
 mkdir -p "$reviewed"
 branch_ruleset agent-guardrails "$(pinned_checks checks-node)" | jq -c '. + {id: 7}' >"$reviewed/branch.json"
@@ -716,12 +731,12 @@ expect_eq "lost required checks and a bypass on the branch ruleset are alarms" "
   <<<"$review_mode" | ruleset_problems)" "the agent-guardrails ruleset has a changed bypass list (unexpected RepositoryRole 5 (always))
 the agent-guardrails ruleset lost its required_status_checks rule
 guard is no longer a required check from GitHub Actions
-security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)
+security is not a required check from GitHub Actions
 no checks-<lang> job is a required check from GitHub Actions any more"
 expect_eq "a check reported by another App does not count" "$(jq -c \
   '(.branch.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(del(.integration_id))' \
   <<<"$review_mode" | ruleset_problems)" "guard is no longer a required check from GitHub Actions
-security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)
+security is not a required check from GitHub Actions
 no checks-<lang> job is a required check from GitHub Actions any more"
 queued_mode=$(jq -c --argjson b "$(queued_branch_ruleset agent-guardrails "$checks")" '.branch = $b | .mergeQueue = true' <<<"$review_mode")
 expect_eq "the kit's rulesets with the merge queue hold" "$(ruleset_problems <<<"$queued_mode")" ""

@@ -151,7 +151,7 @@ struct ProjectStateCard: View {
             OnCard(project: project, agent: agent, actionsLocked: actionsLocked, open: open)
         case .alarm:
             VStack(alignment: .leading, spacing: 10) {
-                AlarmBanner(text: "\(project.repo): \(project.note)")
+                AlarmBanner(text: "\(project.repo): \(project.note)") { EmptyView() }
                 Text("Restore applies the ruleset again after checking the kit files on \(project.branch).")
                     .font(.caption)
                     .foregroundStyle(Palette.textSecondary)

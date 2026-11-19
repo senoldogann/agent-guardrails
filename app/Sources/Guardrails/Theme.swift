@@ -302,9 +302,11 @@ struct Card<Content: View>: View {
     }
 }
 
-/// An alarm in the CLI's own words: a red alert icon on a quiet surface, so the words stay easy to read.
-struct AlarmBanner: View {
+/// An alarm in the CLI's own words: a red alert icon on a quiet surface, so the words stay easy to read. The
+/// accessory (a button that fixes it, or nothing) sits at the trailing edge.
+struct AlarmBanner<Accessory: View>: View {
     let text: String
+    @ViewBuilder let accessory: Accessory
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -314,6 +316,8 @@ struct AlarmBanner: View {
                 .foregroundStyle(Palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+            Spacer(minLength: 8)
+            accessory
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

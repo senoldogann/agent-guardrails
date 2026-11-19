@@ -97,12 +97,13 @@ struct InboxList: View {
     var body: some View {
         let snapshot = model.snapshot
         VStack(alignment: .leading, spacing: 12) {
-            InboxProblems(error: model.lastError, alarms: snapshot.alarms) {
-                open(ActionRequest(kind: .update, target: "", label: "the kit install"))
-            }
+            InboxProblems(
+                error: model.lastError, alarms: snapshot.alarms, actionsLocked: snapshot.hasKitInstallAlarm,
+                update: { open(ActionRequest(kind: .update, target: "", label: "the kit install")) },
+                restore: { open(ActionRequest(kind: .turnOnRepo, target: $0, label: $0)) })
             ForEach(snapshot.notes) { note in
                 OcticonLabel(displaySafe(note.note), icon: .info)
-                    .font(.caption)
+                    .font(.system(size: 12))
                     .foregroundStyle(Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -130,7 +131,11 @@ struct InboxList: View {
 struct InboxProblems: View {
     let error: String?
     let alarms: [InboxItem]
+    /// The kit install has an alarm itself: on, off and approve refuse until it is fixed.
+    let actionsLocked: Bool
     let update: () -> Void
+    /// Turns the repository's guardrails on again, which is the fix for every repository alarm.
+    let restore: (String) -> Void
 
     var body: some View {
         if let error {
@@ -140,8 +145,16 @@ struct InboxProblems: View {
             // The CLI marks the "kit install is behind its origin main" alarm with the title "update".
             if alarm.repo.isEmpty, alarm.title == "update" {
                 UpdateBanner(update: update)
+            } else if alarm.repo.isEmpty {
+                AlarmBanner(text: alarm.note) { EmptyView() }
             } else {
-                AlarmBanner(text: alarm.note)
+                AlarmBanner(text: alarm.noteBesideRestore) {
+                    Button("Restore…") { restore(alarm.repo) }
+                        .secondaryAction()
+                        .fixedSize()
+                        .disabled(actionsLocked)
+                        .help("Turn the guardrails of \(alarm.repo) on again. You see the plan before anything changes.")
+                }
             }
         }
     }
@@ -250,8 +263,9 @@ struct ItemRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            // Secondary: a panel of waiting PRs would otherwise be a column of primary buttons.
             Button(actionTitle, action: action)
-                .primaryAction()
+                .secondaryAction()
                 .disabled(disabled)
                 .help(disabled ? "The kit install has an alarm; on, off and approve refuse until it is fixed." : "")
         }

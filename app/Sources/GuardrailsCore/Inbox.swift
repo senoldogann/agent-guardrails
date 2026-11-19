@@ -34,6 +34,14 @@ public struct InboxItem: Codable, Sendable, Hashable, Identifiable {
     /// The SHA is part of the identity: after a push, a PR that waits for approval is a new item and notifies
     /// again, because what the owner would approve changed.
     public var id: String { [kind.rawValue, repo, url, note, sha].joined(separator: "|") }
+
+    /// The alarm's words for a page that offers Restore next to it: the CLI's closing "restore with" command is
+    /// dropped, since the button runs it. Any other wording is kept whole.
+    public var noteBesideRestore: String {
+        let command = "; restore with: guardrails on \(repo)"
+        guard kind == .alarm, !repo.isEmpty, note.hasSuffix(command) else { return note }
+        return String(note.dropLast(command.count)) + "."
+    }
 }
 
 /// A repository the owner enforces, with the state of its `agent-guardrails` ruleset.

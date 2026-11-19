@@ -354,7 +354,7 @@ struct DiffLineRow: View {
         HStack(spacing: 0) {
             Text(marker).frame(width: 18).foregroundStyle(Palette.textSecondary)
             Text(displaySafe(line.text).isEmpty ? " " : displaySafe(line.text))
-                .foregroundStyle(line.kind == .hunk || line.kind == .note ? Palette.textSecondary : Palette.textPrimary)
+                .foregroundStyle(line.kind == .added || line.kind == .context ? Palette.textPrimary : Palette.textSecondary)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
@@ -372,10 +372,12 @@ struct DiffLineRow: View {
         }
     }
 
+    /// Neutral both ways: red means a problem in this app, and removing code is none. Added lines carry the
+    /// stronger ground and full-contrast text; removed ones a faint ground and secondary text.
     private var background: Color {
         switch line.kind {
-        case .added: Palette.textSecondary.opacity(0.12)
-        case .removed: Palette.danger.opacity(0.12)
+        case .added: Palette.textPrimary.opacity(0.09)
+        case .removed: Palette.textSecondary.opacity(0.06)
         case .hunk: Palette.surfaceMuted
         default: .clear
         }
