@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
 ### Added
 
 - A second style in Settings → Appearance: **Solid**, flat surfaces in black and white instead of Liquid
@@ -205,7 +207,8 @@ First versioned release of the kit as it is used today.
 - The Projects list no longer fails with "invalid character '<'" when GitHub takes long to answer the repository query:
   smaller pages and retries with backoff.
 
-[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/senoldogann/agent-guardrails/releases/tag/v0.1.0
