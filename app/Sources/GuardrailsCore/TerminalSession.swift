@@ -175,7 +175,8 @@ public final class TerminalSession {
     }
 }
 
-private func makePipe(command: [String]) throws -> (read: Int32, write: Int32) {
+/// A pipe, as (read, write) descriptors. CommandRunner uses it too.
+func makePipe(command: [String]) throws -> (read: Int32, write: Int32) {
     var descriptors: [Int32] = [0, 0]
     guard pipe(&descriptors) == 0 else { throw SpawnError(call: "pipe", code: errno, command: command) }
     return (descriptors[0], descriptors[1])
@@ -201,8 +202,8 @@ public func exitCode(fromWaitStatus status: Int32) -> Int32 {
     return signal == 0 ? (status >> 8) & 0xff : 128 + signal
 }
 
-/// Closes descriptors of a session that could not be started.
-private func closeAll(_ descriptors: [Int32]) {
+/// Closes descriptors of a session or command that could not be started.
+func closeAll(_ descriptors: [Int32]) {
     for descriptor in descriptors { close(descriptor) }
 }
 

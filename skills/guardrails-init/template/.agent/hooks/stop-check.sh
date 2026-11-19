@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Claude Code Stop hook. While a phase is active, the agent cannot finish until the
-# deterministic checks pass: `make check-spec` (spec phase) or `make check` (implement phase).
+# Claude Code Stop hook. While a phase is active, it runs the deterministic checks when the agent
+# tries to finish: `make check-spec` (spec phase) or `make check` (implement phase).
 # Exit code 2 sends the failure tail back to the agent. After MAX_BLOCKS consecutive
 # failures it lets the agent stop and warns the user instead of looping forever.
 # `.agent/bin/block <question>` lets the agent stop to ask the human; the question is shown.
