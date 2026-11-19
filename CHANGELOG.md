@@ -8,6 +8,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Changed
 
+- A pull request's review is one board. The chain of gates — spec, guard, checks, approval, merge — is drawn
+  as a rail at the top of the window, filled where it is proved, ringed where the owner stands and red where it
+  is broken. The evidence sits on the left; the commit the approval lands on, with the one Approve button
+  (`Approve c4a1f2e`), sits on the right. The bottom action bar is gone for pull requests.
+- Reports start with the window's totals — merges, failed runs, re-approvals, merges without an approval — and
+  each merge made by an admin bypass opens its pull request.
 - When sensitive files change, the review's primary button is now "Open changes on GitHub" until the diff is
   opened, then Approve. Before, Approve stayed disabled with only a small gray hint. Approve is also disabled
   once GitHub reports a newer commit than the one under review.
