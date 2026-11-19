@@ -419,6 +419,14 @@ review_excluded="$work/rulesets-review-excluded"
 mkdir -p "$review_excluded"
 cp "$reviewed"/*.json "$review_excluded/"
 jq -c '.conditions.ref_name.exclude = ["refs/heads/main"]' "$reviewed/review.json" >"$review_excluded/review.json"
+branch_bypassed="$work/rulesets-branch-bypassed"
+mkdir -p "$branch_bypassed"
+cp "$reviewed"/*.json "$branch_bypassed/"
+jq -c '.bypass_actors = [{actor_id: 123, actor_type: "Integration", bypass_mode: "always"}]' "$reviewed/branch.json" \
+  >"$branch_bypassed/branch.json"
+expect_eq "a branch ruleset someone may bypass raises an alarm and is no approval mode, even with an intact review ruleset" \
+  "$(coverage_alarms "$branch_bypassed")|$(coverage_mode "$branch_bypassed")" \
+  'acme/shop: the agent-guardrails ruleset has a changed bypass list (unexpected Integration 123 (always)). If you did not change it, check the audit log; restore with: guardrails on acme/shop|-'
 expect_eq "a review ruleset that excludes the default branch raises an alarm and is no approval mode" \
   "$(coverage_alarms "$review_excluded")|$(coverage_mode "$review_excluded")" \
   'acme/shop: the agent-guardrails-review ruleset no longer covers the default branch main (ref_name {"include":["~DEFAULT_BRANCH"],"exclude":["refs/heads/main"]}). If you did not change it, check the audit log; restore with: guardrails on acme/shop|-'
@@ -559,7 +567,9 @@ expect_eq "a tag ruleset retargeted to branches is an alarm" "$(jq -c '.tag.targ
 
 echo "ruleset coverage of the default branch (GitHub ref_name semantics)"
 # Each line: include, exclude, default branch, whether the ruleset covers it. Unsupported pattern syntax (braces,
-# backslashes, an unclosed set) never counts as including and always counts as excluding.
+# backslashes, an unclosed set, a set with a leading or trailing "-", a chained or reversed range) never counts as
+# including and always counts as excluding. A set never matches "/", even when its range spans it (".-0"). The
+# expected values agree with Ruby's File.fnmatch(pattern, ref, File::FNM_PATHNAME) where it can tell.
 coverage_cases='[["~DEFAULT_BRANCH"],[],"main",true]
 [["~ALL"],[],"main",true]
 [["refs/heads/main"],[],"main",true]
@@ -574,7 +584,18 @@ coverage_cases='[["~DEFAULT_BRANCH"],[],"main",true]
 [["~ALL"],["main"],"main",false]
 [["~ALL"],["refs/heads/dev*"],"main",true]
 [["~ALL"],["~ALL"],"main",false]
-[["~ALL"],["refs/heads/[m"],"main",false]'
+[["~ALL"],["refs/heads/[m"],"main",false]
+[["refs/heads/[a-z]ain"],[],"main",true]
+[["refs/heads/[!a-l]ain"],[],"main",true]
+[["refs/heads[.-0]main"],[],"main",false]
+[["refs/heads/[-m]ain"],[],"main",false]
+[["~ALL"],["refs/heads/[!-~]ain"],"main",false]
+[["~ALL"],["refs/heads/[^-z]*"],"main",false]
+[["~ALL"],["refs/heads/[!a-]*"],"main",false]
+[["~ALL"],["refs/heads/[z-a]ain"],"main",false]
+[["~ALL"],["refs/heads/[a-c-e]ain"],"main",false]
+[["~ALL"],["refs/heads/[!n-z]ain"],"main",false]
+[["~ALL"],["refs/heads/[!a-z]ain"],"main",true]'
 expect_eq "include, exclude and fnmatch patterns" "$(jq -s -c "$ruleset_jq_defs"'
   map(. as [$include, $exclude, $branch]
     | {target: "branch", conditions: {ref_name: {include: $include, exclude: $exclude}}} | covers_default($branch))' \
@@ -629,6 +650,13 @@ expect_eq "a ruleset that does not target the default branch is no approval mode
   "$(jq -c '.target = "tag"' <<<"$review_rules" | ruleset_approval_mode main) $(
     jq -c '.conditions.ref_name.exclude = ["refs/heads/main"]' <<<"$status_rules" | ruleset_approval_mode main) $(
     jq -c '.conditions.ref_name.include = ["refs/heads/main"]' <<<"$status_rules" | ruleset_approval_mode trunk)" "- - -"
+# Approval mode applies the bypass lists `guardrails on` sets, like ruleset_problems: an approval is no protection
+# when someone else may skip the rule that requires it.
+expect_eq "a ruleset with a bypass list other than the kit's is no approval mode" \
+  "$(jq -c '.bypass_actors = [{actor_id: 123, actor_type: "Integration", bypass_mode: "always"}]' <<<"$status_rules" |
+    ruleset_approval_mode main) $(
+    jq -c '.bypass_actors += [{actor_id: 123, actor_type: "Integration", bypass_mode: "always"}]' <<<"$review_rules" |
+      ruleset_approval_mode main) $(jq -c '.bypass_actors = []' <<<"$review_rules" | ruleset_approval_mode main)" "- - -"
 expect_eq "tags: every tag, admins only" "$(tag_ruleset agent-guardrails-tags | jq -c '[.target, .conditions.ref_name.include, [.rules[].type], .bypass_actors[0].bypass_mode]')" \
   '["tag",["~ALL"],["creation","update","deletion"],"always"]'
 owners="$work/owners"
