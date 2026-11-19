@@ -29,6 +29,7 @@ struct MainWindow: View {
                     .clipped()
                 WorkspaceStatusBar(model: model, projects: projects)
             }
+            .background { pageBackground.ignoresSafeArea() }
         }
         .searchable(text: $search, placement: .sidebar, prompt: "Search repositories")
         .searchFocused($searchFocused)
@@ -53,6 +54,14 @@ struct MainWindow: View {
         .containerBackground(windowBackground, for: .window)
         .onAppear { bringWindowsForward() }
         .task { await refreshWhileOpen() }
+    }
+
+    /// Behind the tabs, the page and the status bar: the glass veil, or nothing over the solid canvas.
+    private var pageBackground: Color {
+        switch style {
+        case .glass: Palette.glassVeil
+        case .solid: .clear
+        }
     }
 
     private var windowBackground: AnyShapeStyle {
