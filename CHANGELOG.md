@@ -21,6 +21,15 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- `guardrails approve` shows which files a re-lock of a spec lock stops or starts locking, read from both
+  versions of the lock. It asks a separate `unlock` confirmation for every dropped file, and the app shows
+  both in the plan.
+- In review mode, `guardrails approve` reads GitHub's push log to detect when your account made the newest
+  push to an agent's PR. GitHub would never count your review then, so it merges the whole PR through your
+  admin bypass, pinned to the confirmed commit. It names that push (account, commit, time) before you confirm.
+  Before, it posted a review that left the PR waiting.
+- `guardrails on` no longer switches a repository from review mode to status mode on a Mac without the agent
+  App. It refuses and says what to do. `--status-mode` makes the switch on purpose.
 - The guard and the merge queue guard reject a spec lock that is not exactly what `spec-lock` writes: an
   empty, malformed or duplicated manifest, a path outside the repository, a missing metadata or locked file,
   or a lock that disappears. A re-lock that changes which files are locked passes as an amendment and is

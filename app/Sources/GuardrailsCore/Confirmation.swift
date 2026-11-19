@@ -5,9 +5,12 @@ public enum ConfirmationError: Error, Equatable, CustomStringConvertible {
     case doesNotMatchPlan(step: ConfirmStep, expected: String, planned: String)
     case notExpected(step: ConfirmStep)
     case unpinnedBase
+    case leavesReviewMode(repo: String)
 
     public var description: String {
         switch self {
+        case .leavesReviewMode(let repo):
+            "guardrails planned to switch \(repo) from review mode to status mode, which the app never asks for; run guardrails on from the Mac that holds the agent App"
         case .noPlan(let step):
             "guardrails asked for the \(step.rawValue) confirmation before it said what it will do"
         case .doesNotMatchPlan(let step, let expected, let planned):
@@ -24,6 +27,8 @@ public enum ConfirmationError: Error, Equatable, CustomStringConvertible {
 /// The app never types what a prompt asks for unless the plan shown to the owner says the same.
 public func confirmationAnswer(for request: ConfirmRequest, plan: Plan?) throws -> String {
     guard let plan else { throw ConfirmationError.noPlan(step: request.step) }
+    // Leaving review mode takes `guardrails on --status-mode` in the owner's own terminal; the app never passes it.
+    guard !plan.leavesReviewMode else { throw ConfirmationError.leavesReviewMode(repo: plan.repo) }
     switch (request.step, plan) {
     case (.commit, .approve(let pr)), (.commit, .turnOn(let pr)):
         let isShortSHA = request.expect.count == 7 && request.expect.allSatisfy(\.isHexDigit)
@@ -45,6 +50,12 @@ public func confirmationAnswer(for request: ConfirmRequest, plan: Plan?) throws 
                 step: .workflows, expected: request.expect, planned: pr.hasWorkflowChanges ? "workflows" : "no workflow changes")
         }
         return request.expect
+    case (.unlock, .approve(let pr)):
+        guard pr.hasDroppedLockedFiles, request.expect == "unlock" else {
+            throw ConfirmationError.doesNotMatchPlan(
+                step: .unlock, expected: request.expect, planned: pr.hasDroppedLockedFiles ? "unlock" : "no file a spec lock stops locking")
+        }
+        return request.expect
     case (.repo, .turnOnRepo(let repoPlan)):
         guard request.expect == repoPlan.repo else {
             throw ConfirmationError.doesNotMatchPlan(step: .repo, expected: request.expect, planned: repoPlan.repo)
@@ -63,7 +74,8 @@ public func confirmationAnswer(for request: ConfirmRequest, plan: Plan?) throws 
 /// Whether answering this step is the last one: after it the CLI acts and cancelling could stop it halfway.
 public func isFinalConfirmation(_ request: ConfirmRequest, plan: Plan) -> Bool {
     switch (request.step, plan) {
-    case (.commit, .approve(let pr)): !pr.hasWorkflowChanges
+    case (.commit, .approve(let pr)): !pr.hasWorkflowChanges && !pr.hasDroppedLockedFiles
+    case (.workflows, .approve(let pr)): !pr.hasDroppedLockedFiles
     default: true
     }
 }
@@ -72,6 +84,10 @@ public func isFinalConfirmation(_ request: ConfirmRequest, plan: Plan) -> Bool {
 /// what the owner approves: repository, PR and commit.
 public func ownerCheckReason(for request: ConfirmRequest, plan: Plan) -> String {
     switch (request.step, plan) {
+    case (.commit, .approve(let pr)) where pr.isOwnPush && pr.isOwnQueueEntry:
+        "add all of \(pr.author ?? "the author")'s \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA), whose newest push your account made, to the merge queue"
+    case (.commit, .approve(let pr)) where pr.isOwnPush:
+        "merge all of \(pr.author ?? "the author")'s \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA), whose newest push your account made"
     case (.commit, .approve(let pr)) where pr.isOwnQueueEntry:
         "add your own \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA) to the merge queue"
     case (.commit, .approve(let pr)) where pr.isOwnMerge:
@@ -82,6 +98,8 @@ public func ownerCheckReason(for request: ConfirmRequest, plan: Plan) -> String 
         "update the kit install to commit \(update.shortTo) (version \(update.toVersion))"
     case (.workflows, .approve(let pr)):
         "confirm you reviewed the workflow changes in \(pr.repo) PR #\(pr.pr)"
+    case (.unlock, .approve(let pr)):
+        "confirm \(pr.repo) PR #\(pr.pr) stops locking \(pr.droppedLockedFiles.count) spec-locked file(s)"
     case (.commit, .turnOn(let pr)):
         "merge \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA) and turn the guardrails on"
     case (_, .turnOnRepo(let repoPlan)) where repoPlan.withMergeQueue:
