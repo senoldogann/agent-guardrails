@@ -1,14 +1,15 @@
 import GuardrailsCore
 import SwiftUI
 
-/// The main window's sidebar: the overview, every repository grouped by what it needs, and settings. A
-/// click shows the page in the browse tab.
+/// The main window's sidebar: the overview and every repository grouped by what it needs; a click shows the
+/// page in the browse tab. Settings is a plain button in the bottom corner, as in Claude and Linear.
 struct ProjectSidebar: View {
     let projects: ProjectsModel
     let snapshot: InboxSnapshot
     @Binding var selection: WorkspacePage?
     let search: String
-    let createAgent: () -> Void
+    let settingsShown: Bool
+    let openSettings: () -> Void
     /// Most of an owner's repositories are off; the group stays closed unless the owner opens it.
     @AppStorage("showsOffProjects") private var showsOff = false
     @AppStorage(AppStyle.key) private var style = AppStyle.glass
@@ -33,14 +34,6 @@ struct ProjectSidebar: View {
                     Text("Off · \(groups.off.count)")
                 }
             }
-            if search.isEmpty {
-                Section {
-                    OcticonLabel("Settings", icon: .gear)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Palette.textPrimary)
-                        .tag(WorkspacePage.settings)
-                }
-            }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(style == .solid ? .hidden : .automatic)
@@ -49,58 +42,34 @@ struct ProjectSidebar: View {
             SidebarOverlay(isLoading: projects.isLoading, isEmpty: projects.projects.isEmpty, error: projects.lastError)
         }
         .safeAreaBar(edge: .bottom) {
-            if let agent = projects.agent {
-                AgentPanel(agent: agent, create: createAgent)
-            }
+            SidebarSettingsButton(isShown: settingsShown, open: openSettings)
         }
     }
 }
 
-/// Who the agent is on GitHub: its own App (review mode possible) or the owner's login.
-struct AgentPanel: View {
-    let agent: AgentInfo
-    let create: () -> Void
+/// The sidebar's bottom corner: a gear and a word, no panel behind them; brighter while Settings is shown.
+struct SidebarSettingsButton: View {
+    let isShown: Bool
+    let open: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        let detail = agent.registered ? (agent.slug ?? "") : "The agent uses your GitHub login"
-        VStack(alignment: .leading, spacing: 4) {
+        Button(action: open) {
             HStack(spacing: 8) {
-                OcticonImage(icon: .person, size: 14)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Palette.textSecondary)
-                Text(agent.registered ? "Agent App" : "Agent identity").font(.system(size: 12, weight: .semibold))
-                Spacer(minLength: 4)
-                AgentPanelAction(agent: agent, create: create)
+                OcticonImage(icon: .gear, size: 14)
+                Text("Settings").font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 0)
             }
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(Palette.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(detail)
+            .foregroundStyle(isShown || isHovered ? Palette.textPrimary : Palette.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .contentShape(Rectangle())
         }
-        .padding(12)
-        .floatingPanel(cornerRadius: Metrics.cardRadius)
-        .padding(10)
-    }
-}
-
-struct AgentPanelAction: View {
-    let agent: AgentInfo
-    let create: () -> Void
-
-    var body: some View {
-        if agent.registered, let installURL = agent.installURL {
-            Button("Manage") { openInBrowser(installURL) }
-                .secondaryAction()
-                .fixedSize()
-                .help("Choose which repositories the agent App may work in")
-        } else if !agent.registered {
-            Button("Create…", action: create)
-                .primaryAction()
-                .fixedSize()
-                .help("Register the agent's own GitHub App, so you can approve its PRs with GitHub reviews")
-        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help("Settings (⌘,)")
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
     }
 }
 

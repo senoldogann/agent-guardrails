@@ -16,7 +16,8 @@ struct MainWindow: View {
         NavigationSplitView {
             ProjectSidebar(
                 projects: projects, snapshot: model.snapshot, selection: sidebarSelection, search: search,
-                createAgent: { model.openReview(ActionRequest(kind: .agentCreate, target: "", label: "the agent App")) }
+                settingsShown: workspace.strip.selected == .settings,
+                openSettings: { workspace.show(.settings) }
             )
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {

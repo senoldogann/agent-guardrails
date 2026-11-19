@@ -19,6 +19,15 @@ struct SettingsView: View {
                 AppearancePicker()
             }
             Section {
+                AgentSetting(agent: model.projects?.agent) {
+                    model.openReview(ActionRequest(kind: .agentCreate, target: "", label: "the agent App"))
+                }
+            } header: {
+                Text("Agent")
+            } footer: {
+                Text("With its own GitHub App the agent pushes as a bot, and you approve its PRs with GitHub reviews.")
+            }
+            Section {
                 NotificationSetting(shown: model.notificationsShown) { Task { await model.allowNotifications() } }
             } header: {
                 Text("Notifications")
@@ -92,6 +101,34 @@ struct LoginItemToggle: View {
         } catch {
             problem = "Could not change the login item: \(error.localizedDescription)"
             opensAtLogin = registered
+        }
+    }
+}
+
+/// Who the agent is on GitHub, with Manage (which repositories the App may work in) or Create….
+struct AgentSetting: View {
+    let agent: AgentInfo?
+    let create: () -> Void
+
+    var body: some View {
+        LabeledContent("GitHub App") {
+            HStack(spacing: 10) {
+                if let agent {
+                    Text(agent.registered ? (agent.slug ?? "Registered") : "None; the agent uses your login")
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if agent.registered, let installURL = agent.installURL {
+                        Button("Manage…") { openInBrowser(installURL) }
+                            .help("Choose which repositories the agent App may work in")
+                    } else if !agent.registered {
+                        Button("Create…", action: create)
+                            .help("Register the agent's own GitHub App, so you can approve its PRs with GitHub reviews")
+                    }
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
         }
     }
 }
