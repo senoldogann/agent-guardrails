@@ -13,6 +13,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/guard-lib.sh"
+source "$(dirname "$0")/guard-lock-manifest.sh"
 require_args 5 $# "ci-guard <base-commit> <head-ref> <head-branch-name> <default-branch> <pr-base-branch>"
 cd_project_root
 
@@ -40,6 +41,7 @@ elif [[ $ticket_count -eq 1 ]]; then
   guard_ticket_spec "$ticket" "$head"
 fi
 
+guard_lock_manifests "$base" "$head"
 guard_locks "$head"
 
 # Spec commits: HEAD must not be one (tests are red there by design), and amendments are made visible.
