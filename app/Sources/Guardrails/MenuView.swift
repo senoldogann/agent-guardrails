@@ -6,6 +6,7 @@ import SwiftUI
 struct MenuView: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -19,6 +20,7 @@ struct MenuView: View {
         }
         .padding(Metrics.popoverPadding)
         .frame(width: 390)
+        .background(style == .solid ? Palette.canvas : .clear)
     }
 
     private var header: some View {

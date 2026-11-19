@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// Monochrome tokens with color only for meaning (danger, warning, success); light and dark variants. The
-/// window is translucent (Liquid Glass and the desktop show through), so surfaces are tinted veils over it:
-/// opaque enough that text on them keeps its contrast, clear enough to read as layers of glass.
+/// Monochrome tokens with one color for meaning (danger); light and dark variants. In the glass style the
+/// window is translucent, so surfaces are tinted veils over it: opaque enough that text on them keeps its
+/// contrast, clear enough to read as layers of glass. Over the solid style's canvas the same veils read as
+/// flat white (light) or dark gray (dark) panels.
 enum Palette {
     static let surface = Color(light: 0xFFFFFF, lightAlpha: 0.78, dark: 0xFFFFFF, darkAlpha: 0.06)
     static let surfaceMuted = Color(light: 0x000000, lightAlpha: 0.04, dark: 0xFFFFFF, darkAlpha: 0.08)
@@ -20,6 +21,72 @@ enum Palette {
     /// it (`.tint` does not reach the selection) and a graphite row reads as black; plain glass buttons take
     /// that light accent too, so no window sets this tint for all its controls.
     static let accent = Color(light: 0x3F3F46, dark: 0x4C4C52)
+
+    /// The solid style's window: near black in dark mode, a light gray close to white in light mode.
+    static let canvas = Color(light: 0xF5F5F6, dark: 0x0E0E10)
+    /// The solid style's sidebar: one step away from the page, darker in both modes.
+    static let sidebar = Color(light: 0xECECEE, dark: 0x080809)
+    /// The solid style's raised controls (selected tab, secondary buttons, panels): white on light, gray on dark.
+    static let control = Color(light: 0xFFFFFF, dark: 0x1C1C1F)
+    /// The solid style's primary button: black on light and white on dark, with the opposite label.
+    static let inverseFill = Color(light: 0x111113, dark: 0xF2F2F3)
+    static let inverseText = Color(light: 0xFFFFFF, dark: 0x0E0E10)
+}
+
+/// How the app is drawn: Liquid Glass over the desktop, or solid surfaces in black and white.
+enum AppStyle: String, CaseIterable, Identifiable {
+    case glass
+    case solid
+
+    static let key = "appStyle"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .glass: "Liquid Glass"
+        case .solid: "Solid"
+        }
+    }
+}
+
+/// Light or dark for the whole app (window and menu bar panel), or whatever macOS uses.
+enum AppearanceChoice: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    static let key = "appearance"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+/// Applies the owner's appearance choice to every window of the app.
+@MainActor
+func applyAppearance(_ choice: AppearanceChoice) {
+    NSApplication.shared.appearance = choice.nsAppearance
+}
+
+/// The stored appearance choice; an unknown or missing value is the system's.
+@MainActor
+func storedAppearance() -> AppearanceChoice {
+    AppearanceChoice(rawValue: UserDefaults.standard.string(forKey: AppearanceChoice.key) ?? "") ?? .system
 }
 
 enum Metrics {
@@ -61,19 +128,131 @@ extension Font {
 
 extension View {
     /// The one primary action of a screen: prominent Liquid Glass in graphite, so the system keeps its white
-    /// label readable in light, dark and inactive windows.
+    /// label readable in light, dark and inactive windows; black (white in dark mode) in the solid style.
     func primaryAction() -> some View {
-        buttonStyle(.glassProminent).tint(Palette.accent)
+        modifier(PrimaryActionStyle())
     }
 
-    /// Secondary actions: clear Liquid Glass.
+    /// Secondary actions: clear Liquid Glass, or a raised control with a hairline in the solid style.
     func secondaryAction() -> some View {
-        buttonStyle(.glass)
+        modifier(SecondaryActionStyle())
     }
 
-    /// The one destructive action (turn off, restore after an alarm): prominent glass in red.
+    /// The one destructive action (turn off, restore after an alarm): red, as glass or solid.
     func destructiveAction() -> some View {
-        buttonStyle(.glassProminent).tint(Palette.dangerFill)
+        modifier(DestructiveActionStyle())
+    }
+
+    /// A panel that floats over the page (the agent panel): a piece of glass, or a raised solid control.
+    func floatingPanel(cornerRadius: CGFloat) -> some View {
+        modifier(FloatingPanelStyle(cornerRadius: cornerRadius))
+    }
+
+    /// A bar along a page's edge (the review's action bar): the system bar material, or the solid page color
+    /// with a hairline on top.
+    func edgeBar() -> some View {
+        modifier(EdgeBarStyle())
+    }
+}
+
+struct PrimaryActionStyle: ViewModifier {
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .glass: content.buttonStyle(.glassProminent).tint(Palette.accent)
+        case .solid: content.buttonStyle(SolidButtonStyle(fill: Palette.inverseFill, label: Palette.inverseText, border: .clear))
+        }
+    }
+}
+
+struct SecondaryActionStyle: ViewModifier {
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .glass: content.buttonStyle(.glass)
+        case .solid: content.buttonStyle(SolidButtonStyle(fill: Palette.control, label: Palette.textPrimary, border: Palette.hairline))
+        }
+    }
+}
+
+struct DestructiveActionStyle: ViewModifier {
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .glass: content.buttonStyle(.glassProminent).tint(Palette.dangerFill)
+        case .solid: content.buttonStyle(SolidButtonStyle(fill: Palette.dangerFill, label: .white, border: .clear))
+        }
+    }
+}
+
+struct FloatingPanelStyle: ViewModifier {
+    let cornerRadius: CGFloat
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .glass: content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        case .solid:
+            content
+                .background(RoundedRectangle(cornerRadius: cornerRadius).fill(Palette.control))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Palette.hairline))
+        }
+    }
+}
+
+struct EdgeBarStyle: ViewModifier {
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .glass: content.background(.bar)
+        case .solid:
+            content
+                .background(Palette.canvas)
+                .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
+        }
+    }
+}
+
+/// A flat button for the solid style: a rounded rectangle in one fill, no gradient, no glass.
+struct SolidButtonStyle: ButtonStyle {
+    let fill: Color
+    let label: Color
+    let border: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        SolidButtonBody(configuration: configuration, fill: fill, label: label, border: border)
+    }
+}
+
+private struct SolidButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let fill: Color
+    let label: Color
+    let border: Color
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.controlSize) private var controlSize
+
+    var body: some View {
+        let small = controlSize == .small || controlSize == .mini
+        let shape = RoundedRectangle(cornerRadius: small ? 6 : 7)
+        configuration.label
+            .font(.system(size: small ? 11 : 13, weight: .medium))
+            .foregroundStyle(label)
+            .padding(.horizontal, small ? 8 : 12)
+            .frame(minHeight: small ? 22 : 28)
+            .background(shape.fill(fill))
+            .overlay(shape.strokeBorder(border))
+            .contentShape(shape)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
     }
 }
 

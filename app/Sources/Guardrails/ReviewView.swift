@@ -218,12 +218,12 @@ struct ReviewView: View {
                     Button("Cancel") {
                         model.cancel()
                     }
-                    .buttonStyle(.glass)
+                    .secondaryAction()
                     .keyboardShortcut(.cancelAction)
                     .disabled(!model.canCancel)
                 } else {
                     Button("Close", action: close)
-                        .buttonStyle(.glass)
+                        .secondaryAction()
                         .keyboardShortcut(.cancelAction)
                 }
                 Spacer()
@@ -239,21 +239,24 @@ struct ReviewView: View {
             .padding(.horizontal, Metrics.windowPadding)
             .padding(.vertical, 14)
         }
-        .background(.bar)
+        .edgeBar()
     }
 
     @ViewBuilder
     private func confirmButton(_ model: ActionModel) -> some View {
         switch model.phase {
         case .awaitingConfirmation(let pending):
-            Button {
+            let button = Button {
                 Task { await model.confirm() }
             } label: {
                 OcticonLabel(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), icon: .passkey)
             }
-            .buttonStyle(.glassProminent)
-            .tint(request.kind == .turnOff ? Palette.dangerFill : Palette.accent)
             .disabled(pending.step == .commit && model.needsDiffReview && !model.diffOpened)
+            if request.kind == .turnOff {
+                button.destructiveAction()
+            } else {
+                button.primaryAction()
+            }
         case .verifyingOwner:
             ProgressView().controlSize(.small)
         default:

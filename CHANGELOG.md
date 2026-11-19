@@ -8,6 +8,10 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Added
 
+- A second style in Settings → Appearance: **Solid**, flat surfaces in black and white instead of Liquid
+  Glass (a near-black window in dark mode, a light gray close to white in light mode, black or white primary
+  buttons). The same section chooses Light, Dark or the system's appearance for the window and the menu bar
+  panel.
 - The Projects window opens on an **Overview**: what waits for you, with the same actions as the menu bar, and
   the enforced repositories, alarms first. ⌘R refreshes and ⌘F searches.
 - Sidebar rows say why a repository needs you (its alarm, a bootstrap PR to turn on, or how many approvals and
