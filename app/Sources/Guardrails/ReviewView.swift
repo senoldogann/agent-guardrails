@@ -112,12 +112,7 @@ struct ReviewView: View {
                         if pr.mergeQueue == true { MergeQueuePlanNote() }
                     }
                     if pr.isOwnPush {
-                        OcticonLabel(
-                            pr.isOwnQueueEntry
-                                ? "You pushed the latest commit: GitHub takes no review from the account that pushed last, so this adds the PR to the merge queue now. Your admin bypass skips the review, not the checks."
-                                : "You pushed the latest commit: GitHub takes no review from the account that pushed last, so this merges the PR now. Your admin bypass skips the review, not the checks.",
-                            icon: .gitMerge
-                        )
+                        OcticonLabel(displaySafe(pr.ownPushNote), icon: .gitMerge)
                         .font(.caption)
                         .foregroundStyle(Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

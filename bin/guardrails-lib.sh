@@ -267,11 +267,14 @@ repo_file_at() {
 }
 
 # Reads `GET repos/{r}/activity?ref=refs/heads/<branch>&per_page=1` (GitHub's push log of a PR's branch, newest
-# first) on stdin and prints "ok\t<login>" with the account that pushed head commit $1: the actor of the newest
-# activity, when that is a push, force push or branch creation that left the branch at $1. This is the push GitHub's
-# "require approval of the most recent reviewable push" judges, by who pushed it, not by the commit's author or
-# committer (an agent's commits can carry the owner's git identity). Prints "no\t<reason>" otherwise: the branch
-# moved on, GitHub has not logged the push yet, or it names no account. Argument: the head commit.
+# first) on stdin and prints "ok\t<login>\t<time>" with the account that made the newest push and when: the actor
+# and timestamp of the newest activity, when that is a push, force push or branch creation that left the branch at
+# head commit $1. This is the push GitHub's "require approval of the most recent reviewable push" judges, by the
+# account that pushed it, not by the commit's author or committer (an agent's commits can carry the owner's git
+# identity). The account says nothing about who wrote the commits: an agent with the owner's login, a workflow
+# with the owner's token, or the owner pushing an agent's commits all read as the owner. Prints "no\t<reason>"
+# otherwise: the branch moved on, GitHub has not logged the push yet, or it names no account or time.
+# Argument: the head commit.
 last_pusher() {
   jq -r --arg sha "$1" '
     (if type == "array" then .[0] else null end) as $a
@@ -281,7 +284,9 @@ last_pusher() {
       elif $a.after != $sha then "no\tthe newest push left the branch at \($a.after | tostring | .[0:7] | gsub("[^0-9a-f]"; "?"))"
       elif ($a.actor.login | type) != "string" or ($a.actor.login | test("^[A-Za-z0-9-]+(\\[bot\\])?$") | not)
       then "no\tGitHub does not name the account that pushed it"
-      else "ok\t\($a.actor.login)" end'
+      elif ($a.timestamp | type) != "string" or ($a.timestamp | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") | not)
+      then "no\tGitHub gives no time for the push"
+      else "ok\t\($a.actor.login)\t\($a.timestamp)" end'
 }
 
 # Reads {branch, review}: the live rulesets agent-guardrails and agent-guardrails-review (each null when missing), and

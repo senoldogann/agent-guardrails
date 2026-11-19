@@ -222,7 +222,7 @@ Fix this in a PR you author (while status mode is on: guardrails approve <PR lin
 # where review mode is ready is refused rather than ignored. Arguments: owner/repo, checkout of the default branch,
 # "true" or "false".
 on_mode() {
-  local repo=$1 dir=$2 status_mode=$3 branch review why
+  local repo=$1 dir=$2 status_mode=$3 branch review live why
   if review_mode_ready "$repo" "$dir"; then
     [[ $status_mode != true ]] ||
       die "the agent App registered here is installed on $repo, so it is ready for review mode; --status-mode would turn that off. Run it without --status-mode, or remove the App from $repo first if you want status mode."
@@ -231,11 +231,19 @@ on_mode() {
   fi
   branch=$(ruleset_by_name "$repo" "$ruleset_name") || exit 1
   review=$(ruleset_by_name "$repo" "$review_ruleset_name") || exit 1
-  if [[ $(jq -n -c --argjson branch "${branch:-null}" --argjson review "${review:-null}" '{branch: $branch, review: $review}' |
-    review_mode_rulesets) != true ]]; then
-    printf 'status false\n'
-    return 0
-  fi
+  # Only an exact answer counts: a failed evaluation must not read as "not review mode", which deletes the review
+  # ruleset.
+  live=$(jq -n -c --argjson branch "${branch:-null}" --argjson review "${review:-null}" '{branch: $branch, review: $review}' |
+    review_mode_rulesets) ||
+    die "cannot tell whether the live rulesets of $repo are in review mode (jq's error is above); nothing changed"
+  case $live in
+    true) ;;
+    false)
+      printf 'status false\n'
+      return 0
+      ;;
+    *) die "cannot tell whether the live rulesets of $repo are in review mode (the check answered '$live'); nothing changed" ;;
+  esac
   if agent_app_registered; then
     why="the agent App registered on this Mac is not installed on $repo"
   else

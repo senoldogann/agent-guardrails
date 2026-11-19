@@ -79,28 +79,36 @@ done <<<"$workflows"
 # GitHub does not let the owner approve their own PR. In review mode the owner, as admin, may bypass the review
 # ruleset for it (never the checks), so "approving" their own PR merges it at exactly the confirmed commit.
 # The review ruleset also requires approval from someone other than the account that pushed the head (GitHub's
-# "most recent reviewable push"). When the owner pushed it, say a lockfile fix on the agent's PR, GitHub does not
-# count the owner's review and the PR would wait forever with nothing saying why. That case takes the same pinned
-# merge through the admin bypass, and the plan and the confirmation say why. Refusing instead would leave the owner
-# the unpinned bypass on github.com, or an agent push on top only to launder the owner's own change as approved.
+# "most recent reviewable push"). When the owner's account made that push (the owner's lockfile fix, but also an
+# agent or a workflow using the owner's login, or the owner pushing commits an agent left), GitHub does not count
+# the owner's review and the PR would wait forever with nothing saying why. That case takes the same pinned merge
+# through the admin bypass. The plan and the confirmation name the push (account, commit, time) and say the merge
+# takes the whole PR of its author, so the push does not read as the owner having written it. Refusing instead
+# would leave the owner the unpinned bypass on github.com, or an agent push on top only to launder the change as
+# approved by someone else.
 own_merge=false
 own_push=false
+pushed_by=""
+pushed_at=""
+author=$(jq -r '.user.login | tostring' <<<"$pr_json")
 if [[ $mode == review ]]; then
   owner=$(gh api user --jq .login) || die "cannot read your GitHub login (gh auth status); nothing approved"
-  if [[ $(jq -r .user.login <<<"$pr_json") == "$owner" ]]; then
+  if [[ $author == "$owner" ]]; then
     own_merge=true
   else
     # GitHub's push log of the branch names who pushed. The commit's committer does not: the agent's commits may
-    # carry the owner's git identity. Only a branch of this repository has its pushes logged here.
-    [[ $(jq -r .head.repo.full_name <<<"$pr_json") == "$repo" ]] ||
+    # carry the owner's git identity. Only a branch of this repository has its pushes logged here. Both names come
+    # from GitHub, compared without case, so a pasted URL in other case or a renamed repository still matches.
+    jq -e '(.head.repo.full_name | ascii_downcase) == (.base.repo.full_name | ascii_downcase)' <<<"$pr_json" >/dev/null ||
       die "PR #$pr comes from another repository; agent-guardrails supports PRs from branches of $repo only"
     head_ref=$(jq -r .head.ref <<<"$pr_json")
     activity=$(gh api "repos/$repo/activity?ref=$(jq -rn --arg ref "refs/heads/$head_ref" '$ref | @uri')&per_page=1") ||
-      die "cannot read the push log of $head_ref in $repo; nothing approved"
+      die "cannot read the push log of $(printable "$head_ref") in $repo; nothing approved"
     pusher=$(last_pusher "$sha" <<<"$activity")
     [[ $pusher == ok$'\t'* ]] ||
       die "cannot tell who pushed ${sha:0:7} to $(printable "$head_ref") of $repo: ${pusher#no$'\t'}. GitHub requires approval from someone other than that account, so nothing was approved; run approve-head again in a minute, or review the new head."
-    if [[ ${pusher#ok$'\t'} == "$owner" ]]; then
+    IFS=$'\t' read -r _ pushed_by pushed_at <<<"$pusher"
+    if [[ $pushed_by == "$owner" ]]; then
       own_merge=true
       own_push=true
     fi
@@ -174,12 +182,14 @@ fi
 short=${sha:0:7}
 emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
   --arg base "$base_sha" --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" --argjson queue "$queue" \
-  --argjson own_push "$own_push" --argjson lock_scope "$lock_scope_json" \
+  --argjson own_push "$own_push" --argjson lock_scope "$lock_scope_json" --arg author "$author" \
+  --arg pushed_by "$pushed_by" --arg pushed_at "$pushed_at" \
   '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, base: $base, files: $files,
-    merge: $merge, mergeQueue: $queue, ownPush: $own_push, lockScope: $lock_scope}')"
+    merge: $merge, mergeQueue: $queue, ownPush: $own_push, lockScope: $lock_scope, author: $author}
+    + (if $own_push then {pushedBy: $pushed_by, pushedAt: $pushed_at} else {} end)')"
 why="This is your own PR."
 if [[ $own_push == true ]]; then
-  why="You pushed the latest commit of this PR, and GitHub does not count a review from the account that pushed last."
+  why="Your account $pushed_by made the newest push to this PR ($short, $pushed_at), and GitHub does not count a review from the account that pushed last. This merges all of $(printable "$author")'s PR, not only that push."
 fi
 if [[ $queue == true ]]; then
   confirm commit "$short" "$why Type $short to add exactly this commit to the merge queue (your admin bypass skips the review, not the checks): "

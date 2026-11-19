@@ -85,9 +85,9 @@ public func isFinalConfirmation(_ request: ConfirmRequest, plan: Plan) -> Bool {
 public func ownerCheckReason(for request: ConfirmRequest, plan: Plan) -> String {
     switch (request.step, plan) {
     case (.commit, .approve(let pr)) where pr.isOwnPush && pr.isOwnQueueEntry:
-        "add \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA), which you pushed last, to the merge queue"
+        "add all of \(pr.author ?? "the author")'s \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA), whose newest push your account made, to the merge queue"
     case (.commit, .approve(let pr)) where pr.isOwnPush:
-        "merge \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA), which you pushed last"
+        "merge all of \(pr.author ?? "the author")'s \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA), whose newest push your account made"
     case (.commit, .approve(let pr)) where pr.isOwnQueueEntry:
         "add your own \(pr.repo) PR #\(pr.pr) at commit \(pr.shortSHA) to the merge queue"
     case (.commit, .approve(let pr)) where pr.isOwnMerge:

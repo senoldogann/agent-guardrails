@@ -7,11 +7,11 @@ private let base = "1111111111111111111111111111111111111111"
 private let approvePlan = PullRequestPlan(
     repo: "acme/shop", pr: 7, url: "https://github.com/acme/shop/pull/7", title: "feat(A-1): x",
     sha: "abc1234def5678", base: base, files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil, mergeQueue: nil,
-    ownPush: nil, lockScope: nil, leavesReviewMode: nil)
+    ownPush: nil, author: nil, pushedBy: nil, pushedAt: nil, lockScope: nil, leavesReviewMode: nil)
 private let workflowPlan = PullRequestPlan(
     repo: "acme/shop", pr: 8, url: "https://github.com/acme/shop/pull/8", title: "ci: y",
     sha: "0123456789abcdef", base: base, files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil,
-    mergeQueue: nil, ownPush: nil, lockScope: nil, leavesReviewMode: nil)
+    mergeQueue: nil, ownPush: nil, author: nil, pushedBy: nil, pushedAt: nil, lockScope: nil, leavesReviewMode: nil)
 
 @Suite("inbox")
 struct InboxTests {
@@ -177,7 +177,7 @@ struct ConfirmationTests {
         for badBase in ["main", "1111111", "ABCDEF1111111111111111111111111111111111", ""] {
             let plan = PullRequestPlan(
                 repo: "acme/shop", pr: 7, url: "u", title: "t", sha: "abc1234def", base: badBase, files: [], merge: nil,
-                mergeQueue: nil, ownPush: nil, lockScope: nil, leavesReviewMode: nil)
+                mergeQueue: nil, ownPush: nil, author: nil, pushedBy: nil, pushedAt: nil, lockScope: nil, leavesReviewMode: nil)
             #expect(throws: ConfirmationError.unpinnedBase) {
                 try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .turnOn(plan))
             }
@@ -253,14 +253,16 @@ struct ConfirmationTests {
 
     @Test func namesTheMergeOfAPRTheOwnerPushedLast() throws {
         let event = try parseEvent(
-            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234ffff","files":[],"merge":true,"mergeQueue":false,"ownPush":true,"lockScope":[]}"#)
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234ffff","files":[],"merge":true,"mergeQueue":false,"ownPush":true,"lockScope":[],"author":"agent[bot]","pushedBy":"owner","pushedAt":"2026-01-01T00:00:00Z"}"#)
         guard case .plan(.approve(let pr)) = event else {
             Issue.record("expected an approve plan, got \(event)")
             return
         }
         #expect(pr.isOwnPush && pr.isOwnMerge && !approvePlan.isOwnPush)
         #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr))
-            == "merge acme/shop PR #7 at commit abc1234, which you pushed last")
+            == "merge all of agent[bot]'s acme/shop PR #7 at commit abc1234, whose newest push your account made")
+        #expect(pr.ownPushNote.hasPrefix("Your account owner made the newest push (abc1234, 2026-01-01T00:00:00Z)."))
+        #expect(pr.ownPushNote.contains("so this merges all of agent[bot]'s PR, not only that push"))
     }
 
     @Test func neverConfirmsLeavingReviewMode() throws {

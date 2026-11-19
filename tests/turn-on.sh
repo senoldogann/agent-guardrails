@@ -119,6 +119,14 @@ rm "$fake/review.json"
 expect_eq "a lost review ruleset is no way around the refusal" "$(turn_on acme/shop)" 1
 expect_eq "and nothing is written then either" "$(cat "$fake/writes.log")" ""
 
+# A branch ruleset the mode check cannot evaluate stops `on`; it must not read as status mode.
+jq -c '.rules += [{type: "required_status_checks", parameters: {required_status_checks: ["merge-approval"]}}]' \
+  "$fake/branch.json" >"$fake/branch.odd.json"
+mv "$fake/branch.odd.json" "$fake/branch.json"
+expect_eq "an unreadable ruleset stops on" "$(turn_on acme/shop)" 1
+expect_out "that refusal says why" "cannot tell whether the live rulesets of acme/shop are in review mode"
+expect_eq "and nothing is written" "$(cat "$fake/writes.log")" ""
+
 # acme/shop is in status mode: on applies status mode again without asking for the flag.
 status_mode_ruleset agent-guardrails "$(pinned_checks checks-node)" | jq -c '. + {id: 7}' >"$fake/branch.json"
 expect_eq "a status-mode repository turns on as before" "$(turn_on acme/shop)" 0

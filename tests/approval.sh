@@ -45,8 +45,8 @@ mkdir -p "$fake/bin"
 pr_json() {
   jq -n -c --arg head "$1" --arg base "$base" --argjson changed "$2" \
     '{number: 7, state: "open", draft: false, title: "feat(A-1): x", html_url: "https://github.com/acme/shop/pull/7",
-      node_id: "PR_7", user: {login: "agent[bot]"}, head: {sha: $head, ref: "feat/A-1-x", repo: {full_name: "acme/shop"}},
-      base: {sha: $base, ref: "main"}, changed_files: $changed}'
+      node_id: "PR_7", user: {login: "agent[bot]"}, head: {sha: $head, ref: "feat/A-1-x", repo: {full_name: "Acme/Shop"}},
+      base: {sha: $base, ref: "main", repo: {full_name: "Acme/Shop"}}, changed_files: $changed}'
 }
 source "$here/skills/guardrails-init/template/.agent/bin/lib.sh"
 source "$here/bin/guardrails-lib.sh"
@@ -218,9 +218,11 @@ expect_eq "the review names the approved head" "$(cut -d' ' -f1-6 "$fake/writes.
 
 activity "$head" owner
 expect_eq "the owner's own push of an agent PR merges through the bypass" "$(approve aaaaaaa)" 0
-expect_out "the prompt says why" "You pushed the latest commit of this PR"
+expect_out "the prompt names the push" "Your account owner made the newest push to this PR (aaaaaaa, 2026-01-01T00:00:00Z)"
+expect_out "and what merges" "This merges all of agent[bot]'s PR"
 expect_eq "the plan says it merges because of the owner's push" \
-  "$(jq -r -s '.[] | select(.event == "plan") | "\(.merge) \(.ownPush)"' "$work/events")" "true true"
+  "$(jq -r -s '.[] | select(.event == "plan") | "\(.merge) \(.ownPush) \(.pushedBy) \(.pushedAt) \(.author)"' "$work/events")" \
+  "true true owner 2026-01-01T00:00:00Z agent[bot]"
 expect_eq "the merge is pinned to the approved head and no review is posted" "$(cat "$fake/writes.log")" \
   "pr merge 7 -R acme/shop --squash --admin --delete-branch --match-head-commit $head"
 

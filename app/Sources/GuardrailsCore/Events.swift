@@ -49,10 +49,15 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     /// In `approve`: the owner's own PR goes into the repository's merge queue instead of merging at once. In
     /// `on`: the default branch will require the merge queue. Older CLIs leave it out.
     public let mergeQueue: Bool?
-    /// In `approve` (review mode): the owner pushed the head of a PR they did not open. GitHub takes no review from
-    /// the account that pushed last, so `merge` is true and the PR merges through the admin bypass. Older CLIs leave
-    /// it out.
+    /// In `approve` (review mode): the owner's account made the newest push to a PR they did not open. GitHub takes
+    /// no review from the account that pushed last, so `merge` is true and the PR merges through the admin bypass.
+    /// The account says nothing about who wrote the commits. Older CLIs leave it out.
     public let ownPush: Bool?
+    /// In `approve`: the PR's author (GitHub login). Older CLIs leave it out.
+    public let author: String?
+    /// With `ownPush`: the account that made the newest push and when (GitHub's push log, ISO 8601).
+    public let pushedBy: String?
+    public let pushedAt: String?
     /// In `approve`: every file a re-lock of a changed spec lock stops or starts covering. Older CLIs leave it out.
     public let lockScope: [LockScopeChange]?
     /// In `on`: the repository is in review mode and the owner asked to switch it to status mode (--status-mode).
@@ -60,7 +65,8 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
 
     public init(
         repo: String, pr: Int, url: String, title: String, sha: String, base: String?, files: [PlannedFile], merge: Bool?,
-        mergeQueue: Bool?, ownPush: Bool?, lockScope: [LockScopeChange]?, leavesReviewMode: Bool?
+        mergeQueue: Bool?, ownPush: Bool?, author: String?, pushedBy: String?, pushedAt: String?,
+        lockScope: [LockScopeChange]?, leavesReviewMode: Bool?
     ) {
         self.repo = repo
         self.pr = pr
@@ -72,6 +78,9 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
         self.merge = merge
         self.mergeQueue = mergeQueue
         self.ownPush = ownPush
+        self.author = author
+        self.pushedBy = pushedBy
+        self.pushedAt = pushedAt
         self.lockScope = lockScope
         self.leavesReviewMode = leavesReviewMode
     }
@@ -89,8 +98,18 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     public var isOwnMerge: Bool { merge == true }
     /// The owner's own PR is added to the merge queue rather than merged now.
     public var isOwnQueueEntry: Bool { isOwnMerge && mergeQueue == true }
-    /// The PR merges through the admin bypass because the owner pushed its head, not because they opened it.
+    /// The PR merges through the admin bypass because the owner's account made its newest push, not because they
+    /// opened it.
     public var isOwnPush: Bool { isOwnMerge && ownPush == true }
+    /// The plan card's sentence for `isOwnPush`, worded like the CLI's confirmation: which account pushed what and
+    /// when, and that the merge takes the author's whole PR.
+    public var ownPushNote: String {
+        let account = pushedBy ?? "your account"
+        let when = pushedAt.map { ", \($0)" } ?? ""
+        let whose = author.map { "all of \($0)'s PR" } ?? "the whole PR"
+        let action = isOwnQueueEntry ? "adds \(whose) to the merge queue" : "merges \(whose)"
+        return "Your account \(account) made the newest push (\(shortSHA)\(when)). GitHub takes no review from the account that pushed last, so this \(action), not only that push. Your admin bypass skips the review, not the checks."
+    }
     public var hasWorkflowChanges: Bool { files.contains(where: \.isWorkflow) }
     public var lockScopeChanges: [LockScopeChange] { lockScope ?? [] }
     /// Files a re-lock stops locking: each needs the separate `unlock` confirmation.

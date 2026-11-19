@@ -64,7 +64,8 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
     adds, and asks the `unlock` confirmation for a dropped one. In review mode it reads who pushed the head from
     GitHub's push log of the branch (`GET repos/{r}/activity`, `last_pusher`; never the committer, which may be the
     owner's git identity on the agent's commits): GitHub takes no review from the last pusher, so an agent PR whose
-    head the owner pushed takes the pinned own-merge path (`ownPush` in the plan). `tests/approval.sh` drives
+    newest push the owner's account made takes the pinned own-merge path (`ownPush`, `pushedBy`, `pushedAt`,
+    `author` in the plan). `tests/approval.sh` drives
     `approve-head` with a fake gh in a pseudo-terminal (`tests/pty-run.py`).
   - `update` fast-forwards this install to its origin's main, reinstalls it and rebuilds the app.
   - `agent create` registers the agent's own GitHub App through the manifest flow

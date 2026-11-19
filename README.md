@@ -153,8 +153,9 @@ github.com or GitHub Mobile (**review mode**):
 4. **Switch to review mode** on the project in the app, or `guardrails on <owner/repo>`. A code owner's review
    is then required, and GitHub dismisses it when a push changes the PR. **Review** on your own PR merges it
    with your admin bypass, which skips the review but never the checks. So does **Review** on an agent's PR
-   whose latest commit you pushed (GitHub's push log says who pushed it): GitHub takes no review from the
-   account that pushed last, and the plan says so before you confirm.
+   whose newest push your account made (GitHub's push log names the account, not who wrote the commits): GitHub
+   takes no review from the account that pushed last. The plan names that push (account, commit, time) and says
+   the merge takes the agent's whole PR before you confirm.
 
 A repository in review mode stays there: `guardrails on` on a Mac without the agent App (or where it is not
 installed on that repository) refuses instead of switching it to status mode. Run it from the Mac that holds
@@ -320,7 +321,7 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
   and its workflow checks do not. Approve in the CLI or the app when a PR changes guardrail files.
 - **Administrators can merge without a review in review mode** (the review ruleset lets admins bypass it
   through a PR; the guard and the checks still apply). The owner's own PRs merge this way, so do agent PRs whose
-  latest commit the owner pushed, and so do PRs from Cursor and Codex, which push with your login. `guardrails report` lists merges without an approval on the
+  newest push the owner's account made, and so do PRs from Cursor and Codex, which push with your login. `guardrails report` lists merges without an approval on the
   final commit afterwards; nothing prevents them.
 - **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
   computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a
