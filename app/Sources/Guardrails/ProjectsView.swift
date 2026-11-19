@@ -1,10 +1,11 @@
 import GuardrailsCore
 import SwiftUI
 
-/// The main window's sidebar: the overview, the reports and every repository grouped by what it needs; a click shows the
-/// page in the browse tab. Settings is a plain button in the bottom corner, as in Claude and Linear.
+/// The main window's sidebar: the queue. The pages an owner browses, the pages open right now, every repository
+/// grouped by what it needs, and the settings in the bottom corner, as in Claude and Linear.
 struct ProjectSidebar: View {
     let projects: ProjectsModel
+    let workspace: Workspace
     let snapshot: InboxSnapshot
     @Binding var selection: WorkspacePage?
     let search: String
@@ -26,6 +27,20 @@ struct ProjectSidebar: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
                     .tag(WorkspacePage.reports)
+            }
+            if !workspace.strip.pages.isEmpty {
+                Section {
+                    ForEach(workspace.strip.pages, id: \.self) { page in
+                        OpenPageRow(
+                            title: pageTitle(page, workspace: workspace, projects: projects),
+                            icon: pageSymbol(page, workspace: workspace),
+                            close: { workspace.close(page) }
+                        )
+                        .tag(page)
+                    }
+                } header: {
+                    Text("Open")
+                }
             }
             ProjectSection(title: "Needs you", projects: groups.needsYou, snapshot: snapshot)
             ProjectSection(title: "On", projects: groups.on, snapshot: snapshot)
@@ -49,6 +64,40 @@ struct ProjectSidebar: View {
         .safeAreaBar(edge: .bottom) {
             SidebarSettingsButton(isShown: settingsShown, open: openSettings)
         }
+    }
+}
+
+/// A page that is open right now: its title, its state icon, and a close button that only shows on hover, so the
+/// queue does not read as a row of crosses.
+struct OpenPageRow: View {
+    let title: String
+    let icon: Octicon
+    let close: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            OcticonImage(icon: icon, size: 13)
+                .foregroundStyle(Palette.textSecondary)
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            if isHovered {
+                Button(action: close) {
+                    OcticonImage(icon: .x, size: 11)
+                        .foregroundStyle(Palette.textSecondary)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 }
 

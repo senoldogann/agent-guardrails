@@ -8,6 +8,7 @@ struct MainWindow: View {
     let model: AppModel
     let projects: ProjectsModel
     @State private var search = ""
+    @State private var showsPalette = false
     @FocusState private var searchFocused: Bool
     @AppStorage(AppStyle.key) private var style = AppStyle.glass
 
@@ -15,22 +16,28 @@ struct MainWindow: View {
         let workspace = model.workspace
         NavigationSplitView {
             ProjectSidebar(
-                projects: projects, snapshot: model.snapshot, selection: sidebarSelection, search: search,
+                projects: projects, workspace: workspace, snapshot: model.snapshot, selection: sidebarSelection,
+                search: search,
                 settingsShown: workspace.strip.selected == .settings,
                 openSettings: { workspace.show(.settings) }
             )
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             VStack(spacing: 0) {
-                WorkspaceTabBar(model: model, projects: projects)
                 // A minimum of zero: a page taller than the window scrolls inside it instead of pushing the
-                // tab and status bars (and the sidebar with them) out of the window.
+                // status bar (and the sidebar with it) out of the window.
                 WorkspacePageView(page: workspace.strip.selected, model: model, projects: projects)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .clipped()
                 WorkspaceStatusBar(model: model, projects: projects)
             }
             .background { pageBackground.ignoresSafeArea() }
+            .overlay {
+                if showsPalette {
+                    CommandPalette(model: model, projects: projects, isShown: $showsPalette)
+                        .transition(.opacity)
+                }
+            }
         }
         .searchable(text: $search, placement: .sidebar, prompt: "Search repositories")
         .searchFocused($searchFocused)
@@ -46,7 +53,11 @@ struct MainWindow: View {
                 .disabled(projects.isLoading)
             }
         }
-        .background { WorkspaceShortcuts(workspace: workspace, focusSearch: { searchFocused = true }) }
+        .background {
+            WorkspaceShortcuts(
+                workspace: workspace, focusSearch: { searchFocused = true },
+                openPalette: { showsPalette = true })
+        }
         .navigationTitle(pageTitle(workspace.strip.selected, workspace: workspace, projects: projects))
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -72,14 +83,11 @@ struct MainWindow: View {
         }
     }
 
-    /// The sidebar marks the browse tab's page while that tab is selected, and nothing while another tab is,
-    /// so a click on any row (even the one the browse tab shows) brings the browse tab back.
+    /// The sidebar marks whatever page the window shows, browse or open, so the row of the page on screen is
+    /// the one that reads as selected.
     private var sidebarSelection: Binding<WorkspacePage?> {
         Binding(
-            get: {
-                let strip = model.workspace.strip
-                return strip.selected.isBrowsePage ? strip.browse : nil
-            },
+            get: { model.workspace.strip.selected },
             set: { page in
                 if let page { model.workspace.show(page) }
             })
@@ -110,11 +118,12 @@ struct MainWindow: View {
 /// The main window reloads the repositories this often while it stays open; Refresh reloads at once.
 private let projectsRefreshInterval = Duration.seconds(15 * 60)
 
-/// Keyboard shortcuts of the tabs, on invisible buttons: ⌘W closes the tab (the window when the browse tab
-/// is selected), ⌃Tab and ⌃⇧Tab step through the tabs, ⌘F searches the repositories.
+/// Keyboard shortcuts on invisible buttons: ⌘W closes the open page (the window when a browse page is shown),
+/// ⌃Tab and ⌃⇧Tab step through the open pages, ⌘F searches the repositories, ⌘K jumps anywhere.
 struct WorkspaceShortcuts: View {
     let workspace: Workspace
     let focusSearch: () -> Void
+    let openPalette: () -> Void
 
     var body: some View {
         ZStack {
@@ -128,13 +137,15 @@ struct WorkspaceShortcuts: View {
                 .keyboardShortcut(.tab, modifiers: [.control, .shift])
             Button("Search repositories", action: focusSearch)
                 .keyboardShortcut("f", modifiers: .command)
+            Button("Go to…", action: openPalette)
+                .keyboardShortcut("k", modifiers: .command)
         }
         .opacity(0)
         .accessibilityHidden(true)
     }
 }
 
-/// The page of the selected tab.
+/// The page the window shows.
 struct WorkspacePageView: View {
     let page: WorkspacePage
     let model: AppModel
@@ -181,107 +192,6 @@ struct MissingPage: View {
 
 /// The tabs, as in an editor: an icon and a title each, the selected one raised, a close button on the
 /// others when the pointer is over them or they are selected. The browse tab cannot close.
-struct WorkspaceTabBar: View {
-    let model: AppModel
-    let projects: ProjectsModel
-
-    var body: some View {
-        let workspace = model.workspace
-        ScrollView(.horizontal) {
-            GlassEffectContainer(spacing: 6) {
-            HStack(spacing: 6) {
-                ForEach(workspace.strip.tabs, id: \.self) { page in
-                    WorkspaceTab(
-                        title: pageTitle(page, workspace: workspace, projects: projects),
-                        symbol: pageSymbol(page, workspace: workspace),
-                        isSelected: workspace.strip.selected == page,
-                        canClose: !page.isBrowsePage,
-                        select: { workspace.select(page) },
-                        close: { workspace.close(page) })
-                }
-            }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-        .scrollIndicators(.hidden)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-struct WorkspaceTab: View {
-    let title: String
-    let symbol: Octicon
-    let isSelected: Bool
-    let canClose: Bool
-    let select: () -> Void
-    let close: () -> Void
-    @State private var isHovered = false
-    @AppStorage(AppStyle.key) private var style = AppStyle.glass
-
-    var body: some View {
-        HStack(spacing: 7) {
-            OcticonImage(icon: symbol, size: 14)
-                .font(.system(size: 11))
-                .foregroundStyle(isSelected ? Palette.textPrimary : Palette.textSecondary)
-            Text(title)
-                .font(.system(size: 12, weight: isSelected ? .medium : .regular))
-                .foregroundStyle(isSelected ? Palette.textPrimary : Palette.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if canClose {
-                Button(action: close) {
-                    OcticonImage(icon: .x, size: 14)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Palette.textSecondary)
-                        .frame(width: 16, height: 16)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(isHovered || isSelected ? 1 : 0)
-                .help("Close tab (⌘W)")
-                .accessibilityLabel("Close \(title)")
-            }
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, canClose ? 7 : 12)
-        .frame(height: 30)
-        .frame(maxWidth: 240)
-        .modifier(TabSurface(style: style, isSelected: isSelected, isHovered: isHovered))
-        .onTapGesture(perform: select)
-        .onHover { isHovered = $0 }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(named: "Select", select)
-    }
-}
-
-/// The selected tab is a piece of glass (glass style) or a raised control (solid style); the others are labels
-/// on the window until hovered.
-struct TabSurface: ViewModifier {
-    let style: AppStyle
-    let isSelected: Bool
-    let isHovered: Bool
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        switch style {
-        case .glass:
-            content
-                .glassEffect(isSelected ? .regular.interactive() : (isHovered ? .clear.interactive() : .identity), in: .capsule)
-                .contentShape(Capsule())
-        case .solid:
-            let shape = RoundedRectangle(cornerRadius: 7)
-            content
-                .background(shape.fill(isSelected ? Palette.control : (isHovered ? Palette.surfaceMuted : .clear)))
-                .overlay(shape.strokeBorder(isSelected ? Palette.hairline : .clear))
-                .contentShape(shape)
-        }
-    }
-}
-
-/// The window's last line: when the inbox was read, what waits, alarms, and whether anything loads.
 struct WorkspaceStatusBar: View {
     let model: AppModel
     let projects: ProjectsModel
