@@ -24,6 +24,15 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   It is a required check (`pinned_checks`), part of `kit_drift`, and `ci-guard` reserves its job name. The
   kit's own `ci.yml` runs the same scripts on the kit's PRs. To bump a tool, change its version and SHA-256 in
   `security-tools` (from the release's checksums file) or regenerate the pins as their header says.
+- Workflow validation: `template/.agent/workflow/check.py` reads a workflow on stdin with PyYAML's scanner and
+  parser (events only, every scalar a string) and prints problems: `token-problems` (checks or statuses
+  writable, for every workflow) and `changed-problems <path>` (any write, reserved job ids and names, the guard
+  trigger). `ci-guard`/`ci-guard-group` (`guard_workflows` in `guard-lib.sh`) and the owner's
+  `workflow_token_problems` (`approve-head`, `guardrails on`) run this one file with `python3 -I -S -B`;
+  exit 0 with no output accepts. `guardrails_pyyaml/` is PyYAML's release files unchanged (except the kit's own
+  `__init__.py`), pinned in `scripts/vendored-pyyaml/requirements.txt` and compared with the sdist by
+  `scripts/check-vendored-pyyaml.sh` in CI; its header says how to bump it. Tests: the workflow cases in
+  `tests/smoke.sh` (through ci-guard) and `tests/guardrails-cli.sh` (owner side).
 - `bin/guardrails` (also linked as `agent-guardrails`): the owner's command. Enforced repos are listed in
   `~/.config/agent-guardrails/repos`. Offline-testable parts (rulesets, PR and project states, CODEOWNERS
   checks, `update`) live in `bin/guardrails-lib.sh` as functions over their inputs.
@@ -104,6 +113,9 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   arrays, no expanding possibly empty arrays under `set -u`.
 - `grep -q` in a pipeline under `pipefail` can report SIGPIPE as failure; use `grep ... >/dev/null`.
 - Pattern files (`write-allow`) are bash globs where `*` also matches `/`.
+- Workflow checks go into `check.py` over the parsed workflow, never as regexes over its lines. It must stay
+  Python 3.8 compatible (the owner's Mac has 3.9), standard library plus `guardrails_pyyaml` only, and never
+  write bytecode: a `__pycache__` in the template shows up as kit drift in every project.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority. The same holds for the Cursor and Codex hooks.
 - A new kit file in projects (like `.cursor/hooks.json`) goes into `kit_drift`, `remove_kit_files`, the kit-file

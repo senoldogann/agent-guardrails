@@ -382,6 +382,37 @@ git add -A
 git commit -qm tagged
 expect_failure "a tagged job name fails" ci_guard chore/tagged-name chore/tagged-name main
 expect_out "the tag is explained" "uses a YAML tag"
+# The guard reads what YAML means, not how a line looks: escapes, quoted keys, flow mappings and block scalars
+# spell the same values, and forms that hide or repeat a value fail closed.
+workflow_pr() {
+  local branch=$1 file=$2 body=$3
+  git checkout -q -b "$branch" main
+  mkdir -p .github/workflows
+  printf '%b' "$body" >".github/workflows/$file"
+  git add -A
+  git commit -qm "$branch"
+}
+lint_job='jobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make lint\n'
+workflow_pr chore/escaped-token lint.yml "on: pull_request\npermissions:\n  statuses: \"wr\\\\x69te\"\n$lint_job"
+expect_failure "an escaped status-writing token fails" ci_guard chore/escaped-token chore/escaped-token main
+expect_out "the escaped grant is read as write" "lets its token write statuses in the workflow"
+workflow_pr chore/quoted-key lint.yml 'on: pull_request\njobs:\n  lint:\n    "name": guard\n    runs-on: ubuntu-latest\n'
+expect_failure "a job name under a quoted key fails" ci_guard chore/quoted-key chore/quoted-key main
+expect_out "the quoted key's name is read" 'defines a job or name "guard"'
+workflow_pr chore/block-name lint.yml 'on: pull_request\njobs:\n  lint:\n    name: >-\n      security\n    runs-on: ubuntu-latest\n'
+expect_failure "a block scalar job name fails" ci_guard chore/block-name chore/block-name main
+expect_out "the block scalar's name is read" 'defines a job or name "security"'
+workflow_pr chore/flow-write-all lint.yml 'on: pull_request\njobs:\n  lint: {runs-on: ubuntu-latest, permissions: "wr\\x69te-all"}\n'
+expect_failure "an escaped write-all in a flow mapping fails" ci_guard chore/flow-write-all chore/flow-write-all main
+expect_out "write-all is read" 'grants write-all in job "lint"'
+workflow_pr chore/duplicate-key lint.yml "on: pull_request\npermissions:\n  statuses: read\n  Statuses: write\n$lint_job"
+expect_failure "a duplicate key fails" ci_guard chore/duplicate-key chore/duplicate-key main
+expect_out "the duplicate key is explained" 'defines the key "Statuses" twice'
+workflow_pr chore/anchor lint.yml "on: pull_request\npermissions: &read\n  contents: read\n$lint_job"
+expect_failure "a YAML anchor fails" ci_guard chore/anchor chore/anchor main
+expect_out "the anchor is explained" "uses a YAML anchor"
+workflow_pr chore/upper-extension lint.YML "on: pull_request\npermissions:\n  checks: write\n$lint_job"
+expect_failure "a workflow with an upper-case extension is checked" ci_guard chore/upper-extension chore/upper-extension main
 git checkout -q -b chore/fenced-name main
 printf 'x\n' >'notes```.md'
 git add -A
@@ -390,7 +421,7 @@ expect_failure "a file name with a backtick fails" ci_guard chore/fenced-name ch
 expect_out "the name is explained" "control character or backtick"
 git checkout -q -b chore/kit-checks main
 mkdir -p .github/workflows
-cp "$kit/skills/guardrails-init/template/ci/checks-node.yml" .github/workflows/
+cp "$kit"/skills/guardrails-init/template/ci/checks-*.yml .github/workflows/
 cp "$kit/skills/guardrails-init/template/.github/workflows/agent-guard.yml" .github/workflows/
 cp "$kit/skills/guardrails-init/template/.github/workflows/security.yml" .github/workflows/
 cp "$kit/skills/guardrails-init/template/.github/workflows/agent-notify.yml" .github/workflows/
@@ -476,6 +507,9 @@ expect_out "the draft is named" "spec for ABC-2 is not locked yet"
 squash_group gh-readonly-queue/main/pr-4 chore/fake-approval
 expect_failure "a fake required check in a group fails" ci_guard_group main gh-readonly-queue/main/pr-4 refs/heads/main
 expect_out "the fake check is named" "belongs to a required check"
+squash_group gh-readonly-queue/main/pr-7 chore/quoted-key
+expect_failure "a quoted job name key in a group fails" ci_guard_group main gh-readonly-queue/main/pr-7 refs/heads/main
+expect_out "the quoted key's name is read in the group" 'defines a job or name "guard"'
 git checkout -q -b gh-readonly-queue/main/pr-5 main
 git merge -q --no-ff -m merge feat/ABC-1-impl
 expect_failure "a merge commit in a group fails" ci_guard_group main gh-readonly-queue/main/pr-5 refs/heads/main

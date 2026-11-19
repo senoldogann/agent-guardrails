@@ -157,30 +157,46 @@ edited (kit include removed; targets that called .agent/ scripts need a look): M
 kept (decided requirements stay as documentation): specs/"
 if grep -F 'include .agent/common.mk' "$project/Makefile" >/dev/null; then fail "kit include left in Makefile"; else ok; fi
 
-echo "grants_check_or_status_writes"
-# Every spelling of a grant is found; read access, comments and look-alike keys are not.
+echo "workflow_token_problems"
+# The owner's side runs the same check.py as ci-guard. Every spelling YAML gives a grant is refused, and so is
+# YAML the check does not read; read access, comments and look-alike keys are not.
+token_problems() { printf 'on: pull_request\n%b\n' "$1" | workflow_token_problems; }
 while IFS= read -r spelling; do
-  if printf 'permissions:\n%b\n' "$spelling" | grants_check_or_status_writes; then ok; else fail "missed a grant: $spelling"; fi
+  if [[ -n $(token_problems "$spelling") ]]; then ok; else fail "missed a grant: $spelling"; fi
 done <<'EOF'
-  checks: write
-  statuses: "write"
-  checks: 'write'
-  statuses: !!str write
-  statuses:\n    write
-  statuses: >-\n    write
-  {statuses: write, contents: read}
-  "checks": write
+permissions:\n  checks: write
+permissions:\n  statuses: "write"
+permissions:\n  checks: 'write'
+permissions:\n  statuses: "wr\\x69te"
+permissions:\n  statuses: "wr\\\n    ite"
+permissions:\n  Statuses: WRITE
+permissions:\n  statuses:\n    write
+permissions:\n  statuses: >-\n    write
+permissions: {statuses: write, contents: read}
+permissions:\n  "checks": write
 permissions: "write-all"
+permissions: "wr\\x69te-all"
+jobs:\n  lint:\n    permissions: write-all\n    runs-on: ubuntu-latest
+permissions:\n  statuses: !!str write
+permissions:\n  contents: read\n  contents: write
+permissions: &read\n  checks: read
+permissions:\n  checks: read\njobs:\n  lint:\n    permissions: {<<: {checks: write}}
+permissions:\n  statuses: maybe
 EOF
 while IFS= read -r spelling; do
-  if printf 'permissions:\n%b\n' "$spelling" | grants_check_or_status_writes; then fail "false grant: $spelling"; else ok; fi
+  if [[ -z $(token_problems "$spelling") ]]; then ok; else fail "false grant: $spelling"; fi
 done <<'EOF'
-  checks: read
-  statuses: none
-  contents: write
-  # statuses: write
+permissions:\n  checks: read
+permissions:\n  statuses: none
+permissions:\n  contents: write
+permissions: read-all
+permissions: {}
+permissions:\n  contents: read\n  # statuses: write
 jobs:\n  checks:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm run write-docs
 EOF
+for workflow in "$template"/.github/workflows/*.yml "$template"/ci/*.yml; do
+  expect_eq "the kit's ${workflow##*/} passes" "$(workflow_token_problems <"$workflow")" ""
+done
 
 echo "classify_prs"
 fixture='[

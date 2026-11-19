@@ -38,10 +38,13 @@ flowchart LR
   `write-allow`, and a stop hook keeps it working until `make check` passes.
 - **CI:** `ci-guard` runs from the default branch through `pull_request_target` and reads the PR only as data.
   It fails a PR that changes locked spec files or tests without a new lock, adds a workflow that could stand
-  in for a required check, or carries merge commits, symlinks and similar. Changes to the guardrails
-  themselves (`.agent/`, the Makefile, workflows) are listed for the owner, who confirms them separately when
-  approving; they do not fail the guard, because kit updates change them. Language checks run the type
-  checker, linter, tests and a mutation gate on the changed code.
+  in for a required check, or carries merge commits, symlinks and similar. Workflows are read with a real YAML
+  parser, as data: what counts is the permission or job name a file means, however it is spelled, and YAML
+  that could read two ways (duplicate keys, anchors and aliases, merge keys, tags, several documents) fails the
+  guard. GitHub accepts anchors and aliases since 2025; write the values in place instead. Changes to the
+  guardrails themselves (`.agent/`, the Makefile, workflows) are listed for the owner, who confirms them
+  separately when approving; they do not fail the guard, because kit updates change them. Language checks run
+  the type checker, linter, tests and a mutation gate on the changed code.
 - **Security:** the `security` check scans every PR with free, open-source scanners and fails it on a
   finding: [gitleaks](https://github.com/gitleaks/gitleaks) looks for secrets in the PR's commits,
   [osv-scanner](https://github.com/google/osv-scanner) for known vulnerabilities in the dependency lockfiles,
@@ -69,7 +72,9 @@ mutmut), Rust (proptest, cargo-mutants) and Swift packages (swift-testing; no mu
 - [Claude Code](https://claude.com/claude-code), which runs the skills and hooks. Cursor's agent and the Codex
   CLI are guarded too, with fewer checks (see [Supported agents](#supported-agents)).
 - A writable directory on `PATH`: `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`.
-- `python3` for registering the agent's GitHub App (`guardrails agent create`).
+- `python3` 3.8 or newer: the owner's commands check workflows with it before an approval, and it registers the
+  agent's GitHub App (`guardrails agent create`). On macOS the Command Line Tools provide it. CI uses the
+  runner's own `python3`; nothing is installed for it.
 - For the menu bar app: macOS 26 and Xcode 26 or newer.
 - Repository rulesets on private repositories need GitHub Pro, Team or Enterprise.
 
