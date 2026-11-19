@@ -6,6 +6,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Changed
+
+- Settings is a plain button in the sidebar's bottom corner, as in Claude and Linear, instead of a list row;
+  the agent App panel moved from the sidebar into Settings → Agent (its name, and Manage… or Create…).
+
 ### Fixed
 
 - In the Liquid Glass style a light-mode window over a dark one (or an inactive window) turned a muddy gray:
