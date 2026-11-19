@@ -7,6 +7,8 @@ public enum ProjectState: String, Codable, Sendable, CaseIterable {
     case ready
     case off
     case noAdmin = "no-admin"
+    /// Tagged or enforced in another account's repository this Mac never enforced: a teammate's, from their Mac.
+    case elsewhere
 }
 
 /// How an enforced repository expects the owner's approval.
@@ -98,6 +100,8 @@ public struct ProjectGroups: Sendable, Equatable {
     public let needsYou: [Project]
     public let on: [Project]
     public let ready: [Project]
+    /// Enforced from another Mac: shown for information, nothing to do here.
+    public let elsewhere: [Project]
     public let off: [Project]
 }
 
@@ -134,6 +138,7 @@ public func groupProjects(_ projects: [Project], matching search: String) -> Pro
         needsYou: shown.filter { $0.state == .alarm },
         on: shown.filter { $0.state == .on },
         ready: shown.filter { $0.state == .ready },
+        elsewhere: shown.filter { $0.state == .elsewhere },
         off: shown.filter { $0.state == .off || $0.state == .noAdmin })
 }
 
