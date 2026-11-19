@@ -23,7 +23,107 @@ lock_paths() {
 
 # Prints non-empty, non-comment lines of a pattern/path list file.
 list_entries() {
-  awk 'NF > 0 && $0 !~ /^[[:space:]]*#/' "$1"
+  entry_lines <"$1"
+}
+
+# Prints the non-empty, non-comment lines of a pattern/path list on stdin.
+entry_lines() {
+  awk 'NF > 0 && $0 !~ /^[[:space:]]*#/'
+}
+
+# Prints its argument without control characters (newlines kept) and backticks, so a name an agent wrote cannot
+# forge lines or break a Markdown fence in the guard's output.
+printable() {
+  printf '%s' "$1" | LC_ALL=C tr -d '\000-\011\013-\037\140\177'
+}
+
+# A spec lock (specs/<TICKET>/spec.lock) is a `shasum -a 256` manifest: exactly the ticket's spec metadata below
+# plus every entry of its locked-files, once each. Checksums alone prove nothing about a manifest that leaves a
+# protected file out, so spec-lock, lock-verify and both CI guards check its structure with these functions.
+
+# Prints the spec metadata every spec lock covers. Argument: the ticket's directory (specs/<TICKET>).
+spec_lock_metadata() {
+  printf '%s\n' "$1/locked-files" "$1/write-allow" "$1/acceptance-criteria.md" "$1/OPEN_QUESTIONS.md" "$1/tests.lock"
+}
+
+# Succeeds for a plain repository-relative path: not empty, not absolute, no empty, "." or ".." component and
+# no trailing slash, so it cannot point outside the repository or name one file two ways. Control characters,
+# backslashes and backticks are refused too: shasum escapes names with a backslash or newline, and the others
+# could forge lines in the guard's output.
+is_repo_path() {
+  local path=$1
+  case $path in
+    *[[:cntrl:]]* | *\\* | *\`*) return 1 ;;
+  esac
+  case "/$path/" in
+    *//* | */./* | */../*) return 1 ;;
+  esac
+  return 0
+}
+
+# Reads a ticket's locked-files on stdin and prints one problem per line: no entries, an entry that is not a plain
+# repository-relative path, one listed twice, or one that is the ticket's own spec metadata or lock (spec-lock
+# covers those itself). Argument: the ticket's directory.
+locked_files_problems() {
+  local dir=$1 entries path seen="" own
+  entries=$(entry_lines)
+  [[ -n $entries ]] || {
+    printf '%s/locked-files lists no files\n' "$dir"
+    return 0
+  }
+  own=$(spec_lock_metadata "$dir"; printf '%s/spec.lock\n' "$dir")
+  while IFS= read -r path; do
+    if ! is_repo_path "$path"; then
+      printf "%s/locked-files lists '%s', which is not a plain repository-relative path\n" "$dir" "$(printable "$path")"
+    elif grep -Fx -- "$path" <<<"$seen" >/dev/null; then
+      printf '%s/locked-files lists %s twice\n' "$dir" "$path"
+    elif grep -Fx -- "$path" <<<"$own" >/dev/null; then
+      printf '%s/locked-files lists %s, which the spec lock covers as metadata already\n' "$dir" "$path"
+    fi
+    seen+="$path"$'\n'
+  done <<<"$entries"
+}
+
+# Prints the path of every well-formed line of a spec lock read on stdin.
+manifest_paths() {
+  sed -nE 's/^[0-9a-f]{64}  (.+)$/\1/p'
+}
+
+# Reads a spec lock on stdin and prints one problem per line: empty, a line that is not "<sha256>  <path>", a path
+# that is not plain and repository-relative, a path listed twice, an expected path it does not cover, or a path
+# nobody declared. Arguments: the lock's path, the ticket's directory, the paths it must cover (one per line).
+manifest_problems() {
+  local lock=$1 dir=$2 expected=$3 body line path n=0 seen="" pattern='^[0-9a-f]{64}  (.+)$'
+  body=$(cat)
+  if [[ -z $body ]]; then
+    printf 'spec lock %s is empty\n' "$lock"
+    return 0
+  fi
+  while IFS= read -r line; do
+    n=$((n + 1))
+    if [[ ! $line =~ $pattern ]]; then
+      printf "spec lock %s line %s is not '<sha256>  <path>' as spec-lock writes it\n" "$lock" "$n"
+      continue
+    fi
+    path=${BASH_REMATCH[1]}
+    if ! is_repo_path "$path"; then
+      printf "spec lock %s line %s names '%s', which is not a plain repository-relative path\n" "$lock" "$n" "$(printable "$path")"
+    elif grep -Fx -- "$path" <<<"$seen" >/dev/null; then
+      printf 'spec lock %s lists %s twice\n' "$lock" "$path"
+    elif ! grep -Fx -- "$path" <<<"$expected" >/dev/null; then
+      printf 'spec lock %s lists %s, which is neither spec metadata nor in %s/locked-files\n' "$lock" "$path" "$dir"
+    fi
+    seen+="$path"$'\n'
+  done <<<"$body"
+  while IFS= read -r path; do
+    [[ -n $path ]] || continue
+    if grep -Fx -- "$path" <<<"$seen" >/dev/null; then continue; fi
+    if grep -Fx -- "$path" <(spec_lock_metadata "$dir") >/dev/null; then
+      printf 'spec lock %s does not cover %s\n' "$lock" "$path"
+    else
+      printf 'spec lock %s does not cover %s, which %s/locked-files declares\n' "$lock" "$path" "$dir"
+    fi
+  done <<<"$expected"
 }
 
 # Succeeds when a repo-relative path is human-owned: guardrails, agent context, CI, specs, tests,

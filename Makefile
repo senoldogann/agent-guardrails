@@ -14,7 +14,7 @@ test:
 	tests/install.sh
 	tests/human-owned.sh
 	tests/smoke.sh
-	bash tests/spec-manifest.sh
+	tests/spec-lock.sh
 	tests/release.sh
 	tests/agent-app.sh
 	tests/kit-update.sh

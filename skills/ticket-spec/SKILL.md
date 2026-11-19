@@ -79,7 +79,8 @@ When review finds a gap in locked tests after implementation commits exist (the 
    `spec(<ID>): <what the amendment adds>` and `.agent/bin/finish` (every locked test, old and new, must be red).
 3. `.agent/bin/start-implement <ID>`, restore the implementation (`git show <impl-commit>:<path> > <path>`), adjust it
    only if a new test requires it, commit, `.agent/bin/finish`, push. CI re-proves the spec gate on the new lock
-   commit and the guard marks the PR "SPEC AMENDED" for the owner.
+   commit and the guard marks the PR "SPEC AMENDED" for the owner, listing under "SPEC LOCK SCOPE CHANGED" every file
+   the lock stopped or started locking. Never edit `spec.lock` by hand: the guard accepts only what `spec-lock` writes.
 
 ## 6. Hand-off
 

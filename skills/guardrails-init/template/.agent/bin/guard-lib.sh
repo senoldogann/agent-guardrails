@@ -8,6 +8,8 @@
 guard_status=0
 # Paths changed between the judged base and head, one per line (set by guard_changed_files).
 changed=""
+# "  <lock> no longer locks <path>" and "  <lock> now also locks <path>" lines (set by guard_lock_manifests).
+lock_scope_changes=""
 
 fail() {
   printf 'FAIL: %s\n' "$1"
@@ -160,6 +162,66 @@ guard_ticket_spec() {
   fi
 }
 
+# Prints the ticket spec locks (specs/<dir>/spec.lock) of a commit, one per line. Argument: commit.
+ticket_locks() {
+  local path
+  while IFS= read -r -d '' path; do
+    [[ $path == specs/*/spec.lock && $path != specs/*/*/spec.lock ]] && printf '%s\n' "$path"
+  done < <(git ls-tree -r -z --name-only "$1" -- specs)
+  return 0
+}
+
+# Every ticket's spec lock on head must be exactly what spec-lock writes for head's locked-files (lib.sh:
+# locked_files_problems, manifest_problems): a manifest that leaves a locked test out keeps valid checksums for the
+# rest, so guard_locks alone would pass it. A lock on the base may not disappear. A lock that covers other files
+# than on the base is an amendment: it passes, and guard_review_summary lists every file it stopped or started
+# locking, so the owner approves the change of scope knowingly. Fills `lock_scope_changes`.
+# Arguments: base commit, head commit.
+guard_lock_manifests() {
+  local base=$1 head=$2 lock dir problems problem expected base_paths head_paths path
+  lock_scope_changes=""
+  while IFS= read -r lock; do
+    [[ -n $lock ]] || continue
+    dir=${lock%/spec.lock}
+    if [[ ! ${dir#specs/} =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
+      fail "spec lock $lock is not in a ticket directory (specs/<TICKET>, e.g. specs/ABC-123)"
+      continue
+    fi
+    if ! git cat-file -e "$head:$dir/locked-files" 2>/dev/null; then
+      fail "spec lock $lock has no $dir/locked-files to check it against"
+      continue
+    fi
+    problems=$(git show "$head:$dir/locked-files" | locked_files_problems "$dir")
+    if [[ -z $problems ]]; then
+      expected=$(spec_lock_metadata "$dir"; git show "$head:$dir/locked-files" | entry_lines)
+      problems=$(git show "$head:$lock" | manifest_problems "$lock" "$dir" "$expected")
+    fi
+    while IFS= read -r problem; do
+      [[ -z $problem ]] || fail "$problem"
+    done <<<"$problems"
+  done < <(ticket_locks "$head")
+
+  while IFS= read -r lock; do
+    [[ -n $lock ]] || continue
+    if ! git cat-file -e "$head:$lock" 2>/dev/null; then
+      fail "spec lock $lock is on the base and missing at the head; a locked spec may change only by re-locking it"
+      continue
+    fi
+    base_paths=$(git show "$base:$lock" | manifest_paths)
+    head_paths=$(git show "$head:$lock" | manifest_paths)
+    while IFS= read -r path; do
+      if [[ -n $path ]] && ! grep -Fx -- "$path" <<<"$head_paths" >/dev/null; then
+        lock_scope_changes+="  $lock no longer locks $path"$'\n'
+      fi
+    done <<<"$base_paths"
+    while IFS= read -r path; do
+      if [[ -n $path ]] && ! grep -Fx -- "$path" <<<"$base_paths" >/dev/null; then
+        lock_scope_changes+="  $lock now also locks $path"$'\n'
+      fi
+    done <<<"$head_paths"
+  done < <(ticket_locks "$base")
+}
+
 # Every lock on head must match head's files. Argument: head commit.
 guard_locks() {
   local head=$1 lock line expected path actual
@@ -169,13 +231,14 @@ guard_locks() {
       expected=${line%% *}
       path=${line#*  }
       if ! actual=$(git show "$head:$path" 2>/dev/null | shasum -a 256 | cut -d' ' -f1) || [[ $actual != "$expected" ]]; then
-        fail "lock mismatch: $lock records $path, head has a different or missing file"
+        fail "lock mismatch: $lock records $(printable "$path"), head has a different or missing file"
       fi
     done < <(git show "$head:$lock")
   done < <(git ls-tree -r --name-only "$head" -- specs | awk '/\/spec\.lock$/')
 }
 
-# What the owner reviews: accepted mutants and security findings, changed workflows and human-owned paths.
+# What the owner reviews: accepted mutants and security findings, spec lock scope changes, changed workflows and
+# human-owned paths.
 # Arguments: base commit, head commit.
 guard_review_summary() {
   local base=$1 head=$2 accepted_added ignored_added workflows owned="" path
@@ -186,6 +249,10 @@ guard_review_summary() {
   ignored_added=$(git diff "$base" "$head" -- .github/security-ignore | awk '/^\+[^+]/ { print "  " substr($0, 2) }' |
     LC_ALL=C tr -d '\000-\010\013-\037\140\177')
   [[ -z $ignored_added ]] || printf 'SECURITY FINDINGS ACCEPTED (owner decision; check each reason):\n%s\n' "$ignored_added"
+  # Locked files a re-lock stopped or started locking: an amendment that drops a locked test passes the guard, so
+  # the owner must see each one.
+  [[ -z $lock_scope_changes ]] ||
+    printf 'SPEC LOCK SCOPE CHANGED against the base (owner decision; check each file):\n%s' "$(printable "$lock_scope_changes")"$'\n'
   workflows=$(grep -E '^\.github/(workflows|actions)/' <<<"$changed" || true)
   [[ -z $workflows ]] || printf 'WORKFLOW FILES CHANGED (could add fake required checks; review line by line):\n%s\n' "$workflows"
   while IFS= read -r path; do

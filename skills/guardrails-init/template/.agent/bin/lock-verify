@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Usage: lock-verify <TICKET>
-# Fails when any file recorded in specs/<TICKET>/spec.lock differs from its locked hash.
+# Fails when specs/<TICKET>/spec.lock is not exactly what spec-lock writes for the ticket's locked-files (each
+# metadata file and locked file once, by a plain repository-relative path), or when any file it records differs
+# from its locked hash. CI's guards check the same on the committed head, and also the lock's scope against the
+# base.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require_args 1 $# "lock-verify <TICKET>"
@@ -8,6 +11,16 @@ cd_project_root
 
 lock="specs/$1/spec.lock"
 [[ -f $lock ]] || die "$lock is missing; run the spec phase and spec-lock first"
+dir="specs/$1"
+[[ -f "$dir/locked-files" ]] || die "$dir/locked-files is missing; the spec lock cannot be checked without it"
+
+problems=$(locked_files_problems "$dir" <"$dir/locked-files")
+if [[ -z $problems ]]; then
+  expected=$(spec_lock_metadata "$dir"; list_entries "$dir/locked-files")
+  # shellcheck disable=SC2094 # the first argument only names the lock in messages; nothing writes it
+  problems=$(manifest_problems "$lock" "$dir" "$expected" <"$lock")
+fi
+[[ -z $problems ]] || die "$problems"$'\n'"Re-lock the spec with spec-lock in a reviewed amendment."
 
 if ! result=$(shasum -a 256 -c "$lock" 2>&1); then
   printf 'spec lock mismatch for %s:\n%s\n' "$1" "$(grep -v ': OK$' <<<"$result")" >&2
