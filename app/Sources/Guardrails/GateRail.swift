@@ -148,7 +148,9 @@ enum PullRequestChain {
             GateLink(
                 id: "guard",
                 title: "Guard",
-                detail: guardRun.map { $0.name == "Guard" ? outcomeWord($0) : "\($0.name) · \(outcomeWord($0))" } ?? "not run yet",
+                detail: guardRun.map {
+                    $0.name.lowercased() == "guard" ? outcomeWord($0) : "\($0.name) · \(outcomeWord($0))"
+                } ?? "not run yet",
                 icon: .shieldCheck,
                 state: guardRun.map(state(of:)) ?? .pending
             )
@@ -188,7 +190,7 @@ enum PullRequestChain {
                 title: "Merge",
                 detail: plan.isOwnMerge ? "right after the approval" : "after you",
                 icon: .gitMerge,
-                state: plan.isOwnMerge ? .now : .pending
+                state: .pending
             )
         )
 
@@ -222,5 +224,64 @@ enum PullRequestChain {
         case .running: "running"
         case .skipped: "skipped"
         }
+    }
+}
+
+/// The same rail one level up: what makes one repository's merges guarded, from what the CLI reports about it.
+enum RepositoryChain {
+    static func chain(_ project: Project) -> ([GateLink], String?) {
+        let enforced = project.state == .on || project.state == .alarm
+        let detail = enforced ? "installed" : "not installed"
+        var links: [GateLink] = [
+            GateLink(
+                id: "kit",
+                title: "Kit",
+                detail: detail,
+                icon: .box,
+                state: project.state == .alarm ? .failed : enforced ? .done : .pending
+            ),
+            GateLink(
+                id: "ruleset",
+                title: "Ruleset",
+                detail: enforced ? "\(project.branch) · protected" : "\(project.branch) stays open",
+                icon: .shieldCheck,
+                state: enforced ? .done : .pending
+            ),
+        ]
+        if enforced {
+            let statusOnly = project.mode == .status
+            links.append(
+                GateLink(
+                    id: "approval",
+                    title: "Approval",
+                    detail: statusOnly ? "status only" : "yours, per commit",
+                    icon: .passkey,
+                    state: statusOnly ? .pending : .done
+                )
+            )
+            if project.organization == true, project.mergeQueue == true {
+                links.append(GateLink(id: "queue", title: "Merge queue", detail: "on", icon: .gitMerge, state: .done))
+            }
+        }
+        return (links, verdict(project))
+    }
+
+    /// The one link that is not proved, or nothing when the chain is complete.
+    private static func verdict(_ project: Project) -> String? {
+        switch project.state {
+        case .alarm: "an alarm"
+        case .on: project.mode == .status ? "your reviews" : nil
+        case .ready, .off, .noAdmin, .elsewhere: "turning it on"
+        }
+    }
+}
+
+/// The repository page's chain.
+struct RepositoryRail: View {
+    let project: Project
+
+    var body: some View {
+        let (links, verdict) = RepositoryChain.chain(project)
+        GateRail(links: links, verdict: verdict)
     }
 }
