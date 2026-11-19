@@ -177,6 +177,17 @@ queued_prs() {
     die "cannot read the merge queue of $1"
 }
 
+# Prints whether the branch carries the kit's security workflow: "true" or "false". Dies when GitHub cannot be read,
+# so an unreadable repository never turns an alarm into a note. Arguments: owner/repo, branch.
+has_security_workflow() {
+  # shellcheck disable=SC2016 # $owner, $name and $expression are GraphQL variables
+  gh api graphql -f owner="${1%%/*}" -f name="${1#*/}" -f expression="$2:.github/workflows/security.yml" \
+    -f query='query($owner: String!, $name: String!, $expression: String!) {
+      repository(owner: $owner, name: $name) { securityWorkflow: object(expression: $expression) { id } }
+    }' --jq '.data.repository.securityWorkflow != null' ||
+    die "cannot read the workflows of $1"
+}
+
 # Prints the branch ruleset's enforcement (active, evaluate, disabled) or "missing"; dies when GitHub cannot be
 # read. Argument: owner/repo.
 ruleset_state() {
@@ -602,7 +613,7 @@ live_rulesets() {
 # sixth field, the PR's HEAD SHA, so the app notifies again when a push changes a PR that waits.
 # Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state rulesets problems items kind url title note sha problem queued owner search
+  local repo state rulesets problems items kind url title note sha problem queued owner search security_workflow
   kit_install_alarm
   remember_listed
   owner=$(login) || exit 1
@@ -622,6 +633,16 @@ inbox_items() {
     problems=$(ruleset_problems <<<"$rulesets") || die "cannot evaluate the live rulesets of $repo (jq's error is above)"
     while IFS= read -r problem; do
       [[ -n $problem ]] || continue
+      # Without the security workflow on its default branch the repository is behind the kit, not tampered with:
+      # the ruleset cannot require a check that never runs. Once the workflow is there, a missing check is an alarm.
+      if [[ $problem == "$security_not_required" ]]; then
+        security_workflow=$(has_security_workflow "$repo" "$(jq -r .defaultBranch <<<"$rulesets")") || exit 1
+        if [[ $security_workflow == false ]]; then
+          printf 'note\037%s\037\037\037%s needs the kit update: its default branch has no security workflow yet, so the ruleset cannot require the security check. Open the kit update PR (README, "Updating a project'"'"'s kit files"), approve it, then run: guardrails on %s\n' \
+            "$repo" "$repo" "$repo"
+          continue
+        fi
+      fi
       printf 'alarm\037%s\037\037\037%s: %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
         "$repo" "$repo" "$problem" "$repo"
     done <<<"$problems"
@@ -1084,7 +1105,8 @@ case $command in
         *) on_targets=$((on_targets + 1)) ;;
       esac
     done
-    [[ $on_targets -ge 1 ]] || usage
+    [[ $on_targets -ge 1 ]] ||
+      die "guardrails on needs the repository (owner/repo) or a /guardrails-init PR link, for example: guardrails on octo/app"
     [[ $on_queue != on || $on_status_mode != true ]] || die "the merge queue needs review mode; give --merge-queue or --status-mode, not both"
     require_owner_terminal on
     for target in "$@"; do

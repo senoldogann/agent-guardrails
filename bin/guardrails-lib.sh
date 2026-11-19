@@ -975,6 +975,9 @@ ruleset_approval_mode() {
     else "-" end'
 }
 
+# The problem ruleset_problems reports for a branch ruleset without the security check; inbox_items matches it.
+security_not_required="security is not a required check from GitHub Actions"
+
 # Reads {branch, review, tag, mergeQueue, defaultBranch}: the live rulesets agent-guardrails,
 # agent-guardrails-review and agent-guardrails-tags (each null when missing), whether the owner turned the merge
 # queue on for the repository (true or false) and the repository's current default branch, and prints one line per
@@ -989,7 +992,8 @@ ruleset_approval_mode() {
 # caller that forgot it cannot read as healthy.
 ruleset_problems() {
   jq -r --argjson review_kit "$(review_ruleset agent-guardrails-review)" \
-    --argjson tag_kit "$(tag_ruleset agent-guardrails-tags)" "$ruleset_jq_defs"'
+    --argjson tag_kit "$(tag_ruleset agent-guardrails-tags)" --arg security_not_required "$security_not_required" \
+    "$ruleset_jq_defs"'
     def rule($r; $t): [$r.rules[]? | select(.type == $t)][0];
     def checks($r): rule($r; "required_status_checks").parameters.required_status_checks // [];
     def pinned($r; f): any(checks($r)[]; (.context | f) and .integration_id == 15368);
@@ -1016,8 +1020,9 @@ ruleset_problems() {
          (["deletion", "non_fast_forward", "required_linear_history", "pull_request", "required_status_checks"][]
            | select(rule($b; .) == null) | "the agent-guardrails ruleset lost its \(.) rule"),
          (if pinned($b; . == "guard") then empty else "guard is no longer a required check from GitHub Actions" end),
-         # Repositories turned on before the kit had the security check also land here until their kit update.
-         (if pinned($b; . == "security") then empty else "security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)" end),
+         # Repositories turned on before the kit had the security check also land here until their kit update; the
+         # inbox tells those apart by the workflow on the default branch (security_not_required).
+         (if pinned($b; . == "security") then empty else $security_not_required end),
          (if pinned($b; startswith("checks-")) then empty
           else "no checks-<lang> job is a required check from GitHub Actions any more" end),
          (if (rule($b; "pull_request").parameters.allowed_merge_methods // []) == ["squash"] then empty

@@ -6,6 +6,17 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Changed
+
+- When sensitive files change, the review's primary button is now "Open changes on GitHub" until the diff is
+  opened, then Approve. Before, Approve stayed disabled with only a small gray hint. Approve is also disabled
+  once GitHub reports a newer commit than the one under review.
+- An alarm in the menu panel has a Restore… button that shows the turn-on plan. Inbox rows use secondary
+  buttons, and diffs show deletions in neutral gray, because red in the app means a problem.
+- A repository whose default branch has no security workflow yet is a note pointing at the kit update PR, not
+  an alarm. With the workflow there, a ruleset without the security check is still an alarm.
+- `guardrails on` without a target says what it needs instead of printing the whole usage.
+
 ### Fixed
 
 - In a Python project, `make lint` failed on the kit's own `.agent/workflow/check.py`: `escape-check` found
