@@ -144,7 +144,6 @@ struct ReviewView: View {
                 Text(pr.shortSHA)
                     .font(.mono)
                     .textSelection(.enabled)
-                Text("\(pr.files.count) files")
                 if case .loaded(let now) = evidence.snapshot, now.head.sha == pr.sha {
                     DiffStatsLabel(diff: .loaded(now.stats))
                 }

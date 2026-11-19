@@ -148,7 +148,9 @@ enum PullRequestChain {
             GateLink(
                 id: "guard",
                 title: "Guard",
-                detail: guardRun.map { $0.name == "Guard" ? outcomeWord($0) : "\($0.name) · \(outcomeWord($0))" } ?? "not run yet",
+                detail: guardRun.map {
+                    $0.name.lowercased() == "guard" ? outcomeWord($0) : "\($0.name) · \(outcomeWord($0))"
+                } ?? "not run yet",
                 icon: .shieldCheck,
                 state: guardRun.map(state(of:)) ?? .pending
             )
@@ -188,7 +190,7 @@ enum PullRequestChain {
                 title: "Merge",
                 detail: plan.isOwnMerge ? "right after the approval" : "after you",
                 icon: .gitMerge,
-                state: plan.isOwnMerge ? .now : .pending
+                state: .pending
             )
         )
 
