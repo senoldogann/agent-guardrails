@@ -105,6 +105,23 @@ struct CommandRunnerTests {
         #expect(try await processIsGone(try readPID(pids)), "the command survived the timeout")
     }
 
+    @Test func killsAQuietChildInTheGroupThatIgnoresTerm() async throws {
+        // The child stays in the command's group, ignores SIGTERM and lets go of stdout and stderr, so every stream
+        // ends as soon as SIGTERM stops the command: the end of the streams says nothing about the child.
+        let pids = pidFile()
+        defer {
+            if let child = try? readPID(pids) { kill(child, SIGKILL) }
+            try? FileManager.default.removeItem(atPath: pids)
+        }
+        let child = "trap \"\" TERM; exec >/dev/null 2>&1; echo $$ > \(pids).tmp && mv \(pids).tmp \(pids); exec sleep 30"
+        // The command waits until the child has written its process ID, so the timeout always finds it ready.
+        let run = await runWithinOuterDeadline([
+            "/bin/sh", "-c", "/bin/sh -c '\(child)' & while [ ! -f \(pids) ]; do sleep 0.01; done; sleep 30",
+        ])
+        expectTimeout(run)
+        #expect(try await processIsGone(try readPID(pids)), "the child that ignored SIGTERM survived the timeout")
+    }
+
     @Test func stopsReadingWhenADescendantLeavesTheProcessGroup() async throws {
         // `set -m` puts the background job in its own process group, out of reach of the group signals.
         let pids = pidFile()
