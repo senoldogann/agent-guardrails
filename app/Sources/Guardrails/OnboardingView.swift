@@ -119,7 +119,7 @@ struct OnboardingView: View {
         case .github:
             Task { await check() }
         case .notifications:
-            openNotificationSettings()
+            Task { await model.allowNotifications() }
         case .agentApp:
             model.openReview(ActionRequest(kind: .agentCreate, target: "", label: "the agent App"))
         case .firstRepo:

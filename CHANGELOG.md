@@ -62,6 +62,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- A push to a PR that waits for your approval notifies again: inbox items carry the PR's HEAD SHA
+  (`inbox --json` has a `sha` field), so the changed PR counts as new.
+- The app tells "offline" apart from "signed out" and from a login GitHub refused (expired or revoked), each
+  with what to do; network errors other than DNS failures used to show gh's raw message.
+- Allow… asks macOS for permission when the app was never answered, instead of opening System Settings,
+  where an app that was never answered has no switch yet.
 - bash-guard no longer treats a word such as `.configuration` in a command as the owner's config folder.
 - `guardrails on` in status mode says how a team switches to review mode.
 - Review window: "Open changes on GitHub" shows exactly the planned commit (a compare view), the size of the

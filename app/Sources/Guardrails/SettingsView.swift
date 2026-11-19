@@ -19,7 +19,7 @@ struct SettingsView: View {
                 AppearancePicker()
             }
             Section {
-                NotificationSetting(shown: model.notificationsShown)
+                NotificationSetting(shown: model.notificationsShown) { Task { await model.allowNotifications() } }
             } header: {
                 Text("Notifications")
             } footer: {
@@ -139,6 +139,7 @@ struct RefreshPicker: View {
 
 struct NotificationSetting: View {
     let shown: Bool?
+    let allow: () -> Void
 
     var body: some View {
         LabeledContent("Shown by macOS") {
@@ -148,7 +149,11 @@ struct NotificationSetting: View {
                 case false?: OcticonLabel("Off", icon: .bellSlash).foregroundStyle(Palette.textSecondary)
                 case nil: ProgressView().controlSize(.small)
                 }
-                Button(shown == false ? "Allow…" : "Change…", action: openNotificationSettings)
+                if shown == false {
+                    Button("Allow…", action: allow)
+                } else {
+                    Button("Change…", action: openNotificationSettings)
+                }
             }
         }
     }

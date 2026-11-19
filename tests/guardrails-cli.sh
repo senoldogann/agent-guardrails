@@ -124,7 +124,7 @@ echo "classify_prs"
 fixture='[
  {"url":"u1","title":"spec(A-1): x","isDraft":true,"labels":[{"name":"needs-decision"}],"statusCheckRollup":[]},
  {"url":"u2","title":"spec(A-2): wip","isDraft":true,"labels":[],"statusCheckRollup":[]},
- {"url":"u3","title":"feat(A-3): ready","isDraft":false,"labels":[],"statusCheckRollup":[
+ {"url":"u3","title":"feat(A-3): ready","isDraft":false,"headRefOid":"abc123","labels":[],"statusCheckRollup":[
    {"__typename":"CheckRun","name":"guard","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:00:00Z"},
    {"__typename":"CheckRun","name":"guard","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
    {"__typename":"CheckRun","name":"checks-node","status":"IN_PROGRESS","conclusion":"","startedAt":"2026-01-02T00:00:00Z"}]},
@@ -140,11 +140,11 @@ fixture='[
    {"__typename":"StatusContext","context":"merge-approval","state":"FAILURE","createdAt":"2026-01-02T00:00:00Z"}]}
 ]'
 tab=$'\t'
-expect_eq "inbox items" "$(classify_prs <<<"$fixture")" "answer${tab}u1${tab}spec(A-1): x${tab}the agent is waiting for your decision
-approve${tab}u3${tab}feat(A-3): ready${tab}checks running
-blocked${tab}u5${tab}feat(A-5): bad${tab}guard failed: the agent has to fix the PR
-wait${tab}u6${tab}feat(A-6): new${tab}guard is running
-approve${tab}u7${tab}feat(A-7): revoked${tab}checks green"
+expect_eq "inbox items" "$(classify_prs <<<"$fixture")" "answer${tab}u1${tab}spec(A-1): x${tab}the agent is waiting for your decision${tab}
+approve${tab}u3${tab}feat(A-3): ready${tab}checks running${tab}abc123
+blocked${tab}u5${tab}feat(A-5): bad${tab}guard failed: the agent has to fix the PR${tab}
+wait${tab}u6${tab}feat(A-6): new${tab}guard is running${tab}
+approve${tab}u7${tab}feat(A-7): revoked${tab}checks green${tab}"
 
 echo "pr_states"
 expect_eq "every open PR has a kind" "$(pr_states <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
@@ -255,16 +255,16 @@ Not enforced yet
   turn on  chore: install the kit
            guardrails on https://github.com/acme/new/pull/1"
 inbox_json=$(run_cli inbox --json | jq -c 'select(.repo != "")')
-expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"","title":"","note":"acme/lost carries the agent-guardrails topic but is not in '"$fake_home"'/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost"}
-{"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active"}
-{"kind":"answer","repo":"acme/shop","url":"u1","title":"spec(A-1): x","note":"the agent is waiting for your decision"}
-{"kind":"approve","repo":"acme/shop","url":"u3","title":"feat(A-3): ready","note":"checks running"}
-{"kind":"blocked","repo":"acme/shop","url":"u5","title":"feat(A-5): bad","note":"guard failed: the agent has to fix the PR"}
-{"kind":"wait","repo":"acme/shop","url":"u6","title":"feat(A-6): new","note":"guard is running"}
-{"kind":"approve","repo":"acme/shop","url":"u7","title":"feat(A-7): revoked","note":"checks green"}
-{"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing"}
-{"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off"}
-{"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":""}'
+expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"","title":"","note":"acme/lost carries the agent-guardrails topic but is not in '"$fake_home"'/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost","sha":""}
+{"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active","sha":""}
+{"kind":"answer","repo":"acme/shop","url":"u1","title":"spec(A-1): x","note":"the agent is waiting for your decision","sha":""}
+{"kind":"approve","repo":"acme/shop","url":"u3","title":"feat(A-3): ready","note":"checks running","sha":"abc123"}
+{"kind":"blocked","repo":"acme/shop","url":"u5","title":"feat(A-5): bad","note":"guard failed: the agent has to fix the PR","sha":""}
+{"kind":"wait","repo":"acme/shop","url":"u6","title":"feat(A-6): new","note":"guard is running","sha":""}
+{"kind":"approve","repo":"acme/shop","url":"u7","title":"feat(A-7): revoked","note":"checks green","sha":""}
+{"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing","sha":""}
+{"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off","sha":""}
+{"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":"","sha":""}'
 
 broken_home="$work/broken-home"
 mkdir -p "$broken_home/.config/agent-guardrails"

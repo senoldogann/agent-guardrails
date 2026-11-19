@@ -19,16 +19,21 @@ public struct InboxItem: Codable, Sendable, Hashable, Identifiable {
     public let url: String
     public let title: String
     public let note: String
+    /// The PR's HEAD for PR items, empty for the others.
+    public let sha: String
 
-    public init(kind: InboxKind, repo: String, url: String, title: String, note: String) {
+    public init(kind: InboxKind, repo: String, url: String, title: String, note: String, sha: String) {
         self.kind = kind
         self.repo = repo
         self.url = url
         self.title = title
         self.note = note
+        self.sha = sha
     }
 
-    public var id: String { [kind.rawValue, repo, url, note].joined(separator: "|") }
+    /// The SHA is part of the identity: after a push, a PR that waits for approval is a new item and notifies
+    /// again, because what the owner would approve changed.
+    public var id: String { [kind.rawValue, repo, url, note, sha].joined(separator: "|") }
 }
 
 /// A repository the owner enforces, with the state of its `agent-guardrails` ruleset.

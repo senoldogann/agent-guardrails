@@ -107,7 +107,7 @@ struct InboxList: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.notificationsShown == false {
-                NotificationsOffBanner()
+                NotificationsOffBanner { Task { await model.allowNotifications() } }
             }
             ItemSection(title: "Approve", items: snapshot.approvals, actionTitle: "Review", disabled: snapshot.hasKitInstallAlarm) {
                 open(ActionRequest(kind: .approve, target: $0.url, label: $0.title))
@@ -177,6 +177,8 @@ struct UpdateBanner: View {
 
 /// macOS shows none of the app's notifications, so new approvals and alarms appear only in this inbox.
 struct NotificationsOffBanner: View {
+    let allow: () -> Void
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             OcticonImage(icon: .bellSlash, size: 14).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
@@ -188,7 +190,7 @@ struct NotificationsOffBanner: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Allow…", action: openNotificationSettings)
+            Button("Allow…", action: allow)
                 .secondaryAction()
                 .fixedSize()
                 .help("Open System Settings › Notifications › Guardrails")

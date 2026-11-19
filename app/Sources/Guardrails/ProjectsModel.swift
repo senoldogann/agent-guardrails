@@ -104,24 +104,6 @@ final class ProjectsModel {
     }
 }
 
-/// Turns a failed read into one sentence with the next step.
-func describeCommandFailure(_ result: CommandResult, command: String) -> String {
-    let message = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-    if message.contains("gh auth login") || message.contains("not logged") {
-        return "GitHub CLI is not signed in. Run gh auth login in your terminal, then refresh."
-    }
-    if message.contains("Could not resolve host") || message.contains("error connecting") {
-        return "Offline: GitHub cannot be reached. Showing the last known state."
-    }
-    if message.contains("API rate limit") {
-        return "GitHub's API rate limit is reached. Try again in a few minutes."
-    }
-    if message.contains("GitHub did not answer") {
-        return "GitHub did not answer in time, three tries in a row. Refresh to try again."
-    }
-    return message.isEmpty ? "\(command) exited with status \(result.status)" : message
-}
-
 /// The folder the owner keeps clones in. Chosen with an open panel and shown in the set-up sheet, so a
 /// changed value is visible before anything runs in it.
 enum ProjectsFolder {

@@ -4,6 +4,8 @@
 # Run it from the kit install the owner's commands run from: the app calls bin/guardrails of the kit it was
 # built from (the path is written into its Info.plist; GUARDRAILS_APP_KIT_PATH overrides it, and a leading ~
 # is expanded when the app starts), never a command found on PATH.
+# Test builds: GUARDRAILS_APP_BUNDLE_ID gives the copy its own bundle id, so its settings, notification
+# permission and window state stay apart from the installed app and both can run at once.
 # Signing: GUARDRAILS_SIGN_IDENTITY names the codesign identity. Unset, the keychain's "Developer ID
 # Application" identity is used (hardened runtime, secure timestamp); with none the app is signed ad hoc and
 # runs on this Mac only. Two Developer ID identities need GUARDRAILS_SIGN_IDENTITY to pick one.
@@ -12,6 +14,7 @@ app_dir=$(cd "$(dirname "$0")" && pwd -P)
 kit=$(cd "$app_dir/.." && pwd -P)
 dest=${GUARDRAILS_APP_DIR:-$HOME/Applications}
 app_kit_path=${GUARDRAILS_APP_KIT_PATH:-$kit}
+bundle_id=${GUARDRAILS_APP_BUNDLE_ID:-dev.agent-guardrails.Guardrails}
 identity=${GUARDRAILS_SIGN_IDENTITY:-}
 if [[ -z $identity ]]; then
   identities=$(security find-identity -v -p codesigning | sed -nE 's/^ *[0-9]+\) [0-9A-F]{40} "(Developer ID Application: [^"]+)"$/\1/p')
@@ -49,7 +52,7 @@ cat >"$bundle/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>dev.agent-guardrails.Guardrails</string>
+  <key>CFBundleIdentifier</key><string>$(xml_escape "$bundle_id")</string>
   <key>CFBundleName</key><string>Guardrails</string>
   <key>CFBundleDisplayName</key><string>Guardrails</string>
   <key>CFBundleExecutable</key><string>Guardrails</string>

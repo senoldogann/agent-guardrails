@@ -100,6 +100,19 @@ final class AppModel {
         notificationsShown = await notificationsAreShown()
     }
 
+    /// The Allow… buttons. macOS asks the owner only while the app was never answered (the request at launch
+    /// can go unseen: it arrives as a banner that slips into Notification Center); after a refusal only System
+    /// Settings can change it, so the button opens the app's page there.
+    func allowNotifications() async {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        if status == .notDetermined {
+            await requestNotificationPermission()
+        } else {
+            openNotificationSettings()
+        }
+        notificationsShown = await notificationsAreShown()
+    }
+
     /// Starts an action in a Review tab of the main window. The caller opens the window.
     func openReview(_ request: ActionRequest) {
         guard case .success(let found) = configuration else { return }

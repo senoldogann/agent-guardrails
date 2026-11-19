@@ -264,9 +264,10 @@ pr_states() {
 }
 
 # Reads the same input as pr_states and prints one tab-separated line per PR that needs the owner:
-# "<kind>\t<url>\t<title>\t<note>" for answer, approve, wait and blocked. Drafts and approved PRs are left out.
+# "<kind>\t<url>\t<title>\t<note>\t<sha>" for answer, approve, wait and blocked (sha: the PR's HEAD, last because
+# it can be empty). Drafts and approved PRs are left out.
 classify_prs() {
-  pr_states | jq -r 'select(.kind | IN("answer", "approve", "wait", "blocked")) | [.kind, .url, .title, .note] | @tsv'
+  pr_states | jq -r 'select(.kind | IN("answer", "approve", "wait", "blocked")) | [.kind, .url, .title, .note, .sha] | @tsv'
 }
 
 # Reads the nodes of the owner's repositories (GraphQL, see `guardrails projects`) and prints one compact
