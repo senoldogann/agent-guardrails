@@ -1,7 +1,7 @@
 import GuardrailsCore
 import SwiftUI
 
-/// The main window's sidebar: the overview and every repository grouped by what it needs; a click shows the
+/// The main window's sidebar: the overview, the reports and every repository grouped by what it needs; a click shows the
 /// page in the browse tab. Settings is a plain button in the bottom corner, as in Claude and Linear.
 struct ProjectSidebar: View {
     let projects: ProjectsModel
@@ -22,6 +22,10 @@ struct ProjectSidebar: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
                     .tag(WorkspacePage.overview)
+                OcticonLabel("Reports", icon: .graph)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Palette.textPrimary)
+                    .tag(WorkspacePage.reports)
             }
             ProjectSection(title: "Needs you", projects: groups.needsYou, snapshot: snapshot)
             ProjectSection(title: "On", projects: groups.on, snapshot: snapshot)

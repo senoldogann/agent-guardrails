@@ -18,6 +18,7 @@ enum Octicon: String, CaseIterable {
     case dash
     case download
     case gear
+    case graph
     case gitBranch = "git-branch"
     case gitCommit = "git-commit"
     case gitMerge = "git-merge"

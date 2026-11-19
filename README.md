@@ -95,6 +95,13 @@ checks, comments, history and diff, with the actions around it (comment, request
 PR, auto-merge, draft or ready, close or reopen). Approving still goes through Review. Settings (⌘,) and a
 first-launch checklist cover the rest of the set-up on your Mac.
 
+`guardrails report [owner/repo] [--days N] [--json]`, or **Reports** in the app's sidebar, shows how agent work
+went over the last N days (default 30; the app offers 7, 30 and 90) in every enforced repository: pull requests
+merged by the agent App and by people, the median and 90th percentile time from ready for review to approval and
+to merge, PRs that needed a new approval after a push, PRs with a failing guard or checks run and how many merged
+after a later green run, merges without an approval on their final commit (an admin bypass, or a merge before the
+guardrails were on), and every ruleset change with its time, author and what changed. It only reads GitHub.
+
 ## The agent's own GitHub identity
 
 By default the agent works with your GitHub login. GitHub does not let you approve your own pull requests, so

@@ -59,7 +59,7 @@ final class Workspace {
             reviews[run] = nil
         case .pullRequest(let ref):
             pullRequests[ref] = nil
-        case .overview, .repository, .settings, .welcome:
+        case .overview, .reports, .repository, .settings, .welcome:
             break
         }
         strip = strip.closing(page)

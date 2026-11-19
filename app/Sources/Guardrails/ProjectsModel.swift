@@ -21,6 +21,8 @@ final class ProjectsModel {
     private(set) var setupsStarted: [String: Date] = [:]
     /// The owner's agent App on this Mac, from `guardrails agent status --json`.
     private(set) var agent: AgentInfo?
+    /// The Reports page's data.
+    let reports: ReportsModel
     private let configuration: AppConfiguration
 
     struct PullRequestList: Equatable {
@@ -30,6 +32,7 @@ final class ProjectsModel {
 
     init(configuration: AppConfiguration) {
         self.configuration = configuration
+        self.reports = ReportsModel(configuration: configuration)
     }
 
     func project(named repo: String) -> Project? {

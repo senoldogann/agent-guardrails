@@ -29,8 +29,14 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
     `~/.config/agent-guardrails/agent/`; `agent status` shows where it is installed. `bin/agent-app-lib.sh`
     signs App JWTs with openssl and mints installation tokens limited to one repository and the agent's
     permissions (contents and pull requests write, no workflows).
-  - For the app, `inbox --json`, `projects --json`, `prs <owner/repo> --json` and `agent status --json` are
-    read-only and print one item per line; with `GUARDRAILS_EVENTS_FD=<3-9>` the state-changing commands
+  - `report [owner/repo] [--days N] [--json]` is read-only: per enforced repo over the last N days (default 30)
+    the merged PRs by author (agent App or people), median and 90th percentile from ready for review to approval
+    and to merge, re-approvals, failed guard and checks runs, merges without an approval on the final commit,
+    and every ruleset version (ruleset history API) with its actor and what changed. PR data comes from one
+    paginated GraphQL search; the numbers are pure functions in `bin/guardrails-lib.sh` (`pr_report`,
+    `ruleset_audit`), tested in `tests/report.sh`.
+  - For the app, `inbox --json`, `projects --json`, `prs <owner/repo> --json`, `report --json` and
+    `agent status --json` are read-only and print one item per line; with `GUARDRAILS_EVENTS_FD=<3-9>` the state-changing commands
     also write their plan and each expected confirmation as JSON lines to that descriptor.
 - `app/` the owner's macOS menu bar app (SwiftPM, macOS 26, Liquid Glass): what waits for the owner, a Projects
   window with every repo's state and open PRs, set-up of new projects (clone check, then Terminal with

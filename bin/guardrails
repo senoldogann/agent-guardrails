@@ -15,6 +15,9 @@
 #   guardrails agent status [--json]   the agent App and where it is installed (read-only)
 #   guardrails projects --json         your repositories with their state (read-only, for the app)
 #   guardrails prs <owner/repo> --json the open PRs of one repository (read-only, for the app)
+#   guardrails report [owner/repo] [--days N] [--json]
+#                                      merges, approval times, failed runs, admin merges and ruleset changes
+#                                      of every enforced repo (or one) over the last N days, default 30 (read-only)
 #
 # Enforced repos are listed in ~/.config/agent-guardrails/repos and carry the GitHub topic agent-guardrails.
 # The global hooks treat a listed repo as a kit repo even if its local .agent/ is deleted, and from any
@@ -499,6 +502,131 @@ prs_json() {
     pr_states
 }
 
+# The pull requests of one repository for a report, found by search (SEARCH is replaced with the search text):
+# what pr_report reads. 10 per page with up to 50 commits and their check runs each keeps a page well inside
+# GitHub's GraphQL time limit.
+# shellcheck disable=SC2016 # $endCursor is a GraphQL variable, filled in by gh --paginate
+report_query='query($endCursor: String) {
+  search(query: SEARCH, type: ISSUE, first: 10, after: $endCursor) {
+    issueCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      ... on PullRequest {
+        number title url createdAt closedAt mergedAt
+        author { __typename login }
+        mergedBy { login }
+        timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, REVIEW_DISMISSED_EVENT]) {
+          pageInfo { hasNextPage }
+          nodes {
+            __typename
+            ... on ReadyForReviewEvent { createdAt }
+            ... on PullRequestReview { id state submittedAt commit { oid } }
+            ... on ReviewDismissedEvent { previousReviewState review { id } }
+          }
+        }
+        commits(last: 50) {
+          pageInfo { hasPreviousPage }
+          nodes {
+            commit {
+              oid
+              statusCheckRollup {
+                contexts(first: 50) {
+                  nodes {
+                    __typename
+                    ... on CheckRun { name status conclusion completedAt }
+                    ... on StatusContext { context state createdAt }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+
+# Prints the pull requests of a repository updated since a timestamp as one JSON array. Dies when GitHub cannot
+# list them all: search lists at most 1000, and a list shorter than GitHub's count would make a report look
+# better or worse than it was. Arguments: owner/repo, window start.
+report_prs() {
+  local repo=$1 since=$2 search pages count listed
+  # A JSON string is a valid GraphQL string; the repository name is checked before it gets here.
+  search=$(jq -n -c --arg q "repo:$repo is:pr updated:>=$since" '$q')
+  pages=$(graphql_with_retry 3 2 "${report_query/SEARCH/$search}" '.data.search | {count: .issueCount, nodes}') || exit 1
+  count=$(jq -s '.[0].count // 0' <<<"$pages")
+  listed=$(jq -s '[.[].nodes[]] | length' <<<"$pages")
+  [[ $count -le 1000 ]] ||
+    die "$repo has $count pull requests updated in the window; GitHub search lists at most 1000. Choose fewer days."
+  [[ $listed == "$count" ]] ||
+    die "GitHub listed $listed of the $count pull requests of $repo updated since $since; try again"
+  jq -s -c '[.[].nodes[]]' <<<"$pages"
+}
+
+# Prints the GitHub login of a user ID, or nothing for an actor that is not a user (an App, a deploy key).
+# Logins are kept in actor_logins ("<id> <login>" lines) so each ID is looked up once. Arguments: ID, type.
+actor_logins=""
+actor_login() {
+  local id=$1 type=$2 login
+  [[ $type == User ]] || return 0
+  login=$(awk -v id="$id" '$1 == id { print $2; exit }' <<<"$actor_logins")
+  if [[ -z $login ]]; then
+    login=$(gh api "user/$id" --jq .login) || die "cannot read the login of GitHub user $id"
+  fi
+  printf '%s\n' "$login"
+}
+
+# Prints the ruleset changes of a repository in the window as one JSON array, newest first (see ruleset_audit).
+# Only rulesets that still exist have a history: a deleted ruleset's history goes with it, and the inbox raises
+# an alarm for a missing kit ruleset. Arguments: owner/repo, window start.
+report_ruleset_changes() {
+  local repo=$1 since=$2 rulesets id name history version versions entries="" state actor_id actor_type login
+  rulesets=$(gh api --paginate "repos/$repo/rulesets?includes_parents=false" --jq '.[] | [.id, .name] | @tsv') ||
+    die "cannot list the rulesets of $repo"
+  while IFS=$'\t' read -r id name; do
+    [[ -n $id ]] || continue
+    history=$(gh api --paginate "repos/$repo/rulesets/$id/history?per_page=100") ||
+      die "cannot read the history of ruleset $name of $repo"
+    versions=""
+    for version in $(ruleset_versions_needed "$since" <<<"$history"); do
+      state=$(gh api "repos/$repo/rulesets/$id/history/$version") ||
+        die "cannot read version $version of ruleset $name of $repo"
+      read -r actor_id actor_type < <(jq -r '"\(.actor.id) \(.actor.type)"' <<<"$state")
+      login=$(actor_login "$actor_id" "$actor_type") || exit 1
+      [[ -z $login ]] || actor_logins+="$actor_id $login"$'\n'
+      versions+="$(jq -c --arg login "$login" '. + {login: (if $login == "" then null else $login end)}' <<<"$state")"$'\n'
+    done
+    [[ -z $versions ]] || entries+="$(jq -s -c . <<<"$versions" | ruleset_audit "$since" "$name")"$'\n'
+  done <<<"$rulesets"
+  jq -s -c 'sort_by(.time) | reverse' <<<"$entries"
+}
+
+# Prints the report of one repository as one JSON line. Arguments: owner/repo, days, window start, agent App slug.
+report_repo() {
+  local repo=$1 days=$2 since=$3 slug=$4 prs metrics changes
+  prs=$(report_prs "$repo" "$since") || exit 1
+  metrics=$(pr_report "$since" "$slug" <<<"$prs")
+  changes=$(report_ruleset_changes "$repo" "$since") || exit 1
+  jq -n -c --arg repo "$repo" --argjson days "$days" --arg since "$since" --argjson metrics "$metrics" \
+    --argjson changes "$changes" '{repo: $repo, days: $days, since: $since} + $metrics + {rulesetChanges: $changes}'
+}
+
+# How agent work went: one report per repository (the given one, or every enforced one), read-only.
+# Arguments: owner/repo or "", days, "json" or "text".
+report() {
+  local target=$1 days=$2 format=$3 since slug="" repos repo lines=""
+  since=$(report_since "$(date +%s)" "$days")
+  if agent_app_registered; then slug=$(jq -r .slug "$(agent_dir)/app.json"); fi
+  if [[ -n $target ]]; then repos=$target; else repos=$(registered_repos); fi
+  [[ -n $repos ]] || die "no enforced repos yet; name one: guardrails report <owner/repo>"
+  # Every repository is read before anything is printed, so a failure never leaves half a report.
+  while IFS= read -r repo; do
+    [[ -n $repo ]] || continue
+    lines+="$(report_repo "$repo" "$days" "$since" "$slug")"$'\n' || exit 1
+  done <<<"$repos"
+  if [[ $format == json ]]; then printf '%s' "$lines"; else report_text <<<"$lines"; fi
+}
+
 approve_pick() {
   local repo items choices="" count=0 kind url title note sha choice
   while IFS= read -r repo; do
@@ -661,6 +789,27 @@ case $command in
   prs)
     [[ $# -eq 2 && $2 == --json ]] || die "usage: guardrails prs <owner/repo> --json"
     prs_json "$1"
+    ;;
+  report)
+    report_target="" report_days=30 report_format=text
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --json) report_format=json ;;
+        --days)
+          [[ $# -ge 2 && $2 =~ ^[1-9][0-9]{0,2}$ && $2 -le 365 ]] || die "--days takes a number of days from 1 to 365"
+          report_days=$2
+          shift
+          ;;
+        */*)
+          [[ -z $report_target && $1 =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
+            die "usage: guardrails report [owner/repo] [--days N] [--json]"
+          report_target=$1
+          ;;
+        *) die "usage: guardrails report [owner/repo] [--days N] [--json]" ;;
+      esac
+      shift
+    done
+    report "$report_target" "$report_days" "$report_format"
     ;;
   on)
     [[ $# -ge 1 ]] || usage
