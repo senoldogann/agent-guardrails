@@ -6,6 +6,14 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Changed
+
+- The README no longer says that nothing merges until the human approves the exact commit without naming
+  the exceptions. It now states what approvals on github.com or GitHub Mobile skip in review mode, and that
+  administrators (including the owner for their own PRs and for Cursor or Codex PRs) can merge without a
+  review. `docs/pilot.md` holds the pilot brief: the promise the kit can back, what it does not promise, what
+  to measure and the proposed decision thresholds.
+
 ### Fixed
 
 - The app's command timeout now always ends. A timed-out command and its process group get SIGTERM, then

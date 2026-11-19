@@ -6,8 +6,9 @@
 
 Spec-first guardrails for [Claude Code](https://claude.com/claude-code) on GitHub. A human writes the contract
 for a ticket (types, property tests, acceptance scenarios) before any code exists. The agent implements only
-inside that locked spec. Deterministic checks decide when the work is done, and nothing merges until the
-human approves the exact commit.
+inside that locked spec. Deterministic checks decide when the work is done, and a PR merges only after the
+guard and the checks passed on its exact head commit and a human approved that commit (the exceptions, such as
+repository administrators, are listed under [Security model and limits](#security-model-and-limits)).
 
 **Why.** A coding agent that grades its own work will sometimes weaken a test, skip a check or declare a task
 done that is not. Reviewing every line afterwards does not scale. This kit moves the human's effort to the
@@ -16,7 +17,8 @@ default branch so a PR cannot change the rules that judge it, mutation testing t
 and a per-commit approval that a new push invalidates.
 
 **Status:** 0.x, used daily by its author on macOS. Expect changes between minor versions; see
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md). The plan for a first customer pilot, with what the kit does and does not
+promise, is in [docs/pilot.md](docs/pilot.md).
 
 ## How it works
 
@@ -57,7 +59,7 @@ flowchart LR
   osv-scanner sends package names and versions, not code, to the free OSV API. Inline suppressions
   (`nosemgrep`, `gitleaks:allow`) and the scanners' own ignore files have no effect: only a line in
   `.github/security-ignore` (`<scanner> <id> <path> # <reason>`) accepts a finding, and changing that file
-  needs the owner's second confirmation like any guardrail file. An osv line holds while it stays in the
+  needs the owner's second confirmation like any guardrail file (when approving in the CLI or the app). An osv line holds while it stays in the
   file; a gitleaks or Semgrep line accepts findings only in the PR that adds it, so a later secret or insecure
   line at the same path needs a new decision. Known gaps: gitleaks skips its default allowlisted paths (images,
   lockfiles such as `go.sum`), and a new advisory in the OSV database can turn unrelated PRs red until the
@@ -296,6 +298,13 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
 - **The agent's identity is checked per session** (Claude Code only). In a kit repository with the agent App
   registered, gh and `git push` are blocked unless the session's identity was set up for that repository at its
   start; a session started elsewhere would otherwise reach GitHub with your login.
+- **Approvals on github.com or GitHub Mobile** (review mode) are plain GitHub reviews: the guard and the
+  required checks still apply, but `approve-head`'s file list, its `!!` second confirmation for guardrail files
+  and its workflow checks do not. Approve in the CLI or the app when a PR changes guardrail files.
+- **Administrators can merge without a review in review mode** (the review ruleset lets admins bypass it
+  through a PR; the guard and the checks still apply). The owner's own PRs merge this way, and so do PRs from
+  Cursor and Codex, which push with your login. `guardrails report` lists merges without an approval on the
+  final commit afterwards; nothing prevents them.
 - **Review mode separates identities,** and the App cannot change workflows. While the agent runs as your
   computer user it can still reach your own login, so for a hard boundary run the agent as another user, in a
   container or in CI with only the App's token.
