@@ -37,7 +37,12 @@ flowchart LR
   after the acceptance criteria, plus open questions, each with a recommended answer. It writes no
   implementation. The owner answers the questions; the spec and the test IDs are then locked by hash.
 - **Implement phase:** a local write-guard lets the agent change only the files listed in the ticket's
-  `write-allow`, and a stop hook keeps it working until `make check` passes.
+  `write-allow`. When the agent tries to finish, a stop hook runs `make check` (`make check-spec` in the spec
+  phase) and sends it back to work while that fails. After three failed attempts in a row it lets the agent
+  stop and warns you that the work is not done, so a check the agent cannot fix does not loop forever; the
+  agent can also stop to ask you a question with `.agent/bin/block`. Both hooks are Claude Code conveniences
+  that catch mistakes early. Whether the PR merges is decided on GitHub: `ci-guard`, the required checks and
+  your approval of the exact commit.
 - **CI:** `ci-guard` runs from the default branch through `pull_request_target` and reads the PR only as data.
   It fails a PR that changes locked spec files or tests without a new lock, adds a workflow that could stand
   in for a required check, or carries merge commits, symlinks and similar. Changes to the guardrails

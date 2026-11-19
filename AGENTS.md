@@ -1,7 +1,8 @@
 # agent-guardrails
 
 Reusable kit that makes agent work verifiable: humans define types, property tests and
-acceptance scenarios up front; deterministic checks (local hooks + CI) decide when work is done.
+acceptance scenarios up front; deterministic checks decide when work is done. GitHub enforces it (the guard,
+the required checks, the owner's per-HEAD approval); local hooks only catch mistakes early.
 
 ## Layout
 
@@ -11,7 +12,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - `skills/ticket-implement/` implement phase against a locked spec.
 - `skills/process-fix/` turns a recurring agent mistake into a context or check change.
 - `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks
-  (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too) and the Cursor shim
+  (write-guard; stop-check, which sends the agent back while the phase gate fails and lets it stop with a
+  warning after three failures in a row; a bash-guard shim so teammates' agents are guarded too) and the Cursor shim
   `cursor-guard.sh`, run from `template/.cursor/hooks.json`;
   `template/.github/workflows/agent-guard.yml` base-branch guard; `template/.github/workflows/agent-notify.yml`
   team notifications to Slack or Microsoft Teams (inert without the owner's webhook secrets), whose payloads
