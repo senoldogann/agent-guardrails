@@ -10,6 +10,7 @@ struct ProjectsTests {
         {"repo":"acme/billing","state":"alarm","note":"ruleset disabled","private":true,"fork":false,"branch":"main","pushed":"2026-11-04T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
         {"repo":"acme/mobile","state":"ready","note":"bootstrap PR open","private":false,"fork":false,"branch":"main","pushed":"2026-11-03T10:00:00Z","openPRs":1,"setupURL":"https://github.com/acme/mobile/pull/2","setupTitle":"chore: install"}
         {"repo":"acme/site","state":"off","note":"","private":false,"fork":false,"branch":"main","pushed":"2026-11-02T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
+        {"repo":"acme/teammate","state":"elsewhere","note":"enforced from another Mac","private":true,"fork":false,"branch":"main","pushed":"2026-11-01T11:00:00Z","openPRs":2,"setupURL":"","setupTitle":""}
         {"repo":"acme/vendored","state":"no-admin","note":"","private":false,"fork":true,"branch":"main","pushed":"2026-11-01T10:00:00Z","openPRs":0,"setupURL":"","setupTitle":""}
         """
 
@@ -18,6 +19,7 @@ struct ProjectsTests {
         #expect(groups.needsYou.map(\.repo) == ["acme/billing"])
         #expect(groups.on.map(\.repo) == ["acme/shop"])
         #expect(groups.ready.map(\.setupURL) == ["https://github.com/acme/mobile/pull/2"])
+        #expect(groups.elsewhere.map(\.repo) == ["acme/teammate"])
         #expect(groups.off.map(\.repo) == ["acme/site", "acme/vendored"])
     }
 
@@ -53,12 +55,13 @@ struct ProjectsTests {
         #expect(line("acme/shop", 1) == "1 waits for you")
         #expect(line("acme/shop", 2) == "2 wait for you")
         #expect(line("acme/site", 4) == nil)
+        #expect(line("acme/teammate", 0) == nil)
     }
 
     @Test func searchMatchesOwnerAndName() throws {
         let groups = groupProjects(try parseProjects(output), matching: " SHO ")
         #expect(groups.on.map(\.repo) == ["acme/shop"])
-        #expect(groups.off.isEmpty && groups.ready.isEmpty && groups.needsYou.isEmpty)
+        #expect(groups.off.isEmpty && groups.ready.isEmpty && groups.needsYou.isEmpty && groups.elsewhere.isEmpty)
     }
 
     @Test func parsesPullRequestKinds() throws {

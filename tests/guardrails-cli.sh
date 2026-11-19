@@ -269,27 +269,30 @@ stranger_setup='[{"url":"https://github.com/acme/evil/pull/8","title":"chore: in
 nodes=$(
   node acme/on ADMIN "$active" '["agent-guardrails"]' '[]'
   node Acme/Disabled ADMIN '[{"name":"agent-guardrails","enforcement":"DISABLED"}]' '[]' '[]'
-  node acme/tagged ADMIN '[]' '["agent-guardrails"]' '[]'
-  node acme/unlisted ADMIN "$active" '[]' '[]'
+  node owner/tagged ADMIN '[]' '["agent-guardrails"]' '[]'
+  node owner/unlisted ADMIN "$active" '[]' '[]'
+  node acme/teammate-tagged ADMIN '[]' '["agent-guardrails"]' '[]'
+  node acme/teammate-active ADMIN "$active" '[]' '[]'
+  node acme/remembered ADMIN '[]' '[]' '[]'
   node acme/ready ADMIN '[]' '[]' "$own_setup"
   node acme/fork-pr ADMIN '[]' '[]' "$fork_setup"
   node acme/stranger ADMIN '[]' '[]' "$stranger_setup"
   node acme/readonly WRITE '[]' '[]' '[]'
 )
-expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' none '' <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
-  "acme/on on Acme/Disabled alarm acme/tagged alarm acme/unlisted alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
+expect_eq "project states" "$(project_states owner $'acme/on\nacme/disabled' none '' acme/remembered <<<"$nodes" | jq -r '"\(.repo) \(.state)"' | tr '\n' ' ')" \
+  "acme/on on Acme/Disabled alarm owner/tagged alarm owner/unlisted alarm acme/teammate-tagged elsewhere acme/teammate-active elsewhere acme/remembered alarm acme/ready ready acme/fork-pr off acme/stranger off acme/readonly no-admin "
 expect_eq "a ready project carries its bootstrap PR" \
-  "$(project_states owner '' none '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
+  "$(project_states owner '' none '' '' <<<"$nodes" | jq -r 'select(.state == "ready") | .setupURL')" "https://github.com/acme/ready/pull/1"
 review_nodes=$(
   node acme/reviewed ADMIN '[{"name":"agent-guardrails","enforcement":"ACTIVE"},{"name":"agent-guardrails-review","enforcement":"ACTIVE"}]' '[]' '[]'
   node acme/status ADMIN "$active" '[]' '[]'
   node acme/plain ADMIN '[]' '[]' '[]'
 )
 expect_eq "mode and agent App per project" \
-  "$(project_states owner $'acme/reviewed\nacme/status' registered $'Acme/Reviewed\nacme/plain' <<<"$review_nodes" |
+  "$(project_states owner $'acme/reviewed\nacme/status' registered $'Acme/Reviewed\nacme/plain' '' <<<"$review_nodes" |
     jq -r '"\(.repo) \(.mode) \(.agentApp)"' | tr '\n' ' ')" \
   "acme/reviewed review installed acme/status status missing acme/plain null installed "
-expect_eq "no agent App on this Mac" "$(project_states owner acme/status none '' <<<"$review_nodes" | jq -r .agentApp | sort -u)" "none"
+expect_eq "no agent App on this Mac" "$(project_states owner acme/status none '' '' <<<"$review_nodes" | jq -r .agentApp | sort -u)" "none"
 queue_nodes=$(
   node acme/queued ADMIN '[{"name":"agent-guardrails","enforcement":"ACTIVE","rules":{"nodes":[{"type":"PULL_REQUEST"},{"type":"MERGE_QUEUE"}]}},
     {"name":"agent-guardrails-review","enforcement":"ACTIVE"}]' '[]' '[]' | jq -c '.owner = {__typename: "Organization"}'
@@ -298,12 +301,12 @@ queue_nodes=$(
   node owner/personal ADMIN "$active" '[]' '[]' | jq -c '.owner = {__typename: "User"}'
 )
 expect_eq "merge queue and organization per project" \
-  "$(project_states owner $'acme/queued\nacme/other-queue\nowner/personal' registered '' <<<"$queue_nodes" |
+  "$(project_states owner $'acme/queued\nacme/other-queue\nowner/personal' registered '' '' <<<"$queue_nodes" |
     jq -r '"\(.repo) \(.mergeQueue) \(.organization)"' | tr '\n' ' ')" \
   "acme/queued true true acme/other-queue false true owner/personal false false "
 expect_eq "an enforced repository GitHub could not read is an alarm, not a missing row" \
   "$(jq -n -c '{nameWithOwner: "acme/gone", unreadable: true, isFork: false, isPrivate: true, pushedAt: "",
-      viewerPermission: "READ", pullRequests: {totalCount: 0}}' | project_states owner acme/gone none '' |
+      viewerPermission: "READ", pullRequests: {totalCount: 0}}' | project_states owner acme/gone none '' '' |
     jq -r '"\(.state) \(.private) \(.openPRs) \(.mergeQueue)"')" "alarm true 0 false"
 
 echo "events for the app"
@@ -313,15 +316,92 @@ expect_eq "only descriptors 3-9 are used" "$(GUARDRAILS_EVENTS_FD=1 emit_event '
 expect_eq "files as JSON" "$(printf '!!\t.github/workflows/x.yml\n\tsrc/a b.ts\n' | files_json)" \
   '[{"marker":"!!","path":".github/workflows/x.yml"},{"marker":"","path":"src/a b.ts"}]'
 
+# The repositories the fake gh's GitHub holds, as GraphQL repository nodes. The owner (login "owner") is a member
+# of the organizations "acme" and "labs". Searches answer only for the owners their query names, the way GitHub's do.
+# Only the 25 most recently pushed organization repositories fit a page of the projects list: acme/readonly (not
+# an admin there), acme/teammate (a teammate enforced it from their Mac), 22 fillers and acme/shop. The kit's other
+# repositories are older. acme/lost is in this Mac's history but no longer in its list; labs/tagged and
+# elsewhere/tagged are teammates' and outside the page.
+at() { jq -c --arg owner "$1" --arg pushed "$2" '.owner = {__typename: $owner} | .pushedAt = $pushed'; }
+world=$(
+  node owner/app ADMIN '[]' '[]' '[]' | at User 2026-11-12T00:00:00Z
+  node owner/lost ADMIN '[]' '["agent-guardrails"]' '[]' | at User 2026-11-11T12:00:00Z
+  node acme/readonly WRITE '[]' '[]' '[]' | at Organization 2026-11-14T00:00:00Z
+  node acme/teammate ADMIN "$active" '["agent-guardrails"]' '[]' | at Organization 2026-11-13T01:00:00Z
+  for i in $(seq 10 31); do node "acme/filler-$i" ADMIN '[]' '[]' '[]' | at Organization "2026-11-13T00:$i:00Z"; done
+  node acme/shop ADMIN "$active" '["agent-guardrails"]' '[]' | at Organization 2026-11-11T00:00:00Z
+  node acme/lost ADMIN '[]' '["agent-guardrails"]' '[]' | at Organization 2026-10-01T00:00:00Z
+  node acme/new ADMIN '[]' '[]' \
+    '[{"url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","isCrossRepository":false,"author":{"login":"owner"}}]' |
+    at Organization 2026-10-02T00:00:00Z
+  node acme/noadmin WRITE '[]' '[]' \
+    '[{"url":"https://github.com/acme/noadmin/pull/2","title":"chore: install the kit","isCrossRepository":false,"author":{"login":"owner"}}]' |
+    at Organization 2026-10-03T00:00:00Z
+  node acme/upstream ADMIN '[]' '[]' \
+    '[{"url":"https://github.com/acme/upstream/pull/3","title":"chore: install the kit","isCrossRepository":true,"author":{"login":"owner"}}]' |
+    at Organization 2026-10-04T00:00:00Z
+  node acme/off ADMIN '[]' '[]' '[]' | at Organization 2026-09-01T00:00:00Z
+  node labs/tagged ADMIN '[]' '["agent-guardrails"]' '[]' | at Organization 2026-08-01T00:00:00Z
+  node elsewhere/tagged ADMIN '[]' '["agent-guardrails"]' '[]' | at Organization 2026-08-02T00:00:00Z
+)
+export FAKE_WORLD="$work/world.json"
+jq -s -c . <<<"$world" >"$FAKE_WORLD"
+export FAKE_QUERIES="$work/queries.txt"
+: >"$FAKE_QUERIES"
+
 # A fake gh on PATH answers the calls of bin/guardrails and pr_snapshot_files from fixtures.
 fake_bin="$work/fake-bin"
 mkdir -p "$fake_bin"
 cat >"$fake_bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 args="$*"
+if [[ $1 == api && $2 == graphql ]]; then
+  query="" filter=. owner="" name=""
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -f)
+        case $2 in query=*) query=${2#query=} ;; owner=*) owner=${2#owner=} ;; name=*) name=${2#name=} ;; esac
+        shift 2
+        ;;
+      --jq) filter=$2; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s\n' "$query" | tr '\n' ' ' >>"$FAKE_QUERIES"
+  printf '\n' >>"$FAKE_QUERIES"
+  pages='{pageInfo: {hasNextPage: false, endCursor: null}}'
+  if [[ $query == *"search("* && -n ${FAKE_SEARCH_ANSWER:-} ]]; then
+    response=$FAKE_SEARCH_ANSWER
+  elif [[ $query == *"search("* ]]; then
+    [[ $query == *"head:chore/agent-guardrails"* && $query == *"is:open"* ]] || { echo "fake gh: unexpected search: $query" >&2; exit 1; }
+    users=$(grep -o 'user:[A-Za-z0-9-]*' <<<"$query" | cut -d: -f2 | jq -R -s -c 'split("\n") | map(select(length > 0) | ascii_downcase)')
+    author=$(grep -o 'author:[A-Za-z0-9-]*' <<<"$query" | cut -d: -f2)
+    response=$(jq -c --argjson users "$users" --arg author "$author" '{data: {
+      tagged: ([.[] | select(any(.repositoryTopics.nodes[]; .topic.name == "agent-guardrails")
+                 and ((.nameWithOwner | split("/")[0] | ascii_downcase) as $o | $users | index($o)) != null)]
+               | {repositoryCount: length, nodes: map({nameWithOwner})}),
+      bootstrap: ([.[] | . as $r | .bootstrap.nodes[] | select(.author.login == $author)
+                   | . + {repository: {nameWithOwner: $r.nameWithOwner, viewerPermission: $r.viewerPermission}}]
+                  | {issueCount: length, nodes: .})}}' "$FAKE_WORLD")
+  elif [[ $query == *ORGANIZATION_MEMBER* ]]; then
+    first=$(grep -o 'first: [0-9]*' <<<"$query" | head -1 | cut -d' ' -f2)
+    response=$(jq -c --argjson first "$first" "{data: {viewer: {repositories: ($pages + {nodes: ([.[] | select(.owner.__typename == \"Organization\")]
+      | sort_by(.pushedAt) | reverse | .[:\$first])})}}}" "$FAKE_WORLD")
+  elif [[ $query == *"ownerAffiliations: OWNER,"* ]]; then
+    response=$(jq -c "{data: {viewer: {repositories: ($pages + {nodes: ([.[] | select(.owner.__typename == \"User\")]
+      | sort_by(.pushedAt) | reverse)})}}}" "$FAKE_WORLD")
+  elif [[ -n $owner && -n $name ]]; then
+    response=$(jq -c --arg r "$owner/$name" '{data: {repository: (first(.[] | select((.nameWithOwner | ascii_downcase) == ($r | ascii_downcase))) // null)}}' "$FAKE_WORLD")
+  else
+    echo "fake gh: unexpected query: $query" >&2
+    exit 1
+  fi
+  jq -c "$filter" <<<"$response"
+  exit
+fi
 case $args in
   "api user --jq .login") echo owner ;;
-  "search repos "*) printf 'acme/shop\nacme/lost\n' ;;
   "api repos/acme/"*" --jq .default_branch") echo main ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-tags")'*) echo 9 ;;
@@ -335,7 +415,6 @@ case $args in
   "pr list -R acme/broken "*) echo "HTTP 502" >&2; exit 1 ;;
   "pr list -R acme/shop "*) cat "$FAKE_PRS" ;;
   "pr list -R acme/off "*) echo '[]' ;;
-  "search prs "*) printf 'acme/new\thttps://github.com/acme/new/pull/1\tchore: install the kit\n' ;;
   "api repos/acme/shop/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222?per_page=1")
     echo '{"files":[{"filename":"src/a.ts","status":"modified"}]}' ;;
   "api repos/acme/shop/compare/1111111111111111111111111111111111111111...3333333333333333333333333333333333333333?per_page=1")
@@ -355,10 +434,12 @@ tag_ruleset agent-guardrails-tags | jq -c '. + {id: 9}' >"$FAKE_RULESETS/tag.jso
 fake_home="$work/fake-home"
 mkdir -p "$fake_home/.config/agent-guardrails"
 printf 'acme/shop\nacme/off\n' >"$fake_home/.config/agent-guardrails/repos"
+printf 'acme/lost\n' >"$fake_home/.config/agent-guardrails/enforced-history"
 run_cli() { HOME=$fake_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" "$@" 2>&1; }
 # Lines about the kit install itself depend on this checkout and the network; the tests skip them.
 inbox_text=$(run_cli inbox | grep -v 'kit install\|kit origin')
-expect_eq "inbox text" "$inbox_text" "ALARM  acme/lost carries the agent-guardrails topic but is not in $fake_home/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost
+expect_eq "inbox text" "$inbox_text" "ALARM  owner/lost carries the agent-guardrails topic but is not in $fake_home/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on owner/lost
+ALARM  acme/lost was enforced from this Mac but is not in $fake_home/.config/agent-guardrails/repos, and guardrails off did not remove it. If you did not remove it, restore with: guardrails on acme/lost
 ALARM  acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off
 
 acme/shop
@@ -377,7 +458,8 @@ Not enforced yet
   turn on  chore: install the kit
            guardrails on https://github.com/acme/new/pull/1"
 inbox_json=$(run_cli inbox --json | jq -c 'select(.repo != "")')
-expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"","title":"","note":"acme/lost carries the agent-guardrails topic but is not in '"$fake_home"'/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on acme/lost","sha":""}
+expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"owner/lost","url":"","title":"","note":"owner/lost carries the agent-guardrails topic but is not in '"$fake_home"'/.config/agent-guardrails/repos. If you did not remove it, restore with: guardrails on owner/lost","sha":""}
+{"kind":"alarm","repo":"acme/lost","url":"","title":"","note":"acme/lost was enforced from this Mac but is not in '"$fake_home"'/.config/agent-guardrails/repos, and guardrails off did not remove it. If you did not remove it, restore with: guardrails on acme/lost","sha":""}
 {"kind":"repo","repo":"acme/shop","url":"","title":"","note":"active","sha":""}
 {"kind":"answer","repo":"acme/shop","url":"u1","title":"spec(A-1): x","note":"the agent is waiting for your decision","sha":""}
 {"kind":"approve","repo":"acme/shop","url":"u3","title":"feat(A-3): ready","note":"checks running","sha":"abc123"}
@@ -388,6 +470,53 @@ expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"
 {"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing","sha":""}
 {"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off","sha":""}
 {"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":"","sha":""}'
+
+# A teammate's tagged repositories raise no alarm: the topic search covers only the owner's own account, and the
+# history only what this Mac enforced. The inbox copied the list into the history, so an organization repository
+# that later drops out of the list raises an alarm.
+expect_eq "the inbox remembers what this Mac enforced" \
+  "$(sort "$fake_home/.config/agent-guardrails/enforced-history" | tr '\n' ' ')" "acme/lost acme/off acme/shop "
+lost_home="$work/lost-home"
+mkdir -p "$lost_home/.config/agent-guardrails"
+printf 'acme/shop\n' >"$lost_home/.config/agent-guardrails/repos"
+HOME=$lost_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" inbox --json >/dev/null 2>&1
+: >"$lost_home/.config/agent-guardrails/repos"
+expect_eq "an organization repository this Mac enforced raises an alarm once it drops out of the list" \
+  "$(HOME=$lost_home PATH="$fake_bin:$PATH" "$kit/bin/guardrails" inbox --json 2>&1 | jq -r 'select(.kind == "alarm" and .repo != "") | .repo' | tr '\n' ' ')" \
+  "owner/lost acme/shop "
+
+echo "kit search answers"
+search_fails() {
+  local name=$1 answer=$2 needle=$3 out
+  if out=$(FAKE_SEARCH_ANSWER=$answer run_cli inbox --json); then
+    fail "$name: the inbox must fail, got: $out"
+  elif [[ $out == *"$needle"* ]]; then ok; else fail "$name: the error lacks '$needle': $out"; fi
+}
+search_fails "an answer without the tagged nodes" '{"data":{"tagged":null,"bootstrap":{"issueCount":0,"nodes":[]}}}' \
+  "lacks its node lists or totals"
+search_fails "an answer without data" '{"data":null}' "lacks its node lists or totals"
+search_fails "more tagged repositories than the search returned" \
+  '{"data":{"tagged":{"repositoryCount":101,"nodes":[{"nameWithOwner":"owner/lost"}]},"bootstrap":{"issueCount":0,"nodes":[]}}}' \
+  "101 of your repositories carry the topic, more than the 1 one search returns"
+search_fails "more bootstrap PRs than the search returned" \
+  '{"data":{"tagged":{"repositoryCount":0,"nodes":[]},"bootstrap":{"issueCount":51,"nodes":[]}}}' \
+  "you have 51 open bootstrap PRs, more than the 0 one search returns"
+
+# The organization repositories outside the projects page still get a row when the kit is in them (enforced,
+# remembered, or with the owner's bootstrap PR), read by name; others there stay out, and so do repositories the
+# owner cannot administer, unless the kit is in them. A teammate's enforced repository in the page is information.
+: >"$FAKE_QUERIES"
+projects=$(run_cli projects --json)
+expect_eq "projects: the kit's repositories of every owner, newest push first" \
+  "$(jq -r 'select(.repo | startswith("acme/filler-") | not) | "\(.repo) \(.state)"' <<<"$projects" | tr '\n' ',')" \
+  "acme/teammate elsewhere,owner/app off,owner/lost alarm,acme/shop on,acme/noadmin no-admin,acme/new ready,acme/lost alarm,acme/off alarm,"
+expect_eq "projects: the organization page lists the repositories the owner administers, each once" \
+  "$(jq -r .repo <<<"$projects" | grep -c '^acme/filler-')|$(jq -r .repo <<<"$projects" | sort | uniq -d)" "22|"
+expect_eq "projects: a ready organization repository carries its bootstrap PR" \
+  "$(jq -r 'select(.repo == "acme/new") | .setupURL' <<<"$projects")" "https://github.com/acme/new/pull/1"
+expect_eq "projects: one search, one page of personal and one of organization repositories, one read per other row" \
+  "$(grep -c 'search(' "$FAKE_QUERIES")|$(grep -c 'ORGANIZATION_MEMBER' "$FAKE_QUERIES")|$(grep -c 'repository(owner' "$FAKE_QUERIES")" \
+  "1|1|4"
 
 broken_home="$work/broken-home"
 mkdir -p "$broken_home/.config/agent-guardrails"
@@ -457,6 +586,14 @@ expect_eq "a branch ruleset someone may bypass raises an alarm and is no approva
 expect_eq "a review ruleset that excludes the default branch raises an alarm and is no approval mode" \
   "$(coverage_alarms "$review_excluded")|$(coverage_mode "$review_excluded")" \
   'acme/shop: the agent-guardrails-review ruleset no longer covers the default branch main (ref_name {"include":["~DEFAULT_BRANCH"],"exclude":["refs/heads/main"]}). If you did not change it, check the audit log; restore with: guardrails on acme/shop|-'
+
+review_case_excluded="$work/rulesets-review-case-excluded"
+mkdir -p "$review_case_excluded"
+cp "$reviewed"/*.json "$review_case_excluded/"
+jq -c '.conditions.ref_name.exclude = ["refs/heads/MAIN"]' "$reviewed/review.json" >"$review_case_excluded/review.json"
+expect_eq "a review ruleset that excludes the default branch in another case raises an alarm and is no approval mode" \
+  "$(coverage_alarms "$review_case_excluded")|$(coverage_mode "$review_case_excluded")" \
+  'acme/shop: the agent-guardrails-review ruleset no longer covers the default branch main (ref_name {"include":["~DEFAULT_BRANCH"],"exclude":["refs/heads/MAIN"]}). If you did not change it, check the audit log; restore with: guardrails on acme/shop|-'
 
 echo "compared_files and pr_snapshot_files"
 expect_eq "plain file names pass" "$(compared_files 1 <<<'{"files":[{"filename":"src/a.ts","status":"modified"}]}')" "src/a.ts"
@@ -646,7 +783,22 @@ coverage_cases='[["~DEFAULT_BRANCH"],[],"main",true]
 [["~ALL"],["refs/heads/[z-a]ain"],"main",false]
 [["~ALL"],["refs/heads/[a-c-e]ain"],"main",false]
 [["~ALL"],["refs/heads/[!n-z]ain"],"main",false]
-[["~ALL"],["refs/heads/[!a-z]ain"],"main",true]'
+[["~ALL"],["refs/heads/[!a-z]ain"],"main",true]
+[["refs/heads/MAIN"],[],"main",false]
+[["refs/heads/Ma*"],[],"main",false]
+[["refs/heads/main"],[],"Main",false]
+[["refs/heads/[A-Z]ain"],[],"main",false]
+[["~ALL"],["refs/heads/MAIN"],"main",false]
+[["~ALL"],["refs/heads/Ma*"],"main",false]
+[["~ALL"],["MAIN"],"main",false]
+[["~ALL"],["refs/heads/main"],"Main",false]
+[["~ALL"],["refs/heads/[M]ain"],"main",false]
+[["~ALL"],["refs/heads/[A-Z]ain"],"main",false]
+[["~ALL"],["refs/heads/[!a-z]ain"],"Main",false]
+[["~ALL"],["refs/heads/[!M]ain"],"main",false]
+[["~ALL"],["refs/Heads/main"],"main",false]
+[["~ALL"],["~default_branch"],"main",false]
+[["~ALL"],["refs/heads/DEV*"],"main",true]'
 expect_eq "include, exclude and fnmatch patterns" "$(jq -s -c "$ruleset_jq_defs"'
   map(. as [$include, $exclude, $branch]
     | {target: "branch", conditions: {ref_name: {include: $include, exclude: $exclude}}} | covers_default($branch))' \

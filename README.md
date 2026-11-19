@@ -125,6 +125,9 @@ the app. `guardrails version` shows what is installed.
 to approve, bootstrap PRs to turn on, and alarms. The app also sends a notification for each new one. Its
 one window works like an editor: the sidebar lists the overview, your repositories and settings, and pull
 requests and reviews open in tabs (⌘W closes one, ⌃Tab moves between them, ⌘R refreshes, ⌘F searches).
+The repositories are every one you own, the 25 most recently pushed ones you administer in your organizations,
+and every repository this Mac enforced or where your bootstrap PR is open, whoever owns it. An organization
+repository a teammate enforced from their Mac shows under Enforced elsewhere, for information.
 Before you approve, the Review tab shows the PR's checks on that exact commit, the steps and mutation verdict
 of the kit gate from its CI log, and the spec the PR carries. A pull request's tab shows its description,
 checks, comments, history and diff, with the actions around it (comment, request changes, merge an approved

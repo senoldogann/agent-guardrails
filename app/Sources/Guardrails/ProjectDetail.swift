@@ -116,7 +116,7 @@ struct HeaderActions: View {
                 }
                 .destructiveAction()
                 .disabled(actionsLocked)
-            case .on, .noAdmin:
+            case .on, .noAdmin, .elsewhere:
                 EmptyView()
             }
             if project.state == .on || project.state == .alarm {
@@ -181,6 +181,12 @@ struct ProjectStateCard: View {
                 Explainer(
                     symbol: .key, color: Palette.textSecondary, title: "No admin rights",
                     text: "You cannot apply rulesets in \(project.repo), so guardrails cannot be enforced here.")
+            }
+        case .elsewhere:
+            Card {
+                Explainer(
+                    symbol: .info, color: Palette.textSecondary, title: "Enforced from another Mac",
+                    text: "\(project.repo) carries the guardrails, but this Mac did not turn them on: a teammate enforces it and approves its pull requests from their Mac.")
             }
         }
     }
@@ -260,6 +266,7 @@ struct StateChip: View {
         case .ready: "Ready to turn on"
         case .off: "Off"
         case .noAdmin: "No admin rights"
+        case .elsewhere: "Enforced elsewhere"
         }
     }
 }

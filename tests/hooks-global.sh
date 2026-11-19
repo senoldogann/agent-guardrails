@@ -192,6 +192,7 @@ block 'cat ~/.config/agent-guardrails/repos'
 block 'cd ~/.config && cat agent-guardrails/repos'
 allow 'cd ~/src/agent-guardrails-worktrees/app && rg -n "model.configuration" Sources'
 block 'printf "acme/x\n" >> ~/.config/agent-guardrails/repos'
+block 'printf "" > ~/.config/agent-guardrails/enforced-history'
 
 echo "enforced repositories (owner's list)"
 export HOME="$work/home"

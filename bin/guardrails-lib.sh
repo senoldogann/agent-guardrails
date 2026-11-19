@@ -436,8 +436,11 @@ classify_prs() {
 # Reads the nodes of the owner's repositories (GraphQL, see `guardrails projects`) and prints one compact
 # JSON object per repo with its state for the app:
 #   on        listed on this Mac and its agent-guardrails ruleset is active
-#   alarm     listed but the ruleset is not active, or tagged with the topic but not listed, or (an enforced
-#             repository another account owns, marked unreadable) GitHub could not read it
+#   alarm     listed but the ruleset is not active; or this Mac's (the owner's own, or in the history of what this
+#             Mac enforced) but not listed: remembered, tagged with the topic, or with an active ruleset; or (an
+#             enforced repository another account owns, marked unreadable) GitHub could not read it
+#   elsewhere tagged or with an active agent-guardrails ruleset, in another account's repository this Mac never
+#             enforced: a teammate enforces it from their Mac, so it is information, not something to restore
 #   ready     an open /guardrails-init PR from this repo (not a fork), authored by the owner
 #   no-admin  the owner cannot apply rulesets here
 #   off       none of the above
@@ -446,13 +449,17 @@ classify_prs() {
 # rule; organization is true for a repository an organization owns (only those can have one). agentApp is "installed" or "missing" for the agent App on this Mac, "none" when
 # no App is registered here.
 # Arguments: the owner's login, the enforced-repo list (one owner/repo per line), "registered" or "none" for
-# the agent App, and the repositories it is installed on (one owner/repo per line).
+# the agent App, the repositories it is installed on (one owner/repo per line), and the history of what this Mac
+# enforced and did not turn off (one owner/repo per line).
 project_states() {
-  jq -c --arg login "$1" --arg listed "$2" --arg app "$3" --arg installed "$4" '
+  jq -c --arg login "$1" --arg listed "$2" --arg app "$3" --arg installed "$4" --arg history "$5" '
     def clean: gsub("[[:cntrl:]]"; "?");
-    ($listed | ascii_downcase | split("\n") | map(select(length > 0))) as $registry
+    def keys: ascii_downcase | split("\n") | map(select(length > 0));
+    ($listed | keys) as $registry
     | (.nameWithOwner | ascii_downcase) as $key
     | ($registry | index($key) != null) as $registered
+    | (($history | keys) | index($key) != null) as $remembered
+    | (($key | split("/")[0]) == ($login | ascii_downcase)) as $own
     | ($installed | ascii_downcase | split("\n") | map(select(length > 0))) as $agent_repos
     | ([.rulesets.nodes[]? | select(.name == "agent-guardrails") | .enforcement | ascii_downcase] | first // "missing") as $ruleset
     | any(.repositoryTopics.nodes[]?; .topic.name == "agent-guardrails") as $tagged
@@ -460,6 +467,8 @@ project_states() {
     | (if .unreadable == true then ["alarm", "cannot read it from GitHub: deleted, moved, or your access changed"]
        elif $registered and $ruleset == "active" then ["on", "ruleset active"]
        elif $registered then ["alarm", "ruleset \($ruleset): restore it or check the audit log"]
+       elif $remembered then ["alarm", "enforced from this Mac but no longer in its list"]
+       elif ($tagged or $ruleset == "active") and ($own | not) then ["elsewhere", "enforced from another Mac"]
        elif $tagged then ["alarm", "tagged agent-guardrails but not in this Mac'"'"'s list"]
        elif $ruleset == "active" then ["alarm", "agent-guardrails ruleset active but not in this Mac'"'"'s list"]
        elif .viewerPermission != "ADMIN" then ["no-admin", "you cannot apply rulesets here"]
@@ -476,6 +485,81 @@ project_states() {
        mergeQueue: any(.rulesets.nodes[]?; .name == "agent-guardrails" and (.enforcement | ascii_downcase) == "active"
                        and any(.rules.nodes[]?; .type == "MERGE_QUEUE")),
        organization: (.owner.__typename == "Organization")}'
+}
+
+# Prints the GraphQL query that finds in one call where the kit is outside the enforced-repository list: as
+# `tagged`, the owner's own repositories that carry the kit's topic (first 100); as `bootstrap`, the owner's open
+# bootstrap PRs in any repository (first 50), with whether the owner administers it. The PR search is by author,
+# not by owner, so it finds bootstrap PRs in organizations too. The topic search stays on the owner's account: in
+# an organization a tagged repository may be a teammate's, enforced from their Mac, and the history of what this
+# Mac enforced (unlisted_alarms) covers the organizations' repositories this Mac lost from its list.
+# Arguments: the owner's login, the topic.
+kit_search_query() {
+  jq -n -r --arg login "$1" --arg topic "$2" '"query {
+  tagged: search(type: REPOSITORY, first: 100, query: \("topic:\($topic) user:\($login)" | @json)) {
+    repositoryCount nodes { ... on Repository { nameWithOwner } }
+  }
+  bootstrap: search(type: ISSUE, first: 50, query: \("is:pr is:open author:\($login) head:chore/agent-guardrails" | @json)) {
+    issueCount nodes { ... on PullRequest { url title isCrossRepository author { login } repository { nameWithOwner viewerPermission } } }
+  }
+}"'
+}
+
+# Reads the answer to kit_search_query and prints why it cannot be used, nothing when it can: a missing node list
+# (an answer GitHub cut short must not read as "nothing found"), or a total above the nodes returned (the rest
+# would be dropped without a word).
+kit_search_problem() {
+  jq -r 'if type != "object" or (.tagged.nodes | type) != "array" or (.bootstrap.nodes | type) != "array"
+           or (.tagged.repositoryCount | type) != "number" or (.bootstrap.issueCount | type) != "number"
+         then "GitHub'"'"'s search answer lacks its node lists or totals: \(tojson | .[0:300])"
+         elif .tagged.repositoryCount > (.tagged.nodes | length)
+         then "\(.tagged.repositoryCount) of your repositories carry the topic, more than the \(.tagged.nodes | length) one search returns; the list cannot be checked completely"
+         elif .bootstrap.issueCount > (.bootstrap.nodes | length)
+         then "you have \(.bootstrap.issueCount) open bootstrap PRs, more than the \(.bootstrap.nodes | length) one search returns; close the stale ones"
+         else empty end'
+}
+
+# Reads the answer to kit_search_query and prints "<repo>\t<reason>" for each repository this Mac enforced that is
+# missing from its enforced-repository list, each once: "topic" for the owner's own repository that carries the
+# topic, "history" for one in the history of what this Mac enforced and did not turn off (`off` removes it from
+# both), whoever owns it. Arguments: the list and the history (one owner/repo per line each, any case).
+unlisted_alarms() {
+  jq -r --arg listed "$1" --arg history "$2" '
+    ($listed | ascii_downcase | split("\n") | map(select(length > 0))) as $registry
+    | [(.tagged.nodes[] | [.nameWithOwner, "topic"]), ($history | split("\n")[] | select(length > 0) | [., "history"])]
+    | reduce .[] as $item ({keys: $registry, items: []};
+        if (.keys | index($item[0] | ascii_downcase)) != null then .
+        else .keys += [$item[0] | ascii_downcase] | .items += [$item] end)
+    | .items[] | @tsv'
+}
+
+# Reads the answer to kit_search_query and prints "<repo>\t<url>\t<title>" for each bootstrap PR the owner can
+# turn on: opened by the owner from a branch of the same repository (anyone can name a branch that, from a fork
+# too), in a repository the owner administers (`on` applies rulesets) and that is not enforced yet. Arguments: the
+# owner's login, the enforced-repository list.
+bootstrap_turn_on() {
+  jq -r --arg login "$1" --arg listed "$2" '
+    ($listed | ascii_downcase | split("\n") | map(select(length > 0))) as $registry
+    | .bootstrap.nodes[]
+    | select((.isCrossRepository == false) and .author.login == $login and .repository.viewerPermission == "ADMIN")
+    | (.repository.nameWithOwner | ascii_downcase) as $key | select(($registry | index($key)) == null)
+    | [.repository.nameWithOwner, .url, .title] | @tsv'
+}
+
+# Reads the answer to kit_search_query and prints the repositories `guardrails projects` reads by name because
+# its pages left them out, one per line: enforced, in the history of what this Mac enforced, tagged, or with the
+# owner's own bootstrap PR (any admin permission: project_states shows a repository the owner cannot administer
+# as no-admin), each once, none that a page already listed. Arguments: the owner's login, the repositories the
+# pages listed, the enforced-repository list, the history (one owner/repo per line each, any case).
+project_extra_repos() {
+  jq -r --arg login "$1" --arg seen "$2" --arg listed "$3" --arg history "$4" '
+    [($listed | split("\n")[]), ($history | split("\n")[]), (.tagged.nodes[] | .nameWithOwner),
+     (.bootstrap.nodes[] | select((.isCrossRepository == false) and .author.login == $login) | .repository.nameWithOwner)]
+    | map(select(length > 0))
+    | reduce .[] as $repo ({keys: ($seen | ascii_downcase | split("\n")), repos: []};
+        if (.keys | index($repo | ascii_downcase)) != null then .
+        else .keys += [$repo | ascii_downcase] | .repos += [$repo] end)
+    | .repos[]'
 }
 
 # jq definitions shared by the report functions.
@@ -780,13 +864,21 @@ ruleset_enforcement() {
 # (refs/heads/<branch>, refs/tags/<tag>) with File.fnmatch: `*` and `?` never match `/`, `**/` spans
 # directories, [...] is a character set that never matches `/`, a backslash does not quote and braces do not
 # expand. A pattern this reading cannot translate counts as not including and as excluding, and an exclude entry is
-# also read against the bare branch name: when unsure, the ruleset does not count as covering the branch. A set is
+# also read against the bare branch name: when unsure, the ruleset does not count as covering the branch. GitHub
+# does not document whether ref matching ignores case, so it is read both ways against the ruleset: an include
+# entry counts only when it matches with the same case, an exclude entry counts when it matches with or without
+# case (refs/heads/MAIN excludes main). A set is
 # read only when it is plain: single characters and ascending ranges, no `-` at either end of its body and no
 # chained range (a-c-e), whose meaning differs between fnmatch and a regex.
 #   set_regex              the input [...] token as a regex that never matches `/`, null when it is not plain
 #   fnmatch_regex          the input pattern as an anchored regex, null when this reading cannot translate it
-#   ref_hit($refs)         whether the input include/exclude entry matches one of $refs: true, false, or null
-#                          when it cannot tell
+#   ref_test($refs; $flags) whether the input pattern, as fnmatch_regex reads it, matches one of $refs with jq's
+#                          regex $flags ("i" ignores case): true, false, or null when it cannot tell
+#   ref_hit($refs)         whether the input include entry matches one of $refs with the same case: true, false,
+#                          or null when it cannot tell
+#   exclude_hit($refs)     whether the input exclude entry matches one of $refs with or without case (the regex
+#                          ignoring case, or pattern and refs both lowercased): true, false, or null when it cannot
+#                          tell
 #   covers_default($b)     the input ruleset targets branches and covers refs/heads/$b
 #   protects_default($b)   the input ruleset is active and covers_default($b)
 #   covers_all_tags        the input ruleset targets tags and covers every tag as tag_ruleset sets it up
@@ -819,14 +911,21 @@ def fnmatch_regex:
         .re)] as $parts
   | if any($parts[]; . == null) then null else "^" + ($parts | join("")) + "$" end
   end;
+def ref_test($refs; $flags):
+  fnmatch_regex as $re | if $re == null then null else any($refs[]; test($re; $flags)) end;
 def ref_hit($refs):
   if IN("~ALL", "~DEFAULT_BRANCH") then true
   elif startswith("~") then null
-  else fnmatch_regex as $re | if $re == null then null else any($refs[]; test($re)) end end;
+  else ref_test($refs; "") end;
+def exclude_hit($refs):
+  if IN("~ALL", "~DEFAULT_BRANCH") then true
+  elif startswith("~") then null
+  else [ref_test($refs; ""), ref_test($refs; "i"), (ascii_downcase | ref_test($refs | map(ascii_downcase); ""))]
+    | if any(.[]; . == true) then true elif any(.[]; . == null) then null else false end end;
 def covers_default($b):
   .target == "branch"
   and any(.conditions.ref_name.include[]?; ref_hit(["refs/heads/" + $b]) == true)
-  and all(.conditions.ref_name.exclude[]?; ref_hit(["refs/heads/" + $b, $b]) == false);
+  and all(.conditions.ref_name.exclude[]?; exclude_hit(["refs/heads/" + $b, $b]) == false);
 def protects_default($b): .enforcement == "active" and covers_default($b);
 def covers_all_tags:
   .target == "tag" and any(.conditions.ref_name.include[]?; . == "~ALL")

@@ -21,6 +21,16 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- A ruleset exclude pattern that matches the default branch in another case (`refs/heads/MAIN` for `main`) now
+  counts as excluding it: the inbox raises an alarm and approvals no longer trust that ruleset. Include
+  patterns still count only with the same case.
+- Organization repositories are no longer invisible before they are enforced:
+  - The inbox offers turn-on for the owner's bootstrap PRs in any repository the owner administers.
+  - The inbox raises an alarm for any repository this Mac enforced that dropped out of its list, whoever owns it. A new `enforced-history` file next to the list records what this Mac enforced and did not turn off.
+  - The app's project list shows the 25 most recently pushed organization repositories the owner administers, plus every repository this Mac enforced or with the owner's bootstrap PR.
+  - A repository a teammate enforced from their own Mac shows under "Enforced elsewhere" for information, never as an alarm.
+- The inbox and project list fail with an error when GitHub's search answer lacks its results or holds fewer
+  results than its total, instead of reading it as "nothing found".
 - `guardrails approve` shows which files a re-lock of a spec lock stops or starts locking, read from both
   versions of the lock. It asks a separate `unlock` confirmation for every dropped file, and the app shows
   both in the plan.
