@@ -141,6 +141,29 @@ to merge, PRs that needed a new approval after a push, PRs with a failing guard 
 after a later green run, merges without an approval on their final commit (an admin bypass, or a merge before the
 guardrails were on), and every ruleset change with its time, author and what changed. It only reads GitHub.
 
+### Updating a project's kit files
+
+After you update the kit (**Update** in the app, or `guardrails update`), a project that was set up with an
+older kit shows "kit files differ from installed kit" in `guardrails status`. It may also show an inbox alarm
+if the update added a required check. The project takes the new kit through a PR that you push yourself, because the agent's
+App cannot change workflow files:
+
+1. In a clone of the project, make a new branch from the default branch. Copy the installed kit's template
+   (`skills/guardrails-init/template/`) over the kit files:
+   - `.agent/`, exactly: remove files the template no longer has;
+   - `.claude/settings.json` and `.cursor/hooks.json`;
+   - `.github/workflows/security.yml` and `.github/workflows/agent-notify.yml`;
+   - each `.github/workflows/checks-<lang>.yml`, from `ci/`;
+   - the guardrails section of `AGENTS.md` between its start and end markers, from `AGENTS.section.md`.
+2. If `.github/workflows/agent-guard.yml` changed, leave it out of this PR. The guard on the default branch
+   refuses a change to its own triggers together with other kit files, so it follows in a second PR, alone.
+3. Push the branch, open the PR, and approve it like any other. Its kit files are marked `!!` for your second
+   confirmation.
+4. Run `guardrails on <owner/repo>`, so that the rulesets require any new check.
+
+When you are done, `guardrails status` shows "same as installed kit" for the project. A project whose existing spec
+locks are not what `spec-lock` writes must re-lock them first, because the update PR's checks fail otherwise.
+
 ## The agent's own GitHub identity
 
 By default the agent works with your GitHub login. GitHub does not let you approve your own pull requests, so

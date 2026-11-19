@@ -8,6 +8,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Added
 
+- The README describes how a project takes a new kit: which template files to copy, why
+  `agent-guard.yml` follows in its own PR, and how to check that nothing still differs.
 - CI runs the real language-adapter tests for every supported language on PRs and on `main`, and before each
   release.
 
