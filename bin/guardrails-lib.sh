@@ -6,8 +6,8 @@
 template="$kit/skills/guardrails-init/template"
 
 # Prints every way the kit-owned files of a checkout differ from the installed kit's template, one per line.
-# Nothing printed means the checkout carries exactly this kit: .agent/, .claude/settings.json, the guard
-# workflow and each checks-<lang> workflow. The Makefile and AGENTS.md hold project judgment and are not compared.
+# Nothing printed means the checkout carries exactly this kit: .agent/, .claude/settings.json, .cursor/hooks.json,
+# the guard workflow and each checks-<lang> workflow. The Makefile and AGENTS.md hold project judgment and are not compared.
 kit_drift() {
   local dir=$1 workflow name
   [[ -d "$dir/.agent" ]] || {
@@ -23,7 +23,8 @@ kit_drift() {
     -e "s#^Only in $template/(.*): (.*)\$#missing: \\1/\\2#" \
     -e "s#^Only in $dir/(.*): (.*)\$#not in the kit: \\1/\\2#" <<<"$differences"
   # diff and cmp follow symlinks and ignore modes, so check both separately.
-  find "$dir/.agent" "$dir/.claude" "$dir/.github" -type l 2>/dev/null | sed "s#^$dir/#symlink not allowed: #"
+  # Only the kit's own file in .cursor/: projects may link their Cursor rules.
+  find "$dir/.agent" "$dir/.claude" "$dir/.cursor/hooks.json" "$dir/.github" -type l 2>/dev/null | sed "s#^$dir/#symlink not allowed: #"
   (cd "$template" && find .agent -type f) | while IFS= read -r file; do
     [[ -f "$dir/$file" && ! -L "$dir/$file" ]] || continue
     if [[ -x "$template/$file" && ! -x "$dir/$file" ]] || [[ ! -x "$template/$file" && -x "$dir/$file" ]]; then
@@ -32,6 +33,8 @@ kit_drift() {
   done
   cmp -s "$template/.claude/settings.json" "$dir/.claude/settings.json" ||
     printf 'differs or missing: .claude/settings.json\n'
+  cmp -s "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json" ||
+    printf 'differs or missing: .cursor/hooks.json\n'
   cmp -s "$template/.github/workflows/agent-guard.yml" "$dir/.github/workflows/agent-guard.yml" ||
     printf 'differs or missing: .github/workflows/agent-guard.yml\n'
   local found=0
@@ -84,11 +87,11 @@ grants_check_or_status_writes() {
 }
 
 # Succeeds for a changed file that can change what CI enforces: workflows and other GitHub config, the
-# guardrails themselves (.agent/, .claude/), the Makefiles CI runs, and code owners. approve-head marks these
-# "!!" and asks for a second confirmation.
+# guardrails themselves (.agent/, and the agents' hook settings in .claude/, .cursor/ and .codex/), the
+# Makefiles CI runs, and code owners. approve-head marks these "!!" and asks for a second confirmation.
 changes_enforcement() {
   case $1 in
-    .github/* | .agent/* | .claude/* | Makefile | */Makefile | *.mk | CODEOWNERS | docs/CODEOWNERS) return 0 ;;
+    .github/* | .agent/* | .claude/* | .cursor/* | .codex/* | Makefile | */Makefile | *.mk | CODEOWNERS | docs/CODEOWNERS) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -192,6 +195,14 @@ remove_kit_files() {
       rmdir "$dir/.claude" 2>/dev/null || true
     else
       printf 'kept (differs from the kit, remove the kit hooks by hand): .claude/settings.json\n'
+    fi
+  fi
+  if [[ -f "$dir/.cursor/hooks.json" ]]; then
+    if cmp -s "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json"; then
+      rm -f "$dir/.cursor/hooks.json"
+      rmdir "$dir/.cursor" 2>/dev/null || true
+    else
+      printf 'kept (differs from the kit, remove the kit hooks by hand): .cursor/hooks.json\n'
     fi
   fi
   makefile="$dir/Makefile"

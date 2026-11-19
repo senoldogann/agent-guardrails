@@ -246,5 +246,107 @@ if [[ -z $(reminder_out "$plain_repo") ]]; then passed=$((passed + 1)); else
   echo "  FAIL reminder shown outside kit repository"
 fi
 
+# Cursor's hook input (https://cursor.com/docs/agent/hooks) goes through cursor-guard.sh, which answers with
+# Cursor's JSON. Arguments: wanted permission, then the hook input as jq arguments and filter.
+cursor_check() {
+  local want=$1 got
+  shift
+  got=$(jq -n -c "$@" | "$hooks/cursor-guard.sh" 2>/dev/null | jq -r .permission) || got="invalid answer"
+  if [[ $got == "$want" ]]; then passed=$((passed + 1)); else
+    failed=$((failed + 1))
+    printf '  FAIL want %s got %s: %s\n' "$want" "$got" "$*"
+  fi
+}
+# shellcheck disable=SC2016 # $c, $d and $r are jq variables
+cursor_shell() {
+  cursor_check "$1" --arg c "$2" --arg d "$cwd" --arg r "$kit_repo" \
+    '{hook_event_name: "beforeShellExecution", conversation_id: "c1", generation_id: "g1", workspace_roots: [$r],
+      command: $c, cwd: $d, sandbox: false}'
+}
+# shellcheck disable=SC2016 # $f and $r are jq variables
+cursor_read() {
+  cursor_check "$1" --arg f "$2" --arg r "$cwd" \
+    '{hook_event_name: "beforeReadFile", conversation_id: "c1", generation_id: "g1", workspace_roots: [$r],
+      file_path: $f, content: "x", attachments: []}'
+}
+
+echo "cursor-guard"
+cwd=$kit_repo
+cursor_shell allow 'git status'
+cursor_shell allow 'gh pr create --title x --body-file /tmp/b.md'
+cursor_shell deny 'guardrails approve https://github.com/acme/shop/pull/3'
+cursor_shell deny 'gh pr merge 12 --auto --admin'
+cursor_shell deny 'cat ~/.config/gh/hosts.yml'
+cursor_read allow "$kit_repo/README.md"
+cursor_read deny "$HOME/.config/gh/hosts.yml"
+cursor_read deny "$kit_repo/.claude/settings.local.json"
+cwd=$plain_repo
+cursor_shell allow 'gh pr review 12 --approve'
+cursor_shell deny 'revoke-head 12'
+cursor_read allow "$HOME/.config/gh/hosts.yml"
+# Without cwd the first workspace root decides, so the kit's rules still apply in a kit repository.
+# shellcheck disable=SC2016 # $r is a jq variable
+cursor_check deny --arg r "$kit_repo" '{hook_event_name: "beforeShellExecution", workspace_roots: [$r], command: "gh pr review 1 --approve"}'
+# shellcheck disable=SC2016 # $r is a jq variable
+cursor_check deny --arg r "$kit_repo" '{hook_event_name: "beforeShellExecution", workspace_roots: [$r], cwd: "", command: "gh pr review 1 --approve"}'
+# A kit repository opened next to another folder guards reads, whichever root comes first.
+# shellcheck disable=SC2016 # $p, $r and $f are jq variables
+cursor_check deny --arg p "$plain_repo" --arg r "$kit_repo" --arg f "$HOME/.config/gh/hosts.yml" \
+  '{hook_event_name: "beforeReadFile", workspace_roots: [$p, $r], file_path: $f, content: ""}'
+# Reads meet only the rules on credential and owner files, not the command rules on paths like /environments/.
+mkdir -p "$kit_repo/src/environments"
+cursor_read allow "$kit_repo/src/environments/environment.ts"
+cursor_read deny "$HOME/.config/agent-guardrails/repos"
+cursor_check deny '{hook_event_name: "beforeShellExecution", workspace_roots: [], cwd: "/"}'
+cursor_check deny '{hook_event_name: "afterFileEdit", file_path: "x"}'
+cursor_answer=$(printf 'not json' | "$hooks/cursor-guard.sh" 2>/dev/null || true)
+if [[ $(jq -r .permission <<<"$cursor_answer" 2>/dev/null) == deny ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL invalid hook input must be denied, got: %s\n' "$cursor_answer"
+fi
+cwd=$kit_repo
+cursor_answer=$(jq -n -c --arg d "$kit_repo" '{hook_event_name: "beforeShellExecution", cwd: $d, command: "gh pr review 1 --approve"}' |
+  "$hooks/cursor-guard.sh")
+if jq -e '.agent_message | startswith("BLOCKED by bash-guard")' <<<"$cursor_answer" >/dev/null; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL a denied command must tell the agent why, got: %s\n' "$cursor_answer"
+fi
+cursor_answer=$(jq -n -c '{hook_event_name: "beforeReadFile", workspace_roots: ["/"], file_path: "/etc/hosts", content: ""}' |
+  "$hooks/cursor-guard.sh")
+if [[ $cursor_answer == '{"permission":"allow"}' ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL an allowed read answers only the permission, got: %s\n' "$cursor_answer"
+fi
+
+# Codex sends Claude Code's PreToolUse shape (openai/codex codex-rs/hooks/schema/generated/
+# pre-tool-use.command.input.schema.json), so bash-guard.sh runs unchanged.
+codex_check() {
+  local want=$1 got
+  set +e
+  jq -n --arg c "$2" --arg d "$cwd" '{session_id: "s1", turn_id: "t1", transcript_path: null, cwd: $d,
+    hook_event_name: "PreToolUse", model: "gpt-5", permission_mode: "default", tool_name: "Bash",
+    tool_use_id: "call_1", tool_input: {command: $c}}' | "$guard" >/dev/null 2>&1
+  got=$?
+  set -e
+  if [[ $got -eq $want ]]; then passed=$((passed + 1)); else
+    failed=$((failed + 1))
+    printf '  FAIL codex want %d got %d: %s\n' "$want" "$got" "$2"
+  fi
+}
+echo "bash-guard with Codex input"
+cwd=$kit_repo
+codex_check 0 'git status'
+codex_check 2 'guardrails off acme/shop'
+codex_check 2 'gh pr review 12 --approve'
+codex_check 2 'cat ~/.config/gh/hosts.yml'
+cwd=$plain_repo
+codex_check 0 'gh pr review 12 --approve'
+codex_reminder=$(jq -n --arg d "$kit_repo" '{session_id: "s1", turn_id: "t1", transcript_path: null, cwd: $d,
+  hook_event_name: "UserPromptSubmit", model: "gpt-5", permission_mode: "default", prompt: "hi"}' | "$hooks/prompt-reminder.sh")
+if [[ $codex_reminder == Reminder:* ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  echo "  FAIL reminder missing for Codex input"
+fi
+
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

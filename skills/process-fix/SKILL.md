@@ -22,7 +22,7 @@ A mistake that repeats is a process bug. Do not patch the code by hand; fix what
 5. **Place the learning.** Anything a teammate or another agent session needs goes into the repository
    (check, skill, template, `AGENTS.md`). Only personal preferences go to local memory (`CLAUDE.local.md`,
    `~/.claude`); a team rule that exists only in someone's memory is a defect.
-6. **Propose, do not apply.** These files are human-owned (`.agent/`, `.claude/`, `.github/`,
-   `AGENTS.md`, `Makefile`). Write the change as a diff, then open a PR only if the user approves;
-   the CI guard requires human approval for it anyway. The reason goes in the PR/commit message, not
+6. **Propose, do not apply.** These files are human-owned (`.agent/`, `.claude/`, `.cursor/`,
+   `.codex/`, `.github/`, `AGENTS.md`, `Makefile`). Write the change as a diff, then open a PR only if
+   the user approves; the CI guard requires human approval for it anyway. The reason goes in the PR/commit message, not
    in the docs.

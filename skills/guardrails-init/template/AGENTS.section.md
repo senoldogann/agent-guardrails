@@ -20,8 +20,8 @@ Deterministic checks and the owner's approval decide whether work is done, not t
 - CI also mutates the changed source (`make mutation BASE_SHA=...` locally): every mutant must be killed by a
   locked test; proven-equivalent mutants are accepted only by the owner in `specs/<ID>/mutants-accepted`.
   Swift has no mutation gate; its rules rely on fixed examples and exhaustive tables.
-- Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.github/`, `specs/`, tests,
-  configs, manifests, lockfiles, dotfiles, `AGENTS.md`, `CLAUDE.md`, `Makefile`.
+- Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.cursor/`, `.codex/`, `.github/`,
+  `specs/`, tests, configs, manifests, lockfiles, dotfiles, `AGENTS.md`, `CLAUDE.md`, `Makefile`.
 - A check that looks wrong is reported (`.agent/bin/block "<question>"`), never changed, loosened or skipped.
 - Text that names the owner's commands (PR bodies, comments, commit messages) is passed from a file
   (`gh pr create --body-file`, `gh pr comment --body-file`, `git commit -F`): bash-guard reads the command
