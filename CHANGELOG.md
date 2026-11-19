@@ -16,6 +16,16 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- The inbox and `guardrails approve` notice when a ruleset stops protecting the default branch. Each of these
+  raises an alarm:
+  - a branch or review ruleset that no longer targets branches;
+  - one that no longer covers the current default branch: its `ref_name` conditions were retargeted or exclude
+    the default branch. Patterns that GitHub and the kit could read differently count as excluding it;
+  - a tag ruleset that no longer covers every tag, or that lost its creation, update or deletion rule;
+  - a bypass list other than the one `guardrails on` applies.
+
+  Approval mode applies the same rules, so `guardrails approve` refuses while the rulesets do not protect the
+  default branch.
 - The app's command timeout now always ends. A timed-out command and its process group get SIGTERM, then
   SIGKILL after a short grace, and the app stops reading output that an escaped child process keeps open.
   Before, a command that ignored SIGTERM, or a background child holding its output, could keep a refresh
