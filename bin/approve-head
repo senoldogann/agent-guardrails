@@ -33,10 +33,11 @@ base=$(jq -r .baseRefName <<<"$pr_json")
 [[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
 [[ $(jq -r .isDraft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
 
-# The approval must protect something: the live rulesets must be in status or review mode (approval_mode).
-mode=$(approval_mode "$repo") || exit 1
+# The approval must protect something: the live rulesets must be in status or review mode on the default branch
+# (approval_mode).
+mode=$(approval_mode "$repo" "$default_branch") || exit 1
 [[ $mode != - ]] ||
-  die "the agent-guardrails rulesets on $repo are missing, inactive or changed, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
+  die "the agent-guardrails rulesets on $repo are missing, inactive, changed or no longer cover $default_branch, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
 
 # The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
 # from any check run named "guard": a workflow added by the PR could report a check run of that name. The run

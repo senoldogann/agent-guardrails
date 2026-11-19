@@ -295,10 +295,14 @@ args="$*"
 case $args in
   "api user --jq .login") echo owner ;;
   "search repos "*) printf 'acme/shop\nacme/lost\n' ;;
+  "api repos/acme/"*" --jq .default_branch") echo main ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-tags")'*) echo 9 ;;
+  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-review")'*)
+    [[ ! -e $FAKE_RULESETS/review.json ]] || echo 8 ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*) echo "" ;;
   "api repos/acme/shop/rulesets/7") cat "$FAKE_RULESETS/branch.json" ;;
+  "api repos/acme/shop/rulesets/8") cat "$FAKE_RULESETS/review.json" ;;
   "api repos/acme/shop/rulesets/9") cat "$FAKE_RULESETS/tag.json" ;;
   "api --paginate repos/acme/off/rulesets"* | "api --paginate repos/acme/broken/rulesets"*) echo "" ;;
   "pr list -R acme/broken "*) echo "HTTP 502" >&2; exit 1 ;;
@@ -384,6 +388,41 @@ else
   expect_eq "the queue flag alone is no target" "$(grep -c -- '--merge-queue' <<<"$usage_text")" "1"
 fi
 
+echo "ruleset coverage in the inbox and in approval mode"
+# An active ruleset with every rule in place protects nothing once its conditions no longer select the default
+# branch; the inbox and approval_mode must both see that, the way they read the live rulesets.
+coverage_home="$work/coverage-home"
+mkdir -p "$coverage_home/.config/agent-guardrails"
+printf 'acme/shop\n' >"$coverage_home/.config/agent-guardrails/repos"
+coverage_alarms() {
+  HOME=$coverage_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" FAKE_RULESETS=$1 "$kit/bin/guardrails" inbox --json 2>&1 |
+    jq -r 'select(.kind == "alarm" and .repo == "acme/shop") | .note'
+}
+coverage_mode() { PATH="$fake_bin:$PATH" FAKE_RULESETS=$1 approval_mode acme/shop main; }
+retargeted="$work/rulesets-retargeted"
+mkdir -p "$retargeted"
+jq -c '.conditions.ref_name.include = ["refs/heads/scratch"]' "$FAKE_RULESETS/branch.json" >"$retargeted/branch.json"
+cp "$FAKE_RULESETS/tag.json" "$retargeted/tag.json"
+expect_eq "the kit's status mode setup raises no alarm and is status mode" \
+  "$(coverage_alarms "$FAKE_RULESETS")|$(coverage_mode "$FAKE_RULESETS")" "|status"
+expect_eq "a branch ruleset retargeted away from the default branch raises an alarm" "$(coverage_alarms "$retargeted")" \
+  'acme/shop: the agent-guardrails ruleset no longer covers the default branch main (ref_name {"include":["refs/heads/scratch"],"exclude":[]}). If you did not change it, check the audit log; restore with: guardrails on acme/shop'
+expect_eq "a retargeted status mode ruleset is no approval mode" "$(coverage_mode "$retargeted")" "-"
+reviewed="$work/rulesets-review"
+mkdir -p "$reviewed"
+branch_ruleset agent-guardrails "$(pinned_checks checks-node)" | jq -c '. + {id: 7}' >"$reviewed/branch.json"
+review_ruleset agent-guardrails-review | jq -c '. + {id: 8}' >"$reviewed/review.json"
+cp "$FAKE_RULESETS/tag.json" "$reviewed/tag.json"
+expect_eq "the kit's review mode setup raises no alarm and is review mode" \
+  "$(coverage_alarms "$reviewed")|$(coverage_mode "$reviewed")" "|review"
+review_excluded="$work/rulesets-review-excluded"
+mkdir -p "$review_excluded"
+cp "$reviewed"/*.json "$review_excluded/"
+jq -c '.conditions.ref_name.exclude = ["refs/heads/main"]' "$reviewed/review.json" >"$review_excluded/review.json"
+expect_eq "a review ruleset that excludes the default branch raises an alarm and is no approval mode" \
+  "$(coverage_alarms "$review_excluded")|$(coverage_mode "$review_excluded")" \
+  'acme/shop: the agent-guardrails-review ruleset no longer covers the default branch main (ref_name {"include":["~DEFAULT_BRANCH"],"exclude":["refs/heads/main"]}). If you did not change it, check the audit log; restore with: guardrails on acme/shop|-'
+
 echo "pr_files"
 expect_eq "plain file names pass" "$(PATH="$fake_bin:$PATH" pr_files acme/shop 1)" "src/a.ts"
 if (PATH="$fake_bin:$PATH" pr_files acme/shop 2 >/dev/null 2>&1); then
@@ -464,18 +503,21 @@ echo "ruleset_problems"
 checks=$(pinned_checks checks-node)
 review_mode=$(jq -n -c --argjson b "$(branch_ruleset agent-guardrails "$checks")" \
   --argjson v "$(review_ruleset agent-guardrails-review)" --argjson t "$(tag_ruleset agent-guardrails-tags)" \
-  '{branch: $b, review: $v, tag: $t}')
+  '{branch: $b, review: $v, tag: $t, defaultBranch: "main"}')
 expect_eq "the kit's own rulesets in review mode hold" "$(ruleset_problems <<<"$review_mode")" ""
 expect_eq "status mode needs no review ruleset" "$(jq -c --argjson b "$(status_mode_ruleset agent-guardrails "$checks")" \
   '.branch = $b | .review = null' <<<"$review_mode" | ruleset_problems)" ""
+if (jq -c 'del(.defaultBranch)' <<<"$review_mode" | ruleset_problems >/dev/null 2>&1); then
+  fail "ruleset_problems without the default branch must fail, not read as healthy"
+else ok; fi
 expect_eq "a review ruleset that lets anyone bypass it, or is gone, is an alarm" "$(jq -c \
   '.review.bypass_actors += [{actor_id: 1, actor_type: "Integration", bypass_mode: "always"}]' <<<"$review_mode" | ruleset_problems)
 $(jq -c '.review = null' <<<"$review_mode" | ruleset_problems)" \
-  "the agent-guardrails-review ruleset has a changed bypass list
+  "the agent-guardrails-review ruleset has a changed bypass list (unexpected Integration 1 (always))
 no ruleset requires your approval any more (neither merge-approval nor agent-guardrails-review)"
 expect_eq "lost required checks and a bypass on the branch ruleset are alarms" "$(jq -c \
   '.branch.rules |= map(select(.type != "required_status_checks")) | .branch.bypass_actors = [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}]' \
-  <<<"$review_mode" | ruleset_problems)" "the agent-guardrails ruleset has a bypass list
+  <<<"$review_mode" | ruleset_problems)" "the agent-guardrails ruleset has a changed bypass list (unexpected RepositoryRole 5 (always))
 the agent-guardrails ruleset lost its required_status_checks rule
 guard is no longer a required check from GitHub Actions
 security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)
@@ -496,6 +538,47 @@ expect_eq "a merge queue that lets failing PRs through is an alarm" \
   "the merge queue no longer squashes only PRs that pass every check (merge method or grouping changed)"
 expect_eq "without the merge queue turned on, its absence is no alarm" \
   "$(jq -c '.mergeQueue = false' <<<"$review_mode" | ruleset_problems)" ""
+expect_eq "a branch ruleset moved to another target or excluding the default branch is an alarm" "$(jq -c \
+  '.branch.target = "tag" | .review.conditions.ref_name.exclude = ["~DEFAULT_BRANCH"]' <<<"$review_mode" | ruleset_problems)" \
+  'the agent-guardrails ruleset targets "tag" instead of "branch"
+the agent-guardrails-review ruleset no longer covers the default branch main (ref_name {"include":["~DEFAULT_BRANCH"],"exclude":["~DEFAULT_BRANCH"]})'
+expect_eq "a ruleset naming the old default branch no longer covers the current one" "$(jq -c \
+  '.branch.conditions.ref_name.include = ["refs/heads/main"]' <<<"$review_mode" | ruleset_problems)|$(jq -c \
+  '.branch.conditions.ref_name.include = ["refs/heads/main"] | .defaultBranch = "trunk" | .review = null | .tag = null' \
+  <<<"$review_mode" | ruleset_problems)" '|the agent-guardrails ruleset no longer covers the default branch trunk (ref_name {"include":["refs/heads/main"],"exclude":[]})
+no ruleset requires your approval any more (neither merge-approval nor agent-guardrails-review)
+the agent-guardrails-tags ruleset is missing'
+expect_eq "a tag ruleset with a lost rule, a narrower target or another bypass list is an alarm" "$(jq -c \
+  '.tag.rules |= map(select(.type != "deletion")) | .tag.conditions.ref_name.exclude = ["refs/tags/v*"]
+   | .tag.bypass_actors = [{actor_id: 1, actor_type: "Integration", bypass_mode: "always"}]' <<<"$review_mode" | ruleset_problems)" \
+  'the agent-guardrails-tags ruleset no longer covers every tag (ref_name {"include":["~ALL"],"exclude":["refs/tags/v*"]}; the kit includes ~ALL and excludes nothing)
+the agent-guardrails-tags ruleset lost its deletion rule
+the agent-guardrails-tags ruleset has a changed bypass list (unexpected Integration 1 (always), missing RepositoryRole 5 (always))'
+expect_eq "a tag ruleset retargeted to branches is an alarm" "$(jq -c '.tag.target = "branch"' <<<"$review_mode" | ruleset_problems)" \
+  'the agent-guardrails-tags ruleset targets "branch" instead of "tag"'
+
+echo "ruleset coverage of the default branch (GitHub ref_name semantics)"
+# Each line: include, exclude, default branch, whether the ruleset covers it. Unsupported pattern syntax (braces,
+# backslashes, an unclosed set) never counts as including and always counts as excluding.
+coverage_cases='[["~DEFAULT_BRANCH"],[],"main",true]
+[["~ALL"],[],"main",true]
+[["refs/heads/main"],[],"main",true]
+[["main"],[],"main",false]
+[["refs/heads/ma*"],[],"main",true]
+[["refs/heads/*"],[],"release/1",false]
+[["refs/heads/**/*"],[],"release/1",true]
+[["refs/heads/[!m]ain"],[],"main",false]
+[["refs/heads/m.in"],[],"main",false]
+[["refs/heads/{main,dev}"],[],"main",false]
+[["~ALL"],["refs/heads/m*"],"main",false]
+[["~ALL"],["main"],"main",false]
+[["~ALL"],["refs/heads/dev*"],"main",true]
+[["~ALL"],["~ALL"],"main",false]
+[["~ALL"],["refs/heads/[m"],"main",false]'
+expect_eq "include, exclude and fnmatch patterns" "$(jq -s -c "$ruleset_jq_defs"'
+  map(. as [$include, $exclude, $branch]
+    | {target: "branch", conditions: {ref_name: {include: $include, exclude: $exclude}}} | covers_default($branch))' \
+  <<<"$coverage_cases")" "$(jq -s -c 'map(.[3])' <<<"$coverage_cases")"
 
 echo "merge queue"
 queued_rules=$(queued_branch_ruleset agent-guardrails "$checks")
@@ -537,11 +620,15 @@ expect_eq "the review ruleset holds only a fresh code owner review" \
 expect_eq "only admins bypass the review, and only through a PR" "$(jq -c .bypass_actors <<<"$review_rules")" \
   '[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'
 expect_eq "approval mode of each ruleset" \
-  "$(for r in "$status_rules" "$branch_rules" "$review_rules"; do ruleset_approval_mode <<<"$r"; done | tr '\n' ' ')" \
+  "$(for r in "$status_rules" "$branch_rules" "$review_rules"; do ruleset_approval_mode main <<<"$r"; done | tr '\n' ' ')" \
   "status - review "
 expect_eq "a weakened review ruleset is no approval mode" \
-  "$(jq -c '.rules[0].parameters.dismiss_stale_reviews_on_push = false' <<<"$review_rules" | ruleset_approval_mode) $(
-    jq -c '.enforcement = "evaluate"' <<<"$status_rules" | ruleset_approval_mode)" "- -"
+  "$(jq -c '.rules[0].parameters.dismiss_stale_reviews_on_push = false' <<<"$review_rules" | ruleset_approval_mode main) $(
+    jq -c '.enforcement = "evaluate"' <<<"$status_rules" | ruleset_approval_mode main)" "- -"
+expect_eq "a ruleset that does not target the default branch is no approval mode" \
+  "$(jq -c '.target = "tag"' <<<"$review_rules" | ruleset_approval_mode main) $(
+    jq -c '.conditions.ref_name.exclude = ["refs/heads/main"]' <<<"$status_rules" | ruleset_approval_mode main) $(
+    jq -c '.conditions.ref_name.include = ["refs/heads/main"]' <<<"$status_rules" | ruleset_approval_mode trunk)" "- - -"
 expect_eq "tags: every tag, admins only" "$(tag_ruleset agent-guardrails-tags | jq -c '[.target, .conditions.ref_name.include, [.rules[].type], .bypass_actors[0].bypass_mode]')" \
   '["tag",["~ALL"],["creation","update","deletion"],"always"]'
 owners="$work/owners"

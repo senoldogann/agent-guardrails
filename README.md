@@ -296,9 +296,12 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
   container or in CI with only the App's token.
 - Other administrators of a repository can change or remove its rulesets. The inbox raises an alarm when the
   list of enforced repositories stops matching, or when the live rulesets stop protecting what the kit set up:
-  a ruleset missing or inactive, a bypass list added, a rule removed, guard, security or the language checks
-  no longer required from GitHub Actions, no rule left that requires your approval, or a merge queue you turned
-  on gone or weakened. A project set up before
+  a ruleset missing or inactive; a branch ruleset that no longer targets branches or no longer covers the
+  current default branch (its `ref_name` conditions retargeted, or the default branch excluded); a tag ruleset
+  that no longer covers every tag; a bypass list other than the one `guardrails on` applies; a rule removed;
+  guard, security or the language checks no longer required from GitHub Actions; no rule left that requires
+  your approval; or a merge queue you turned on gone or weakened. `guardrails approve` refuses while the
+  rulesets do not cover the default branch. A project set up before
   the kit had the security check shows that alarm until a kit update PR adds `security.yml` and you run
   `guardrails on <owner/repo>` again.
 - **The security check runs the PR's own copy** (`pull_request`, like the language checks), so a PR could
