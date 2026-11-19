@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Usage: security-scan <base-commit> <head-commit> <tools-dir>
+# The security check (.github/workflows/security.yml, job `security`) on a clean checkout of <head-commit>, with
+# the scanners .agent/bin/security-tools installed into <tools-dir>:
+#   gitleaks     secrets in the commits <base-commit>..<head-commit>, read from git objects only
+#   osv-scanner  known vulnerabilities (OSV database) of the packages in every dependency lockfile at head
+#   semgrep      insecure code in the files the PR adds or changes; only findings that are new since base
+# Inline suppressions (gitleaks:allow, nosemgrep) and the scanners' own ignore files (.gitleaksignore,
+# .gitleaks.toml, .semgrepignore, osv-scanner.toml, .gitignore) have no effect. A finding is accepted only by a
+# line in .github/security-ignore, a guardrail file approve-head marks "!!" for the owner's second confirmation;
+# gitleaks and semgrep lines count only in the PR that adds them (effective_ignore_keys).
+# Prints a plain-text report and exits 1 on a finding that is not accepted, an invalid ignore line, or a
+# scanner that failed.
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/security-lib.sh"
+require_args 3 $# "security-scan <base-commit> <head-commit> <tools-dir>"
+base=$1
+head=$2
+tools=$(cd "$3" && pwd -P)
+cd_project_root
+root=$(pwd -P)
+ignore_file=.github/security-ignore
+
+[[ $(git rev-parse HEAD) == "$(git rev-parse --verify --quiet "$head^{commit}")" ]] ||
+  die "HEAD is not $head; check out the commit to scan first"
+[[ -z $(git status --porcelain) ]] || die "the checkout has changes; the scan needs a clean checkout of $head"
+git rev-parse --verify --quiet "$base^{commit}" >/dev/null || die "base commit $base is not in this clone"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+status=0
+fail() {
+  printf 'FAIL: %s\n' "$1"
+  status=1
+}
+# A scanner that did not finish fails the check (no result is not a clean result); its log can quote file
+# names, so only plain lines of it are shown.
+scanner_failed() {
+  fail "$1 did not finish (exit $2); the end of its log:"
+  tail -n 20 "$work/$1.log" | plain_lines | sed 's/^/  /'
+}
+
+printf 'security check of %s (base %s)\n' "$(git rev-parse "$head")" "$(git rev-parse "$base")"
+printf 'tools: %s\n' "$(cat "$tools/versions")"
+
+keys=""
+if [[ -f $ignore_file ]]; then
+  problems=$(security_ignore_problems "$ignore_file")
+  if [[ -n $problems ]]; then
+    fail "$ignore_file has lines that are not '<scanner> <id> <path> # <reason>':"
+    printf '  %s\n' "${problems//$'\n'/$'\n'  }"
+  fi
+  git diff -U0 --no-renames "$base" "$head" -- "$ignore_file" | awk '/^\+[^+]/ { print substr($0, 2) }' \
+    >"$work/ignore-added"
+  keys=$(effective_ignore_keys "$ignore_file" "$work/ignore-added")
+fi
+findings=""
+
+# gitleaks reads the git directory, not the working tree, so no .gitleaks.toml or .gitleaksignore of the PR
+# applies; the ignore path points at an empty directory for the same reason. --text keeps git from skipping a
+# file it takes for binary (one NUL byte would do).
+mkdir "$work/no-ignore"
+code=0
+env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML "$tools/gitleaks" git --no-banner --no-color --log-level warn \
+  --redact --ignore-gitleaks-allow --exit-code 0 --gitleaks-ignore-path "$work/no-ignore" \
+  --report-format json --report-path "$work/gitleaks.json" --log-opts "--text $base..$head" \
+  "$(git rev-parse --absolute-git-dir)" >"$work/gitleaks.log" 2>&1 || code=$?
+if [[ $code -eq 0 ]]; then
+  findings+=$(gitleaks_findings <"$work/gitleaks.json")$'\n'
+else
+  scanner_failed gitleaks "$code"
+fi
+
+# An empty --config replaces every osv-scanner.toml in the tree; --no-ignore keeps a committed lockfile that
+# .gitignore names in the scan. Exit 1 means vulnerabilities were found, read from the report.
+: >"$work/osv-scanner.toml"
+code=0
+"$tools/osv-scanner" scan source --recursive --no-ignore --allow-no-lockfiles --no-call-analysis=all \
+  --config "$work/osv-scanner.toml" --format json --output-file "$work/osv.json" "$root" \
+  >"$work/osv-scanner.log" 2>&1 || code=$?
+if [[ $code -le 1 ]]; then
+  findings+=$(osv_findings "$root" <"$work/osv.json")$'\n'
+else
+  scanner_failed osv-scanner "$code"
+fi
+# A lockfile osv-scanner could not read is only a line in its log, also when it exits 1 for other findings.
+unread=$(grep -F 'Error during extraction' "$work/osv-scanner.log" | plain_lines || true)
+if [[ -n $unread ]]; then
+  fail "osv-scanner could not read every lockfile:"
+  printf '  %s\n' "${unread//$'\n'/$'\n'  }"
+fi
+
+# The PR's files are passed by name, so no .semgrepignore applies to them; --baseline-commit drops findings
+# that already existed at base. Rule IDs stay as the rules define them, without the path of the tools directory.
+# PYTHONSAFEPATH keeps Python from importing modules out of the checkout.
+targets=()
+while IFS= read -r -d '' path; do
+  if [[ -f $path && ! -L $path ]]; then targets+=("$path"); fi
+done < <(git diff -z --name-only --no-renames --diff-filter=AMT "$base" "$head")
+if [[ ${#targets[@]} -gt 0 ]]; then
+  code=0
+  PYTHONSAFEPATH=1 SEMGREP_ENABLE_VERSION_CHECK=0 SEMGREP_SEND_METRICS=off "$tools/semgrep/bin/semgrep" scan \
+    --config "$tools/semgrep-rules" --metrics=off --disable-version-check --oss-only --disable-nosem \
+    --no-git-ignore --no-rewrite-rule-ids --baseline-commit "$base" --json --output "$work/semgrep.json" --quiet \
+    -- "${targets[@]}" >"$work/semgrep.log" 2>&1 || code=$?
+  if [[ $code -eq 0 ]]; then
+    findings+=$(semgrep_findings <"$work/semgrep.json")$'\n'
+    errors=$(semgrep_errors <"$work/semgrep.json")
+    if [[ -n $errors ]]; then
+      fail "semgrep did not fully scan every file (split or fix the file):"
+      printf '  %s\n' "${errors//$'\n'/$'\n'  }"
+    fi
+  else
+    scanner_failed semgrep "$code"
+  fi
+fi
+
+open=$(open_findings "$keys" <<<"$findings")
+accepted=$(accepted_findings "$keys" <<<"$findings")
+if [[ -n $open ]]; then
+  fail "$(grep -c '' <<<"$open") finding(s):"
+  finding_lines <<<"$open"
+fi
+if [[ -n $accepted ]]; then
+  printf 'accepted in %s (owner decisions):\n' "$ignore_file"
+  finding_lines <<<"$accepted"
+fi
+if [[ -n $open ]]; then
+  printf '%s\n' \
+    'Fix the cause: remove the secret from every commit of the PR and rotate it; raise the dependency to a fixed' \
+    'version; change the code. A false positive is accepted only by the owner, through a reviewed line in' \
+    "$ignore_file: <scanner> <id> <path> # <reason>"
+elif [[ $status -eq 0 ]]; then
+  printf 'no findings\n'
+fi
+exit "$status"

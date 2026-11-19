@@ -32,8 +32,10 @@ The template lives in `template/` next to this file (resolve this skill's base d
    local package first; the app target itself is outside the test gates and only has to compile.
    Swift CI runs on GitHub's macOS runner, whose toolchain lags behind a developer's newest Xcode: keep
    `swift-tools-version` in Package.swift at the oldest version the package needs (6.0 for swift-testing).
-2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json`, `.cursor/hooks.json` or
-   `.github/workflows/agent-guard.yml` exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`).
+2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json`, `.cursor/hooks.json`,
+   `.github/workflows/agent-guard.yml` or `.github/workflows/security.yml` exist, stop and ask how to merge (an
+   existing Makefile can `include .agent/common.mk`). A job named `security`, `guard` or `checks-<lang>` in
+   another workflow would collide with the required checks: stop and ask to rename it.
 3. **Branch** `chore/agent-guardrails` from the up-to-date default branch. If that branch already exists
    locally or remotely, stop and ask (it may hold an earlier, unmerged installation).
 4. **Copy the template** with `cp -R`:
@@ -45,6 +47,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
    - `template/.cursor/hooks.json` → `.cursor/hooks.json` (guards teammates' Cursor agents, as the Claude
      settings guard their Claude Code)
    - `template/.github/workflows/agent-guard.yml` → `.github/workflows/agent-guard.yml`
+   - `template/.github/workflows/security.yml` → `.github/workflows/security.yml` (every language; it needs
+     nothing installed in the project)
    - `template/makefiles/Makefile.<lang>` → `Makefile`
    - `template/ci/checks-<node|python|rust|swift>.yml` → `.github/workflows/checks-<node|python|rust|swift>.yml`
      (node for typescript and javascript; one file per language in the repo)
@@ -71,7 +75,10 @@ The template lives in `template/` next to this file (resolve this skill's base d
    if an existing project check fails, stop and report it.
 10. **Open the bootstrap PR** (a normal PR, not a draft) with the verification commands and their real output
    in the description. **Never merge it, never enable auto-merge for it**, whatever general rules say: the
-   guard is not on the default branch yet, so the owner reviews and merges this PR by hand.
+   guard is not on the default branch yet, so the owner reviews and merges this PR by hand. The PR's
+   `security` check shows findings that already exist, chiefly vulnerable dependencies in the lockfiles
+   (osv-scanner scans all of them). List them in the description with a recommendation for each (upgrade, or
+   an owner-accepted line in `.github/security-ignore` with its reason); do not fix or accept them in this PR.
 11. **Tell the owner the one step only they can do** (bash-guard blocks it for agents): in their own
     terminal, `guardrails on <bootstrap PR link>`. It refuses unless the kit files in the PR are byte-identical
     to the owner's installed kit, shows the files the agent wrote (Makefile, AGENTS.md, manifests), asks for

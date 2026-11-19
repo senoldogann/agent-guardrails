@@ -7,7 +7,8 @@ template="$kit/skills/guardrails-init/template"
 
 # Prints every way the kit-owned files of a checkout differ from the installed kit's template, one per line.
 # Nothing printed means the checkout carries exactly this kit: .agent/, .claude/settings.json, .cursor/hooks.json,
-# the guard workflow and each checks-<lang> workflow. The Makefile and AGENTS.md hold project judgment and are not compared.
+# the guard and security workflows and each checks-<lang> workflow. The Makefile, AGENTS.md and
+# .github/security-ignore hold project judgment and are not compared.
 kit_drift() {
   local dir=$1 workflow name
   [[ -d "$dir/.agent" ]] || {
@@ -37,6 +38,8 @@ kit_drift() {
     printf 'differs or missing: .cursor/hooks.json\n'
   cmp -s "$template/.github/workflows/agent-guard.yml" "$dir/.github/workflows/agent-guard.yml" ||
     printf 'differs or missing: .github/workflows/agent-guard.yml\n'
+  cmp -s "$template/.github/workflows/security.yml" "$dir/.github/workflows/security.yml" ||
+    printf 'differs or missing: .github/workflows/security.yml\n'
   local found=0
   for workflow in "$dir"/.github/workflows/checks-*.yml; do
     [[ -e $workflow ]] || continue
@@ -86,9 +89,10 @@ grants_check_or_status_writes() {
   grep -Ei -e "^[^#]*(checks|statuses)[\"']?[[:space:]]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)" -e "^[[:space:]]*(:[[:space:]]*)?(-[[:space:]]+)?(!!str[[:space:]]+)?[\"']?write(-all)?[\"']?[[:space:]]*(#.*)?$" -e 'write-all' >/dev/null
 }
 
-# Succeeds for a changed file that can change what CI enforces: workflows and other GitHub config, the
-# guardrails themselves (.agent/, and the agents' hook settings in .claude/, .cursor/ and .codex/), the
-# Makefiles CI runs, and code owners. approve-head marks these "!!" and asks for a second confirmation.
+# Succeeds for a changed file that can change what CI enforces: workflows and other GitHub config (including
+# .github/security-ignore, which accepts findings of the security check), the guardrails themselves (.agent/,
+# and the agents' hook settings in .claude/, .cursor/ and .codex/), the Makefiles CI runs, and code owners.
+# approve-head marks these "!!" and asks for a second confirmation.
 changes_enforcement() {
   case $1 in
     .github/* | .agent/* | .claude/* | .cursor/* | .codex/* | Makefile | */Makefile | *.mk | CODEOWNERS | docs/CODEOWNERS) return 0 ;;
@@ -179,7 +183,7 @@ check_jobs() {
 remove_kit_files() {
   local dir=$1 workflow name makefile lang
   rm -rf "$dir/.agent"
-  rm -f "$dir/.github/workflows/agent-guard.yml"
+  rm -f "$dir/.github/workflows/agent-guard.yml" "$dir/.github/workflows/security.yml" "$dir/.github/security-ignore"
   for workflow in "$dir"/.github/workflows/checks-*.yml; do
     [[ -e $workflow ]] || continue
     name=${workflow##*/}
@@ -243,9 +247,10 @@ remove_agents_section() {
 # kind, note, sha, draft, author, updated, autoMerge}. Kinds: answer (the agent asked a question: label needs-decision), draft (the agent's
 # work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
 # review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
-# HEAD not approved yet). Any failed run named guard wins over a later success, because a workflow added by
-# the PR could report a run of that name (approve-head checks the real guard run). Titles are written by
-# the agent, so control characters are replaced before they reach a terminal or the app.
+# HEAD not approved yet; the note sums up the security and checks-<lang> runs). Any failed run named guard wins
+# over a later success, because a workflow added by the PR could report a run of that name (approve-head checks
+# the real guard run). Titles are written by the agent, so control characters are replaced before they reach a
+# terminal or the app.
 pr_states() {
   jq -c '
     def latest(f): [.statusCheckRollup[]? | select(f)] | sort_by(.startedAt // .createdAt // "") | last;
@@ -257,7 +262,7 @@ pr_states() {
            and (.conclusion | IN("SUCCESS", "CANCELLED", "SKIPPED", "NEUTRAL") | not))
        then {status: "COMPLETED", conclusion: "FAILURE"} else $latest_guard end) as $guard
     | (latest(.__typename == "StatusContext" and .context == "merge-approval")) as $approval
-    | ([.statusCheckRollup[]? | select(.__typename == "CheckRun" and (.name | startswith("checks-")))]) as $checks
+    | ([.statusCheckRollup[]? | select(.__typename == "CheckRun" and (.name == "security" or (.name | startswith("checks-"))))]) as $checks
     | (if ($checks | length) == 0 then "checks not started"
        elif any($checks[]; .status != "COMPLETED") then "checks running"
        elif all($checks[]; .conclusion == "SUCCESS") then "checks green"
@@ -506,10 +511,11 @@ graphql_with_retry() {
   die "GitHub did not answer the GraphQL query after $attempts attempts. Last error: $err"
 }
 
-# The required checks of a kit repository as ruleset entries: guard and each checks-<lang> job, pinned to
-# GitHub Actions (integration 15368) so no other App can report them. Argument: job names, one per line.
+# The required checks of a kit repository as ruleset entries: guard, security and each checks-<lang> job, pinned
+# to GitHub Actions (integration 15368) so no other App can report them. kit_drift has made sure the security
+# workflow is the kit's before the ruleset requires it. Argument: checks-<lang> job names, one per line.
 pinned_checks() {
-  jq -c -n --arg jobs "$1" '["guard"] + ($jobs | split("\n") | map(select(length > 0)))
+  jq -c -n --arg jobs "$1" '["guard", "security"] + ($jobs | split("\n") | map(select(length > 0)))
     | map({context: ., integration_id: 15368})'
 }
 
@@ -609,8 +615,8 @@ ruleset_approval_mode() {
 
 # Reads {branch, review, tag}: the live rulesets agent-guardrails, agent-guardrails-review and
 # agent-guardrails-tags (each null when missing), and prints one line per way they no longer protect what the
-# kit set up: inactive or missing, a bypass list where there was none, a lost rule, guard or every checks-<lang>
-# job no longer required from GitHub Actions, other merge methods, and no rule left that requires the owner's
+# kit set up: inactive or missing, a bypass list where there was none, a lost rule, guard, security or every
+# checks-<lang> job not required from GitHub Actions, other merge methods, and no rule left that requires the owner's
 # approval (neither merge-approval nor an intact review ruleset). Prints nothing when they still hold. The
 # exact list of checks-<lang> jobs is not compared: it depends on the repository's languages.
 ruleset_problems() {
@@ -627,6 +633,8 @@ ruleset_problems() {
          (["deletion", "non_fast_forward", "required_linear_history", "pull_request", "required_status_checks"][]
            | select(rule($b; .) == null) | "the agent-guardrails ruleset lost its \(.) rule"),
          (if pinned($b; . == "guard") then empty else "guard is no longer a required check from GitHub Actions" end),
+         # Repositories turned on before the kit had the security check also land here until their kit update.
+         (if pinned($b; . == "security") then empty else "security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)" end),
          (if pinned($b; startswith("checks-")) then empty
           else "no checks-<lang> job is a required check from GitHub Actions any more" end),
          (if (rule($b; "pull_request").parameters.allowed_merge_methods // []) == ["squash"] then empty

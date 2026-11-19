@@ -163,7 +163,7 @@ $problems${problems:+${errors:+$'\n'}}$errors
 Fix this in a PR you author (while status mode is on: guardrails approve <PR link>), then run: guardrails on $repo"
 }
 
-# Applies the rulesets and repository settings the kit relies on. Required checks come from the
+# Applies the rulesets and repository settings the kit relies on. Required checks: guard, security and the
 # checkout's own checks-<lang> workflows. Nobody bypasses the branch ruleset (checks, history, deletion); in
 # review mode a separate review ruleset lets admins merge their own PRs without a review.
 enforce() {
@@ -191,7 +191,7 @@ enforce() {
   gh label create needs-decision -R "$repo" --force --color D93F0B \
     --description "The agent is waiting for the owner's decision" >/dev/null
   gh repo edit "$repo" --add-topic "$topic" >/dev/null
-  printf 'on: %s (%s; required checks: guard %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
+  printf 'on: %s (%s; required checks: guard security %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
 on_pr() {
@@ -215,7 +215,7 @@ on_pr() {
   files=$(pr_files "$repo" "$pr")
   while IFS= read -r file; do
     case $file in
-      .github/workflows/agent-guard.yml | .github/workflows/checks-*.yml) ;;
+      .github/workflows/agent-guard.yml | .github/workflows/security.yml | .github/workflows/checks-*.yml) ;;
       .github/workflows/* | .github/actions/*) extra_workflows+="  $file"$'\n' ;;
     esac
   done <<<"$files"
@@ -226,10 +226,13 @@ $extra_workflows"
   title=$(clean "$(jq -r .title <<<"$pr_json")")
   url=$(jq -r .url <<<"$pr_json")
   printf '\nPR #%s %s\n%s\nhead: %s\n\n' "$pr" "$title" "$url" "$sha"
-  printf 'Kit files (.agent/, .claude/settings.json, .cursor/hooks.json, guard and checks workflows) match your installed kit.\n'
+  printf 'Kit files (.agent/, .claude/settings.json, .cursor/hooks.json, guard, security and checks workflows) match your installed kit.\n'
   printf 'The agent wrote the rest; review it (! = human-owned from now on):\n'
   while IFS= read -r file; do
-    case $file in .agent/* | .claude/settings.json | .cursor/hooks.json | .github/workflows/agent-guard.yml | .github/workflows/checks-*.yml) continue ;; esac
+    case $file in
+      .agent/* | .claude/settings.json | .cursor/hooks.json | .github/workflows/agent-guard.yml) continue ;;
+      .github/workflows/security.yml | .github/workflows/checks-*.yml) continue ;;
+    esac
     marker="  "
     if is_human_owned "$file"; then marker="! "; fi
     printf '%s %s\n' "$marker" "$file"

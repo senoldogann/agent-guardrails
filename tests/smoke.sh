@@ -392,9 +392,30 @@ git checkout -q -b chore/kit-checks main
 mkdir -p .github/workflows
 cp "$kit/skills/guardrails-init/template/ci/checks-node.yml" .github/workflows/
 cp "$kit/skills/guardrails-init/template/.github/workflows/agent-guard.yml" .github/workflows/
+cp "$kit/skills/guardrails-init/template/.github/workflows/security.yml" .github/workflows/
 git add -A
 git commit -qm kit
 expect_success "the kit's own workflows pass" ci_guard chore/kit-checks chore/kit-checks main
+git checkout -q -b chore/fake-security main
+mkdir -p .github/workflows
+printf 'on: pull_request\njobs:\n  security:\n    runs-on: ubuntu-latest\n    steps:\n      - run: "true"\n' >.github/workflows/scan.yml
+git add -A
+git commit -qm fake
+expect_failure "another workflow's job named security fails" ci_guard chore/fake-security chore/fake-security main
+expect_out "the fake security check is explained" 'defines a job or name "security"'
+git checkout -q -b chore/accept-finding main
+mkdir -p .github
+printf 'semgrep tainted-sql src/db.py # owner: input is a constant\x60\n' >.github/security-ignore
+git add -A
+git commit -qm accept
+expect_success "accepting a security finding passes the guard" ci_guard chore/accept-finding chore/accept-finding main
+expect_out "accepted findings are listed for the owner" "SECURITY FINDINGS ACCEPTED (owner decision; check each reason):"
+if grep -Fx '  semgrep tainted-sql src/db.py # owner: input is a constant' "$work/out" >/dev/null; then
+  ok "an accepted finding is listed without its backtick"
+else
+  fail "an accepted finding is listed without its backtick"
+  show_out
+fi
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

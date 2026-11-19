@@ -42,6 +42,21 @@ flowchart LR
   themselves (`.agent/`, the Makefile, workflows) are listed for the owner, who confirms them separately when
   approving; they do not fail the guard, because kit updates change them. Language checks run the type
   checker, linter, tests and a mutation gate on the changed code.
+- **Security:** the `security` check scans every PR with free, open-source scanners and fails it on a
+  finding: [gitleaks](https://github.com/gitleaks/gitleaks) looks for secrets in the PR's commits,
+  [osv-scanner](https://github.com/google/osv-scanner) for known vulnerabilities in the dependency lockfiles,
+  and [Semgrep CE](https://github.com/semgrep/semgrep) for insecure code in the changed files (only findings
+  new since the base). Each tool is pinned to an exact version and verified by checksum; Semgrep uses the
+  security rules of [semgrep-rules](https://github.com/semgrep/semgrep-rules) at a pinned commit, without
+  login, registry or token (those rules are under the Semgrep Rules License, fetched in CI, never committed).
+  osv-scanner sends package names and versions, not code, to the free OSV API. Inline suppressions
+  (`nosemgrep`, `gitleaks:allow`) and the scanners' own ignore files have no effect: only a line in
+  `.github/security-ignore` (`<scanner> <id> <path> # <reason>`) accepts a finding, and changing that file
+  needs the owner's second confirmation like any guardrail file. An osv line holds while it stays in the
+  file; a gitleaks or Semgrep line accepts findings only in the PR that adds it, so a later secret or insecure
+  line at the same path needs a new decision. Known gaps: gitleaks skips its default allowlisted paths (images,
+  lockfiles such as `go.sum`), and a new advisory in the OSV database can turn unrelated PRs red until the
+  dependency is raised or the owner accepts it.
 - **Approval:** a ruleset requires the guard, the checks and the owner's approval of the PR's current HEAD. A
   push after the approval needs a new one.
 
@@ -125,8 +140,8 @@ github.com or GitHub Mobile (**review mode**):
 ## What it changes on GitHub
 
 `guardrails on` sets, for that repository: the `agent-guardrails` ruleset on the default branch (no deletion,
-no force push, linear history, squash-merged PRs with resolved threads, the required checks, and in status
-mode `merge-approval`); in review mode the `agent-guardrails-review` ruleset (one code owner review, dismissed
+no force push, linear history, squash-merged PRs with resolved threads, the required checks `guard`,
+`security` and `checks-<lang>`, and in status mode `merge-approval`); in review mode the `agent-guardrails-review` ruleset (one code owner review, dismissed
 on push, last push approved by someone else, admins may bypass it through a PR); the `agent-guardrails-tags`
 ruleset (only admins create, move or delete tags); squash merge only with auto-merge and branch deletion;
 read-only workflow tokens that cannot approve PRs; SHA-pinned actions; the label `needs-decision`; and the
@@ -193,8 +208,13 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
   container or in CI with only the App's token.
 - Other administrators of a repository can change or remove its rulesets. The inbox raises an alarm when the
   list of enforced repositories stops matching, or when the live rulesets stop protecting what the kit set up:
-  a ruleset missing or inactive, a bypass list added, a rule removed, guard or the language checks no longer
-  required from GitHub Actions, or no rule left that requires your approval.
+  a ruleset missing or inactive, a bypass list added, a rule removed, guard, security or the language checks
+  no longer required from GitHub Actions, or no rule left that requires your approval. A project set up before
+  the kit had the security check shows that alarm until a kit update PR adds `security.yml` and you run
+  `guardrails on <owner/repo>` again.
+- **The security check runs the PR's own copy** (`pull_request`, like the language checks), so a PR could
+  weaken it; every file that can (the workflow, `.agent/`, `.github/security-ignore`) is a guardrail file that
+  `approve-head` marks `!!`, and `guard` lists accepted findings for you.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 

@@ -14,6 +14,13 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too) and the Cursor shim
   `cursor-guard.sh`, run from `template/.cursor/hooks.json`;
   `template/.github/workflows/agent-guard.yml` base-branch guard.
+- The `security` check: `template/.github/workflows/security.yml` runs `template/.agent/bin/security-tools`
+  (pinned gitleaks, osv-scanner, Semgrep CE and semgrep-rules commit, verified by checksum; Semgrep's hashed
+  pins in `template/.agent/security/semgrep-pins.txt`) and `security-scan`; the report parsing and the
+  `.github/security-ignore` format are pure functions in `security-lib.sh`, tested by `tests/security.sh`.
+  It is a required check (`pinned_checks`), part of `kit_drift`, and `ci-guard` reserves its job name. The
+  kit's own `ci.yml` runs the same scripts on the kit's PRs. To bump a tool, change its version and SHA-256 in
+  `security-tools` (from the release's checksums file) or regenerate the pins as their header says.
 - `bin/guardrails` (also linked as `agent-guardrails`): the owner's command. Enforced repos are listed in
   `~/.config/agent-guardrails/repos`. Offline-testable parts (rulesets, PR and project states, CODEOWNERS
   checks, `update`) live in `bin/guardrails-lib.sh` as functions over their inputs.
@@ -68,7 +75,8 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   owner commands onto PATH; idempotent, moves links over from another kit clone, backs up every hook file
   before changing it). `tests/install.sh` runs it in a throwaway HOME. The state-changing owner commands (`on`, `off`, `approve`,
   `approve-head`) refuse to run from a clone with local changes or not at its origin's main.
-- Check: `make check` (= shellcheck + the offline tests in `tests/`).
+- Check: `make check` (= shellcheck + the offline tests in `tests/`). The security scanners themselves run only
+  in CI (Linux x86_64); validate workflow edits with `actionlint`.
 - Language adapters: `make test-lang` (slow; real mini projects per language).
 - Release: raise `VERSION` (semver) and move the `Unreleased` entries of `CHANGELOG.md` under that version in
   the same PR; after the merge `.github/workflows/release.yml` tags `v<VERSION>` and publishes the section as the
