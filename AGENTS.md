@@ -36,7 +36,9 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   `scripts/check-vendored-pyyaml.sh` in CI; its header says how to bump it. Tests: the workflow cases in
   `tests/smoke.sh` (through ci-guard) and `tests/guardrails-cli.sh` (owner side).
 - `bin/guardrails` (also linked as `agent-guardrails`): the owner's command. Enforced repos are listed in
-  `~/.config/agent-guardrails/repos`. Offline-testable parts (rulesets, PR and project states, CODEOWNERS
+  `~/.config/agent-guardrails/repos`; `enforced-history` next to it holds what this Mac enforced and did not turn
+  off, so a repo that drops out of the list raises an alarm whoever owns it (the topic search covers only the
+  owner's own account: in an organization a teammate's Mac tags repos too). Offline-testable parts (rulesets, PR and project states, CODEOWNERS
   checks, `update`) live in `bin/guardrails-lib.sh` as functions over their inputs.
   - Without arguments it lists what waits for the owner across enforced repos.
   - `on` checks a bootstrap PR's kit files against this install, merges it and applies the rulesets; it picks

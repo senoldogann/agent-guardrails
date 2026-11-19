@@ -30,6 +30,7 @@ struct ProjectSidebar: View {
             ProjectSection(title: "Needs you", projects: groups.needsYou, snapshot: snapshot)
             ProjectSection(title: "On", projects: groups.on, snapshot: snapshot)
             ProjectSection(title: "Ready to turn on", projects: groups.ready, snapshot: snapshot)
+            ProjectSection(title: "Enforced elsewhere", projects: groups.elsewhere, snapshot: snapshot)
             // A search shows its matches among the off repositories even while the group is closed.
             if !groups.off.isEmpty {
                 Section(isExpanded: Binding(get: { showsOff || !search.isEmpty }, set: { showsOff = $0 })) {
@@ -185,6 +186,7 @@ func stateWord(_ state: ProjectState) -> String {
     case .ready: "ready to turn on"
     case .off: "off"
     case .noAdmin: "not possible without admin rights"
+    case .elsewhere: "enforced from another Mac"
     }
 }
 
@@ -206,7 +208,7 @@ struct StateDot: View {
         case .on: Palette.textSecondary
         case .alarm: Palette.danger
         case .ready: Palette.textSecondary
-        case .off, .noAdmin: Palette.hairline
+        case .off, .noAdmin, .elsewhere: Palette.hairline
         }
     }
 }

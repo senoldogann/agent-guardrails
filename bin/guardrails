@@ -36,6 +36,11 @@ registry=$(guardrails_registry)
 # The enforced repos whose owner turned the merge queue on: a plain `on` keeps it, and the inbox raises an alarm
 # when the live ruleset loses it. Next to the registry, so bash-guard keeps agents out of it the same way.
 queue_registry="$(dirname "$registry")/merge-queue"
+# The repos this Mac enforced and did not turn off: `on` adds to it, `off` removes, and the inbox and projects
+# copy every listed repo into it. A repo in it but missing from the list lost its entry without `off`: an alarm,
+# whoever owns it. In an organization the topic cannot tell that, since a teammate's Mac tags repositories too.
+# Next to the registry, so bash-guard keeps agents out of it the same way.
+history_registry="$(dirname "$registry")/enforced-history"
 ruleset_name=agent-guardrails
 review_ruleset_name=agent-guardrails-review
 tag_ruleset_name=agent-guardrails-tags
@@ -79,12 +84,38 @@ register() {
   mkdir -p "$(dirname "$registry")"
   touch "$registry"
   grep -Fxi -- "$1" "$registry" >/dev/null || printf '%s\n' "$1" >>"$registry"
+  remember "$1"
 }
 
 unregister() {
-  [[ -f $registry ]] || return 0
-  grep -Fxiv -- "$1" "$registry" >"$registry.tmp" || true
-  mv "$registry.tmp" "$registry"
+  if [[ -f $registry ]]; then
+    grep -Fxiv -- "$1" "$registry" >"$registry.tmp" || true
+    mv "$registry.tmp" "$registry"
+  fi
+  if [[ -f $history_registry ]]; then
+    grep -Fxiv -- "$1" "$history_registry" >"$history_registry.tmp" || true
+    mv "$history_registry.tmp" "$history_registry"
+  fi
+}
+
+remembered_repos() {
+  [[ -f $history_registry ]] || return 0
+  awk 'NF > 0' "$history_registry"
+}
+
+remember() {
+  mkdir -p "$(dirname "$history_registry")"
+  touch "$history_registry"
+  grep -Fxi -- "$1" "$history_registry" >/dev/null || printf '%s\n' "$1" >>"$history_registry"
+}
+
+# Copies every listed repo into the history, so repos enforced before the history existed are covered from the
+# first inbox on.
+remember_listed() {
+  local repo
+  while IFS= read -r repo; do
+    remember "$repo"
+  done < <(registered_repos)
 }
 
 queue_listed() {
@@ -433,28 +464,33 @@ login() {
   gh api user --jq .login || die "cannot read your GitHub login (gh auth status)"
 }
 
-# Prints the answer to kit_search_query (its data, one line): where the kit's topic and the owner's bootstrap PRs
-# are on GitHub. The topic search covers the owner, the organizations they belong to (user/orgs lists those the
-# token may see) and the owners of enforced repositories, so an enforced organization stays covered even when
-# user/orgs leaves it out. Argument: the owner's login.
+# Prints the answer to kit_search_query (its data, one line): the owner's repositories that carry the kit's topic
+# and the owner's open bootstrap PRs. Dies when the answer lacks a node list or holds fewer nodes than its total
+# (kit_search_problem). Argument: the owner's login.
 kit_search() {
-  local orgs query
-  orgs=$(gh api --paginate user/orgs --jq '.[].login') ||
-    die "cannot list your organizations (gh api user/orgs); check gh auth status for the read:org scope"
-  query=$(kit_search_query "$1" "$1"$'\n'"$orgs"$'\n'"$(registered_repos | cut -d/ -f1)" "$topic") || exit 1
-  graphql_with_retry 3 2 "$query" '.data'
+  local answer problem
+  answer=$(graphql_with_retry 3 2 "$(kit_search_query "$1" "$topic")" '.data') || exit 1
+  problem=$(kit_search_problem <<<"$answer") || die "cannot read GitHub's search answer (jq's error is above): ${answer:0:300}"
+  [[ -z $problem ]] || die "$problem"
+  printf '%s\n' "$answer"
 }
 
-# Repos tagged on GitHub as enforced but missing from this machine's list (the list lost an entry).
+# Repos this Mac enforced that are missing from its list (the list lost an entry), see unlisted_alarms.
 # Argument: kit_search's answer.
 topic_alarms() {
-  local tagged repo
-  tagged=$(tagged_unlisted "$(registered_repos)" <<<"$1") || die "cannot read the topic search's answer (jq's error is above)"
-  while IFS= read -r repo; do
+  local alarms repo reason
+  alarms=$(unlisted_alarms "$(registered_repos)" "$(remembered_repos)" <<<"$1") ||
+    die "cannot compare the topic search and the history with $registry (jq's error is above)"
+  while IFS=$'\t' read -r repo reason; do
     [[ -n $repo ]] || continue
-    printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
-      "$repo" "$repo" "$topic" "$registry" "$repo"
-  done <<<"$tagged"
+    if [[ $reason == topic ]]; then
+      printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
+        "$repo" "$repo" "$topic" "$registry" "$repo"
+    else
+      printf 'alarm\037%s\037\037\037%s was enforced from this Mac but is not in %s, and guardrails off did not remove it. If you did not remove it, restore with: guardrails on %s\n' \
+        "$repo" "$repo" "$registry" "$repo"
+    fi
+  done <<<"$alarms"
 }
 
 kit_install_alarm() {
@@ -510,6 +546,7 @@ live_rulesets() {
 inbox_items() {
   local repo state rulesets problems items kind url title note sha problem queued owner search
   kit_install_alarm
+  remember_listed
   owner=$(login) || exit 1
   search=$(kit_search "$owner") || exit 1
   topic_alarms "$search" || exit 1
@@ -628,12 +665,14 @@ projects_json() {
   owner=$(login) || exit 1
   if agent_app_registered; then app=registered; else app=none; fi
   installed=$(agent_installed_repos) || exit 1
+  remember_listed
   search=$(kit_search "$owner") || exit 1
   personal=$(graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]') || exit 1
   organization=$(graphql_with_retry 3 2 "$organization_projects_query" \
     '.data.viewer.repositories.nodes[] | select(.viewerPermission == "ADMIN")') || exit 1
   listed=$(printf '%s\n%s\n' "$personal" "$organization" | awk 'NF > 0')
-  extra=$(project_extra_repos "$owner" "$(jq -r .nameWithOwner <<<"$listed")" "$(registered_repos)" <<<"$search") ||
+  extra=$(project_extra_repos "$owner" "$(jq -r .nameWithOwner <<<"$listed")" "$(registered_repos)" "$(remembered_repos)" \
+    <<<"$search") ||
     die "cannot read the search for the kit's repositories (jq's error is above)"
   {
     [[ -z $listed ]] || printf '%s\n' "$listed"
@@ -648,7 +687,8 @@ projects_json() {
       fi
       printf '%s\n' "$node"
     done <<<"$extra"
-  } | jq -c -s 'sort_by(.pushedAt // "") | reverse | .[]' | project_states "$owner" "$(registered_repos)" "$app" "$installed"
+  } | jq -c -s 'sort_by(.pushedAt // "") | reverse | .[]' |
+    project_states "$owner" "$(registered_repos)" "$app" "$installed" "$(remembered_repos)"
 }
 
 prs_json() {
