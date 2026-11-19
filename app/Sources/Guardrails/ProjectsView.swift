@@ -32,7 +32,8 @@ struct ProjectSidebar: View {
                 Section {
                     ForEach(workspace.strip.pages, id: \.self) { page in
                         OpenPageRow(
-                            title: pageTitle(page, workspace: workspace, projects: projects),
+                            title: openTitle(page),
+                            help: pageTitle(page, workspace: workspace, projects: projects),
                             icon: pageSymbol(page, workspace: workspace),
                             close: { workspace.close(page) }
                         )
@@ -67,10 +68,22 @@ struct ProjectSidebar: View {
     }
 }
 
+/// The sidebar has no room for "Review and approve · …": a review is named by its pull request, and the whole
+/// title is a hover away.
+extension ProjectSidebar {
+    func openTitle(_ page: WorkspacePage) -> String {
+        if case .review(let run) = page, let request = workspace.reviews[run]?.request {
+            return displaySafe(request.label)
+        }
+        return pageTitle(page, workspace: workspace, projects: projects)
+    }
+}
+
 /// A page that is open right now: its title, its state icon, and a close button that only shows on hover, so the
 /// queue does not read as a row of crosses.
 struct OpenPageRow: View {
     let title: String
+    let help: String
     let icon: Octicon
     let close: () -> Void
     @State private var isHovered = false
@@ -98,6 +111,7 @@ struct OpenPageRow: View {
         }
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .help(help)
     }
 }
 
