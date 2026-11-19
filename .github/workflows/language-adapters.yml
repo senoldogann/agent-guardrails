@@ -1,0 +1,59 @@
+# Real adapter fixtures, separate from the offline kit smoke tests.
+name: language-adapters
+on:
+  pull_request:
+    paths:
+      - 'skills/guardrails-init/**'
+      - 'tests/lang/**'
+      - 'Makefile'
+      - '.github/workflows/language-adapters.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  adapters:
+    name: adapter-${{ matrix.language }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {language: typescript, runner: ubuntu-24.04, toolchain: node}
+          - {language: javascript, runner: ubuntu-24.04, toolchain: node}
+          - {language: python, runner: ubuntu-24.04, toolchain: python}
+          - {language: rust, runner: ubuntu-24.04, toolchain: rust}
+          - {language: swift, runner: macos-26, toolchain: swift}
+          - {language: swift-xcode, runner: macos-26, toolchain: swift}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: matrix.toolchain == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          package-manager-cache: false
+      - if: matrix.toolchain == 'node'
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: '10'
+          run_install: false
+      - if: matrix.toolchain == 'python'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - if: matrix.toolchain == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy, rustfmt
+      - if: matrix.toolchain == 'rust'
+        run: cargo install --locked cargo-mutants@27.1.0
+      - if: matrix.language == 'swift-xcode'
+        run: brew install xcodegen
+      - name: Run the selected integration fixture
+        env:
+          LANGUAGE_ADAPTER: ${{ matrix.language }}
+        run: tests/lang/run.sh "$LANGUAGE_ADAPTER"
