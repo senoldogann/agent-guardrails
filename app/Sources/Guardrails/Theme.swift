@@ -8,7 +8,8 @@ import SwiftUI
 enum Palette {
     static let surface = Color(light: 0xFFFFFF, lightAlpha: 0.78, dark: 0xFFFFFF, darkAlpha: 0.06)
     static let surfaceMuted = Color(light: 0x000000, lightAlpha: 0.04, dark: 0xFFFFFF, darkAlpha: 0.08)
-    static let hairline = Color(light: 0x000000, lightAlpha: 0.09, dark: 0xFFFFFF, darkAlpha: 0.10)
+    /// Borders and dividers: as faint as still reads as an edge, so groups separate without lines drawing the eye.
+    static let hairline = Color(light: 0x000000, lightAlpha: 0.055, dark: 0xFFFFFF, darkAlpha: 0.07)
     static let textPrimary = Color(light: 0x0A0A0A, dark: 0xF5F5F7)
     static let textSecondary = Color(light: 0x6B6B70, dark: 0xA1A1A6)
     /// The one color besides the neutrals: something is wrong (an alarm, a failed check, a destructive action).
@@ -22,6 +23,10 @@ enum Palette {
     /// that light accent too, so no window sets this tint for all its controls.
     static let accent = Color(light: 0x3F3F46, dark: 0x4C4C52)
 
+    /// The glass style's veil over the window material. The material alone takes the color of what is behind
+    /// the window, so a light-mode window over a dark one turned a muddy gray (more so while inactive); the
+    /// veil keeps the page light in light mode and dark in dark mode, with the desktop still showing through.
+    static let glassVeil = Color(light: 0xFAFAFB, lightAlpha: 0.72, dark: 0x111113, darkAlpha: 0.5)
     /// The solid style's window: near black in dark mode, a light gray close to white in light mode.
     static let canvas = Color(light: 0xF5F5F6, dark: 0x0E0E10)
     /// The solid style's sidebar: one step away from the page, darker in both modes.
@@ -213,7 +218,10 @@ struct EdgeBarStyle: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         switch style {
-        case .glass: content.background(.bar)
+        case .glass:
+            content
+                .background(.bar)
+                .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
         case .solid:
             content
                 .background(Palette.canvas)

@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- In the Liquid Glass style a light-mode window over a dark one (or an inactive window) turned a muddy gray:
+  the window material took the color of what was behind it. A light veil (dark in dark mode) now keeps the
+  page clean in both modes. Borders and dividers are softer.
+
 ## [0.4.0] - 2026-11-19
 
 ### Added
