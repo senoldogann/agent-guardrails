@@ -42,6 +42,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Changed
 
+- Pages are left-aligned and fill the window instead of a centered column of at most 760 points, so a
+  full-screen window uses its width.
+- The Code tab of a pull request starts with the number of files and lines changed and a Collapse all /
+  Expand all button; each file still opens and closes on its own.
+- A pull request page reads the PR again every 20 seconds while a check runs, so it shows the checks finish
+  instead of "1 running" until you refresh.
 - Settings is a plain button in the sidebar's bottom corner, as in Claude and Linear, instead of a list row;
   the agent App panel moved from the sidebar into Settings → Agent (its name, and Manage… or Create…).
 
