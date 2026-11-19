@@ -6,6 +6,17 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- The app's command timeout now always ends. A timed-out command and its process group get SIGTERM, then
+  SIGKILL after a short grace, and the app stops reading output that an escaped child process keeps open.
+  Before, a command that ignored SIGTERM, or a background child holding its output, could keep a refresh
+  waiting indefinitely.
+- README, AGENTS.md, the project AGENTS section and the ticket-implement skill now describe the stop-check
+  hook exactly. It sends the agent back while checks fail, and after three failures in a row it lets the agent
+  stop with a warning. It is a local convenience; GitHub's guard, required checks and approvals decide what
+  merges.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
