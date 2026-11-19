@@ -4,11 +4,12 @@
 # so a PR cannot weaken the guard that judges it. Every PR is merged only after a human approves
 # its exact HEAD (commit status merge-approval); this guard makes that review safe and focused:
 #   hard failures  - PR not targeting the default branch, merge commits, symlinks/submodules,
-#                    dependency/vendor directories, broken spec locks, ambiguous or invalid tickets,
-#                    write-allow patterns that reach guarded paths, workflow files that could stand
-#                    in for a required check or post statuses
-#   review summary - head SHA, ticket, accepted mutants and security findings, and every human-owned
-#                    path the PR changes
+#                    dependency/vendor directories, spec locks that are malformed, incomplete or removed
+#                    or do not match their files, ambiguous or invalid tickets, write-allow patterns that
+#                    reach guarded paths, workflow files that could stand in for a required check or post
+#                    statuses
+#   review summary - head SHA, ticket, spec amendments and every file a lock stopped or started locking,
+#                    accepted mutants and security findings, and every human-owned path the PR changes
 # The checks it shares with ci-guard-group (a merge queue's group commit) live in guard-lib.sh.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -40,6 +41,7 @@ elif [[ $ticket_count -eq 1 ]]; then
   guard_ticket_spec "$ticket" "$head"
 fi
 
+guard_lock_manifests "$base" "$head"
 guard_locks "$head"
 
 # Spec commits: HEAD must not be one (tests are red there by design), and amendments are made visible.

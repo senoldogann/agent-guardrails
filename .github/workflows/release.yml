@@ -6,12 +6,17 @@ on:
     branches: [main]
     paths: [VERSION]
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: release
   cancel-in-progress: false
 jobs:
+  language-adapters:
+    uses: ./.github/workflows/language-adapters.yml
   release:
+    needs: language-adapters
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -53,7 +53,11 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
     `pr_states` marks PRs in the queue `queued` (GraphQL `mergeQueue`, `queued_prs`); `approve-head` adds the
     owner's own PR with `enqueuePullRequest` instead of an admin merge, and merges never pass `--delete-branch`
     (gh refuses it with a queue; the repository deletes merged branches).
-  - `approve`/`revoke` wrap `bin/approve-head` and `bin/revoke-head` (approval of a PR's exact HEAD).
+  - `approve`/`revoke` wrap `bin/approve-head` and `bin/revoke-head` (approval of a PR's exact HEAD). `approve-head`
+    and `on <PR>` read the PR once and show GitHub's comparison of exactly that base and head (`pr_snapshot_files`,
+    which refuses a list that may be incomplete: GitHub compares at most 300 files); `approve-head` reads the PR
+    again before writing, and every write names the approved head. `tests/approval.sh` drives `approve-head` with a
+    fake gh in a pseudo-terminal (`tests/pty-run.py`).
   - `update` fast-forwards this install to its origin's main, reinstalls it and rebuilds the app.
   - `agent create` registers the agent's own GitHub App through the manifest flow
     (`scripts/app-manifest-flow.py`, standard library only) and keeps its ID and private key in
@@ -100,7 +104,10 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   `approve-head`) refuse to run from a clone with local changes or not at its origin's main.
 - Check: `make check` (= shellcheck + the offline tests in `tests/`). The security scanners themselves run only
   in CI (Linux x86_64); validate workflow edits with `actionlint`.
-- Language adapters: `make test-lang` (slow; real mini projects per language).
+- Language adapters: `make test-lang` (slow; real mini projects per language). `tests/lang/run.sh <lang>` fails when
+  a tool of that language is missing; without arguments it skips such languages. CI runs one job per language in
+  `.github/workflows/language-adapters.yml` on PRs and pushes to main that touch `skills/guardrails-init/`,
+  `tests/lang/` or the workflow, and before every release (`release.yml` calls it).
 - Release: raise `VERSION` (semver) and move the `Unreleased` entries of `CHANGELOG.md` under that version in
   the same PR; after the merge `.github/workflows/release.yml` tags `v<VERSION>` and publishes the section as the
   release notes. Changes worth a note go under `Unreleased` in their own PR.
@@ -135,3 +142,10 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   from the event payload; changing that call would fail every group, its own update too.
 - The merge queue cannot be tested offline or on a personal repository: GitHub offers it only to organization
   repositories.
+- A spec lock must be exactly what `spec-lock` writes: the five metadata files and every `locked-files` entry, once
+  each, by plain repository-relative paths. `lib.sh` holds the checks (`locked_files_problems`, `manifest_problems`)
+  that `spec-lock`, `lock-verify` and both guards (`guard_lock_manifests`) share. A lock may not disappear; a re-lock
+  that covers other files than the base passes and is listed under "SPEC LOCK SCOPE CHANGED" for the owner.
+  `tests/spec-lock.sh` runs these cases through `ci-guard` and `ci-guard-group`. A project whose existing locks break
+  these rules (a duplicate or `./` entry in `locked-files`) sees its kit update PR fail `lock-verify-all` in its own
+  checks; it re-locks those tickets, one PR each, before taking the update.

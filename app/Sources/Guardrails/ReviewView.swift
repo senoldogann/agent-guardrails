@@ -83,14 +83,14 @@ struct ReviewView: View {
                         }
                         Spacer()
                         Button("Open changes on GitHub") {
-                            if case .loaded(let now) = evidence.snapshot {
-                                openInBrowser(now.compareURL(repo: pr.repo, sha: pr.sha))
+                            if let compareURL = pr.compareURL {
+                                openInBrowser(compareURL)
                                 model.markDiffOpened()
                             }
                         }
                         .secondaryAction()
-                        .disabled(!evidence.snapshot.isLoaded)
-                        .help("GitHub's diff of exactly \(pr.shortSHA), even if the PR moves on")
+                        .disabled(pr.compareURL == nil)
+                        .help("GitHub's diff of exactly the listed files (base...\(pr.shortSHA)), even if the PR moves on")
                     }
                     if case .failed(let message) = evidence.snapshot {
                         Text("Could not read the PR from GitHub, so the diff link waits: \(message). Load again with the button under Checks.")

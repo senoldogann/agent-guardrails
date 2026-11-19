@@ -2,7 +2,7 @@
 # Usage: spec-lock <TICKET>
 # Requires every open question to be decided, then writes:
 #   specs/<TICKET>/tests.lock  test IDs (from `make test-ids`) that live in the locked files
-#   specs/<TICKET>/spec.lock   sha256 of every locked file plus the ticket's spec metadata
+#   specs/<TICKET>/spec.lock   sha256 of every locked file plus the ticket's spec metadata, each once
 # Locked files are immutable for the implement phase (write-guard hook locally, human review in CI).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -18,8 +18,10 @@ for meta in locked-files write-allow acceptance-criteria.md OPEN_QUESTIONS.md; d
 done
 [[ -n $(list_entries "$dir/write-allow") ]] || die "$dir/write-allow has no patterns"
 
+# The guards accept only a manifest that covers each locked file once, by a plain path inside the repository.
+problems=$(locked_files_problems "$dir" <"$dir/locked-files")
+[[ -z $problems ]] || die "$problems"
 locked=$(list_entries "$dir/locked-files")
-[[ -n $locked ]] || die "$dir/locked-files lists no files"
 
 # write-allow must not reach any human-owned path (tracked or locked) nor a bare wildcard.
 candidates=$({ git ls-files; printf '%s\n' "$locked"; } | sort -u)
@@ -42,13 +44,15 @@ awk -F'::' 'NR == FNR { locked[$0] = 1; next } ($1 in locked)' <(printf '%s\n' "
 [[ -s "$dir/tests.lock" ]] || die "no collected test IDs belong to the locked files; check locked-files and 'make test-ids'"
 
 paths=$(
-  printf '%s\n' "$dir/locked-files" "$dir/write-allow" "$dir/acceptance-criteria.md" "$dir/OPEN_QUESTIONS.md" "$dir/tests.lock"
+  spec_lock_metadata "$dir"
   printf '%s\n' "$locked"
 )
+while IFS= read -r path; do
+  [[ -f $path ]] || die "locked path does not exist: $path"
+done <<<"$paths"
 tmp="$dir/spec.lock.tmp"
 : >"$tmp"
 while IFS= read -r path; do
-  [[ -f $path ]] || die "locked path does not exist: $path"
   shasum -a 256 "$path" >>"$tmp"
 done <<<"$paths"
 mv "$tmp" "$dir/spec.lock"

@@ -7,10 +7,10 @@
 # from GitHub's own event payload: a kit update that changed the arguments would fail every group, its own too.
 # Every PR in the group already passed ci-guard and the owner's approval at its exact head; this re-checks
 # what can break when approved PRs are combined or rebased onto a newer default branch: merge commits,
-# file names and modes, workflows that could stand in for a required check, spec locks against the files
-# they lock, and the touched tickets' specs. It leaves out what only a PR has: its branch name (a group's
-# ref is gh-readonly-queue/...) and "HEAD is a spec commit" (the queue squashes a PR's spec and
-# implementation commits into one, and the checks-<lang> workflows run the full gate on it).
+# file names and modes, workflows that could stand in for a required check, spec locks (complete, well formed,
+# still present, matching their files; scope changes listed) and the touched tickets' specs. It leaves out what
+# only a PR has: its branch name (a group's ref is gh-readonly-queue/...) and "HEAD is a spec commit" (the queue
+# squashes a PR's spec and implementation commits into one, and the checks-<lang> workflows run the full gate on it).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/guard-lib.sh"
@@ -35,6 +35,7 @@ tickets=$(guard_touched_tickets)
 while IFS= read -r ticket; do
   [[ -z $ticket ]] || guard_ticket_spec "$ticket" "$head"
 done <<<"$tickets"
+guard_lock_manifests "$base" "$head"
 guard_locks "$head"
 
 printf '\nmerge group head: %s\n' "$(git rev-parse "$head")"

@@ -166,24 +166,58 @@ require_reviewed_kit() {
     die "the kit install at $kit is at ${local_sha:0:7}, not at main of $origin (${remote_sha:0:7}). Update it with: git -C $kit switch main && git -C $kit pull --ff-only"
 }
 
-# Prints the files a PR changes, one per line; dies when GitHub cannot list them or when a file name holds a
-# control character. Names are written by the agent, and a newline or escape sequence in one could forge
-# lines of the review the owner reads (or a confirmation prompt the app answers). The list must be complete: a
-# page that fails midway, or GitHub's cap of 3000 files, would hide files from the review, so the count is
-# compared with the PR's own count of changed files.
-pr_files() {
-  local files unsafe expected count
-  files=$(gh api --paginate "repos/$1/pulls/$2/files?per_page=100" \
-    --jq '.[].filename | if test("[[:cntrl:]]") then "control-character " + gsub("[[:cntrl:]]"; "?") else . end') ||
-    die "could not list the files of PR #$2 in $1"
-  [[ -n $files ]] || die "could not list the files of PR #$2 in $1"
-  expected=$(gh api "repos/$1/pulls/$2" --jq .changed_files) || die "could not read PR #$2 in $1"
-  count=$(grep -c '' <<<"$files")
-  [[ $count == "$expected" ]] ||
-    die "GitHub listed $count of the $expected files PR #$2 in $1 changes (it lists at most 3000); refuse to show or approve a partial list. Split the PR."
-  unsafe=$(grep '^control-character ' <<<"$files" || true)
-  [[ -z $unsafe ]] || die "PR #$2 in $1 has file names with control characters; refuse to show or approve it:
-${unsafe//control-character /  }"
+# GitHub lists at most this many files in a comparison, all on its first page, and says nothing when it cuts the
+# list ("Compare two commits" in the REST docs). A comparison that reaches it may be incomplete.
+compare_file_limit=300
+
+# Reads GitHub's comparison of a PR's base and head commits (GET repos/{repo}/compare/{base}...{head}) on stdin
+# and prints every path it changes, one per line; for a rename both the new and the old path, so moving a guarded
+# file away still counts as changing it. Prints the reason instead and fails when the list may be incomplete (no
+# file list, GitHub's limit reached, or another count than the PR's own changed_files for the same head) or when a
+# name is empty or holds a control character: names are written by the agent, and a newline or escape sequence
+# could forge lines of the review the owner reads (or a confirmation prompt the app answers).
+# Argument: the PR's changed_files, read together with the base and head commits.
+compared_files() {
+  local expected=$1 comparison count unsafe
+  comparison=$(cat)
+  if ! count=$(jq -r '.files | if type == "array" then length else "none" end' <<<"$comparison" 2>/dev/null); then
+    printf 'GitHub answered the comparison with something other than JSON\n'
+    return 1
+  fi
+  if [[ $count == none ]]; then
+    printf 'GitHub returned the comparison without its list of files\n'
+    return 1
+  fi
+  if [[ $count -ge $compare_file_limit ]]; then
+    printf 'GitHub lists at most %s files of a comparison and returned %s (the PR reports %s), so the list may be incomplete\n' \
+      "$compare_file_limit" "$count" "$expected"
+    return 1
+  fi
+  if [[ $count != "$expected" ]]; then
+    printf 'the comparison lists %s files, but the PR reports %s changed files for the same head\n' "$count" "$expected"
+    return 1
+  fi
+  unsafe=$(jq -r '.files[] | .filename, (.previous_filename // empty)
+    | select(type != "string" or length == 0 or test("[[:cntrl:]]"))
+    | if type != "string" then tojson elif length == 0 then "(empty)" else gsub("[[:cntrl:]]"; "?") end' <<<"$comparison")
+  if [[ -n $unsafe ]]; then
+    printf 'the comparison has empty file names or names with control characters: %s\n' "${unsafe//$'\n'/, }"
+    return 1
+  fi
+  jq -r '[.files[] | .filename, (.previous_filename // empty)] | unique[]' <<<"$comparison"
+}
+
+# Prints the files a PR changes between exactly the base and head commits read from one `GET pulls/{n}`, so a
+# push while the owner reviews cannot swap the list for another diff's (a listing by PR number shows whatever the
+# head is at that moment). Dies when GitHub cannot compare them or the list may be incomplete or unsafe
+# (compared_files). Arguments: owner/repo, PR number, base commit, head commit, the PR's changed_files.
+pr_snapshot_files() {
+  local comparison files
+  # per_page applies to the commits; the file list comes on the first page, complete up to GitHub's limit.
+  comparison=$(gh api "repos/$1/compare/$3...$4?per_page=1") ||
+    die "could not compare ${3:0:7}...${4:0:7} of PR #$2 in $1 (see GitHub's answer above); nothing changed"
+  files=$(compared_files "$5" <<<"$comparison") ||
+    die "cannot show the complete list of files PR #$2 in $1 changes between ${3:0:7} and ${4:0:7}: $files. Refusing to show or approve a partial list; split the PR if it is that large, otherwise run the command again."
   printf '%s\n' "$files"
 }
 

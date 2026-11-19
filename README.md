@@ -44,8 +44,10 @@ flowchart LR
   that catch mistakes early. Whether the PR merges is decided on GitHub: `ci-guard`, the required checks and
   your approval of the exact commit.
 - **CI:** `ci-guard` runs from the default branch through `pull_request_target` and reads the PR only as data.
-  It fails a PR that changes locked spec files or tests without a new lock, adds a workflow that could stand
-  in for a required check, or carries merge commits, symlinks and similar. Workflows are read with a real YAML
+  It fails a PR that changes locked spec files or tests without a new lock, carries a lock that leaves out a
+  locked file or is not what `spec-lock` writes, removes a lock, adds a workflow that could stand in for a
+  required check, or carries merge commits, symlinks and similar. A new lock that stops locking a file passes
+  as an amendment, and the guard lists each such file for the owner. Workflows are read with a real YAML
   parser, as data: what counts is the permission or job name a file means, however it is spelled, and YAML
   that could read two ways (duplicate keys, anchors and aliases, merge keys, tags, several documents) fails the
   guard. GitHub accepts anchors and aliases since 2025; write the values in place instead. Changes to the
@@ -68,7 +70,9 @@ flowchart LR
   lockfiles such as `go.sum`), and a new advisory in the OSV database can turn unrelated PRs red until the
   dependency is raised or the owner accepts it.
 - **Approval:** a ruleset requires the guard, the checks and the owner's approval of the PR's current HEAD. A
-  push after the approval needs a new one.
+  push after the approval needs a new one. The approval shows the files of exactly the base and head it read
+  (a PR of 300 or more changed files is refused, since GitHub lists no more) and stops if the PR moves before
+  it writes.
 
 Supported languages: TypeScript and JavaScript (Vitest, fast-check, Stryker), Python (pytest, Hypothesis,
 mutmut), Rust (proptest, cargo-mutants) and Swift packages (swift-testing; no mutation gate).

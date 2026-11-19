@@ -20,7 +20,11 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     public let pr: Int
     public let url: String
     public let title: String
+    /// The head commit the CLI approves or merges, and nothing else.
     public let sha: String
+    /// The base commit read together with `sha`: `files` is GitHub's comparison of exactly `base...sha`. Older CLIs
+    /// listed the files by PR number and leave it out; the app then refuses to confirm (`confirmationAnswer`).
+    public let base: String?
     public let files: [PlannedFile]
     /// True when `approve` merges the owner's own PR (review mode: GitHub does not take their review, their
     /// admin bypass skips the review but not the checks). Absent in `on` plans.
@@ -30,7 +34,7 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
     public let mergeQueue: Bool?
 
     public init(
-        repo: String, pr: Int, url: String, title: String, sha: String, files: [PlannedFile], merge: Bool?,
+        repo: String, pr: Int, url: String, title: String, sha: String, base: String?, files: [PlannedFile], merge: Bool?,
         mergeQueue: Bool?
     ) {
         self.repo = repo
@@ -38,12 +42,22 @@ public struct PullRequestPlan: Codable, Sendable, Equatable {
         self.url = url
         self.title = title
         self.sha = sha
+        self.base = base
         self.files = files
         self.merge = merge
         self.mergeQueue = mergeQueue
     }
 
     public var shortSHA: String { String(sha.prefix(7)) }
+    /// The base commit when the plan names a full one: only then do its files describe one fixed diff.
+    public var pinnedBase: String? {
+        guard let base, base.count == 40, base.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else { return nil }
+        return base
+    }
+    /// GitHub's diff of exactly the files the plan lists (`base...sha`), which stays the same after a later push.
+    public var compareURL: String? {
+        pinnedBase.map { "https://github.com/\(repo)/compare/\($0)...\(sha)" }
+    }
     public var isOwnMerge: Bool { merge == true }
     /// The owner's own PR is added to the merge queue rather than merged now.
     public var isOwnQueueEntry: Bool { isOwnMerge && mergeQueue == true }

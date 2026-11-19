@@ -2,7 +2,8 @@
 # Usage: tests/lang/run.sh [typescript|javascript|python|rust|swift|swift-xcode]...
 # Integration tests for the language Makefiles, results adapters, verify-red/verify-green and the
 # integrity guards, against real throwaway projects (needs network for package installs; slow).
-# With no arguments runs every language whose toolchain is installed and reports skipped ones.
+# With no arguments runs every language whose toolchain is installed and reports skipped ones. A language named
+# as an argument must have its tools: a missing one fails the run (CI names each language this way).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd -P)
@@ -11,7 +12,7 @@ requires() {
     typescript | javascript) printf 'pnpm node' ;;
     python) printf 'uv' ;;
     rust) printf 'cargo' ;;
-    swift) printf 'swift' ;;
+    swift) printf 'swift swiftlint' ;;
     swift-xcode) printf 'swift xcodebuild xcodegen' ;;
     *)
       printf 'unknown language: %s\n' "$1" >&2
