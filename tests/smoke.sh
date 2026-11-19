@@ -393,6 +393,7 @@ mkdir -p .github/workflows
 cp "$kit/skills/guardrails-init/template/ci/checks-node.yml" .github/workflows/
 cp "$kit/skills/guardrails-init/template/.github/workflows/agent-guard.yml" .github/workflows/
 cp "$kit/skills/guardrails-init/template/.github/workflows/security.yml" .github/workflows/
+cp "$kit/skills/guardrails-init/template/.github/workflows/agent-notify.yml" .github/workflows/
 git add -A
 git commit -qm kit
 expect_success "the kit's own workflows pass" ci_guard chore/kit-checks chore/kit-checks main

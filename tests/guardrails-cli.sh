@@ -27,6 +27,7 @@ new_project() {
   cp "$template/.claude/settings.json" "$dir/.claude/settings.json"
   cp "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json"
   cp "$template/.github/workflows/agent-guard.yml" "$template/.github/workflows/security.yml" "$dir/.github/workflows/"
+  cp "$template/.github/workflows/agent-notify.yml" "$dir/.github/workflows/"
   cp "$template/ci/checks-node.yml" "$dir/.github/workflows/"
   cp "$template/makefiles/Makefile.typescript" "$dir/Makefile"
   printf 'name: other\n' >"$dir/.github/workflows/release.yml"
@@ -59,6 +60,16 @@ rm "$project/.github/workflows/security.yml"
 printf 'semgrep rule src/a.ts # accepted by the owner\n' >"$project/.github/security-ignore"
 expect_eq "missing security workflow is drift; the project's ignore file is not" "$(kit_drift "$project")" \
   "differs or missing: .github/workflows/security.yml"
+project=$(new_project drift-notify)
+# The notification workflow holds the webhook secrets: pointing it elsewhere, or dropping it, is drift.
+sed 's/GUARDRAILS_SLACK_WEBHOOK }}/OTHER_WEBHOOK }}/' "$template/.github/workflows/agent-notify.yml" \
+  >"$project/.github/workflows/agent-notify.yml"
+expect_eq "edited notify workflow is drift" "$(kit_drift "$project")" "differs or missing: .github/workflows/agent-notify.yml"
+rm "$project/.github/workflows/agent-notify.yml"
+expect_eq "missing notify workflow is drift" "$(kit_drift "$project")" "differs or missing: .github/workflows/agent-notify.yml"
+printf '# extra\n' >>"$project/.agent/bin/notify-team"
+cp "$template/.github/workflows/agent-notify.yml" "$project/.github/workflows/"
+expect_eq "edited notify script is drift" "$(kit_drift "$project")" "differs from the kit: .agent/bin/notify-team"
 project=$(new_project drift4)
 rm "$project/.github/workflows/checks-node.yml"
 expect_eq "missing checks workflow is drift" "$(kit_drift "$project")" "missing: .github/workflows/checks-<lang>.yml"
@@ -81,7 +92,7 @@ differs or missing: .cursor/hooks.json"
 project=$(new_project drift9)
 ln -s ../shared/rules "$project/.cursor/rules"
 expect_eq "linked Cursor rules are the project's own" "$(kit_drift "$project")" ""
-expect_eq "check jobs come from the workflows" "$(check_jobs "$(new_project jobs)")" "checks-node"
+expect_eq "check jobs come from the checks workflows only (notify is never required)" "$(check_jobs "$(new_project jobs)")" "checks-node"
 
 echo "remove_kit_files"
 project=$(new_project remove)
@@ -320,7 +331,8 @@ else ok; fi
 
 echo "changes_enforcement"
 for path in .github/workflows/ci.yml .github/security-ignore .github/CODEOWNERS .agent/bin/run-checks .claude/settings.json Makefile \
-  sub/Makefile .agent/common.mk CODEOWNERS .cursor/hooks.json .codex/hooks.json; do
+  sub/Makefile .agent/common.mk CODEOWNERS .cursor/hooks.json .codex/hooks.json .github/workflows/agent-notify.yml \
+  .agent/bin/notify-team; do
   if changes_enforcement "$path"; then ok; else fail "$path changes what CI enforces"; fi
 done
 for path in src/Makefile.ts specs/A-1/spec.lock README.md; do

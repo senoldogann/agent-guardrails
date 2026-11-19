@@ -16,6 +16,10 @@ Deterministic checks and the owner's approval decide whether work is done, not t
      their own terminal. Nothing merges without it, and every new push needs a new approval.
      `guardrails` (no arguments) lists what waits for the owner: questions (PR label `needs-decision`, set by
      `.agent/bin/block`) and PRs to approve.
+- When the owner has added a webhook secret, `.github/workflows/agent-notify.yml` tells the team's Slack or
+  Teams channel when a PR waits for approval, is blocked, asks a question (`needs-decision`), is approved or
+  merged. The message shows the PR title, so keep titles short and plain. The workflow and its secrets are
+  the owner's: never change them or where it posts.
 - Locked files (`specs/<ID>/spec.lock`, test IDs in `tests.lock`) change only by re-locking in a reviewed PR.
 - CI also mutates the changed source (`make mutation BASE_SHA=...` locally): every mutant must be killed by a
   locked test; proven-equivalent mutants are accepted only by the owner in `specs/<ID>/mutants-accepted`.

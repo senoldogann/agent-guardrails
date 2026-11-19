@@ -33,9 +33,10 @@ The template lives in `template/` next to this file (resolve this skill's base d
    Swift CI runs on GitHub's macOS runner, whose toolchain lags behind a developer's newest Xcode: keep
    `swift-tools-version` in Package.swift at the oldest version the package needs (6.0 for swift-testing).
 2. **Refuse to overwrite.** If `.agent/`, `Makefile`, `.claude/settings.json`, `.cursor/hooks.json`,
-   `.github/workflows/agent-guard.yml` or `.github/workflows/security.yml` exist, stop and ask how to merge (an
-   existing Makefile can `include .agent/common.mk`). A job named `security`, `guard` or `checks-<lang>` in
-   another workflow would collide with the required checks: stop and ask to rename it.
+   `.github/workflows/agent-guard.yml`, `.github/workflows/security.yml` or `.github/workflows/agent-notify.yml`
+   exist, stop and ask how to merge (an existing Makefile can `include .agent/common.mk`). A job named
+   `security`, `guard` or `checks-<lang>` in another workflow would collide with the required checks: stop and
+   ask to rename it.
 3. **Branch** `chore/agent-guardrails` from the up-to-date default branch. If that branch already exists
    locally or remotely, stop and ask (it may hold an earlier, unmerged installation).
 4. **Copy the template** with `cp -R`:
@@ -49,6 +50,8 @@ The template lives in `template/` next to this file (resolve this skill's base d
    - `template/.github/workflows/agent-guard.yml` → `.github/workflows/agent-guard.yml`
    - `template/.github/workflows/security.yml` → `.github/workflows/security.yml` (every language; it needs
      nothing installed in the project)
+   - `template/.github/workflows/agent-notify.yml` → `.github/workflows/agent-notify.yml` (team notifications;
+     inert until the owner adds a webhook secret, see the kit README)
    - `template/makefiles/Makefile.<lang>` → `Makefile`
    - `template/ci/checks-<node|python|rust|swift>.yml` → `.github/workflows/checks-<node|python|rust|swift>.yml`
      (node for typescript and javascript; one file per language in the repo)
