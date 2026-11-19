@@ -433,17 +433,27 @@ login() {
   gh api user --jq .login || die "cannot read your GitHub login (gh auth status)"
 }
 
+# Prints the answer to kit_search_query (its data, one line): where the kit's topic and the owner's bootstrap PRs
+# are on GitHub. The topic search covers the owner, the organizations they belong to (user/orgs lists those the
+# token may see) and the owners of enforced repositories, so an enforced organization stays covered even when
+# user/orgs leaves it out. Argument: the owner's login.
+kit_search() {
+  local orgs query
+  orgs=$(gh api --paginate user/orgs --jq '.[].login') ||
+    die "cannot list your organizations (gh api user/orgs); check gh auth status for the read:org scope"
+  query=$(kit_search_query "$1" "$1"$'\n'"$orgs"$'\n'"$(registered_repos | cut -d/ -f1)" "$topic") || exit 1
+  graphql_with_retry 3 2 "$query" '.data'
+}
+
 # Repos tagged on GitHub as enforced but missing from this machine's list (the list lost an entry).
+# Argument: kit_search's answer.
 topic_alarms() {
-  local owner tagged repo
-  owner=$(login) || exit 1
-  tagged=$(gh search repos --owner "$owner" --topic "$topic" --limit 100 --json fullName --jq '.[].fullName') ||
-    die "cannot search your repositories for the $topic topic"
+  local tagged repo
+  tagged=$(tagged_unlisted "$(registered_repos)" <<<"$1") || die "cannot read the topic search's answer (jq's error is above)"
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    registered_repos | grep -Fxi -- "$repo" >/dev/null ||
-      printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
-        "$repo" "$repo" "$topic" "$registry" "$repo"
+    printf 'alarm\037%s\037\037\037%s carries the %s topic but is not in %s. If you did not remove it, restore with: guardrails on %s\n' \
+      "$repo" "$repo" "$topic" "$registry" "$repo"
   done <<<"$tagged"
 }
 
@@ -462,19 +472,16 @@ kit_install_alarm() {
   fi
 }
 
-# Prints "turn-on" items: open /guardrails-init PRs in repos that are not enforced yet.
+# Prints "turn-on" items: the open /guardrails-init PRs of the owner, in a repository of any owner, that the owner
+# can turn on (bootstrap_turn_on). `on` still compares the kit files with this install before it merges anything.
+# Arguments: the owner's login, kit_search's answer.
 bootstrap_items() {
-  local owner prs repo url title
-  owner=$(login) || exit 1
-  # Only the owner's PRs: anyone can open a PR from a branch of that name, from a fork too. `on` still compares
-  # the kit files with this install before it merges anything.
-  prs=$(gh search prs --owner "$owner" --author "$owner" --head chore/agent-guardrails --state open --limit 50 \
-    --json url,title,repository --jq '.[] | [.repository.nameWithOwner, .url, .title] | @tsv') ||
-    die "cannot search your open bootstrap PRs"
+  local prs repo url title
+  prs=$(bootstrap_turn_on "$1" "$(registered_repos)" <<<"$2") ||
+    die "cannot read the bootstrap PR search's answer (jq's error is above)"
   while IFS=$'\t' read -r repo url title; do
     [[ -n $repo ]] || continue
-    registered_repos | grep -Fxi -- "$repo" >/dev/null ||
-      printf 'turn-on\037%s\037%s\037%s\037\n' "$repo" "$url" "$(clean "$title")"
+    printf 'turn-on\037%s\037%s\037%s\037\n' "$repo" "$url" "$(clean "$title")"
   done <<<"$prs"
 }
 
@@ -501,9 +508,11 @@ live_rulesets() {
 # sixth field, the PR's HEAD SHA, so the app notifies again when a push changes a PR that waits.
 # Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state rulesets problems items kind url title note sha problem queued
+  local repo state rulesets problems items kind url title note sha problem queued owner search
   kit_install_alarm
-  topic_alarms || exit 1
+  owner=$(login) || exit 1
+  search=$(kit_search "$owner") || exit 1
+  topic_alarms "$search" || exit 1
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     rulesets=$(live_rulesets "$repo") || exit 1
@@ -527,7 +536,7 @@ inbox_items() {
       printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note" "$sha"
     done <<<"$items"
   done < <(registered_repos)
-  bootstrap_items || exit 1
+  bootstrap_items "$owner" "$search" || exit 1
 }
 
 # One JSON object per line with the fields of inbox_items, for the Guardrails app.
@@ -594,30 +603,52 @@ projects_query='query($endCursor: String) {
     }
   }
 }'
+# The 25 most recently pushed repositories of the organizations the owner belongs to: one page, never paginated.
+# An organization can hold thousands of repositories, and listing them all would cost a call per 25 and fill the
+# app with rows the owner never sets up. Where the kit already is (enforced, tagged, or with the owner's bootstrap
+# PR) the repository is read by name whatever its age, and a repository gets pushed when its set-up starts.
+organization_projects_query='query {
+  viewer {
+    repositories(first: 25, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+                 ownerAffiliations: [ORGANIZATION_MEMBER], isArchived: false,
+                 orderBy: {field: PUSHED_AT, direction: DESC}) {
+      nodes { '"$project_fields"' }
+    }
+  }
+}'
 # shellcheck disable=SC2016 # $owner and $name are GraphQL variables
 project_query='query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { '"$project_fields"' } }'
 
+# Prints one JSON object per repository for the app (project_states), newest push first: every repository the
+# owner owns, the organizations' page (organization_projects_query) without the repositories the owner cannot
+# administer there (no rulesets, so nothing to set up), and, read by name, every other repository the kit is in
+# (project_extra_repos), whatever its owner and the owner's permission.
 projects_json() {
-  local owner app installed repo node
-  owner=$(login)
+  local owner app installed search personal organization listed extra repo node
+  owner=$(login) || exit 1
   if agent_app_registered; then app=registered; else app=none; fi
   installed=$(agent_installed_repos) || exit 1
+  search=$(kit_search "$owner") || exit 1
+  personal=$(graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]') || exit 1
+  organization=$(graphql_with_retry 3 2 "$organization_projects_query" \
+    '.data.viewer.repositories.nodes[] | select(.viewerPermission == "ADMIN")') || exit 1
+  listed=$(printf '%s\n%s\n' "$personal" "$organization" | awk 'NF > 0')
+  extra=$(project_extra_repos "$owner" "$(jq -r .nameWithOwner <<<"$listed")" "$(registered_repos)" <<<"$search") ||
+    die "cannot read the search for the kit's repositories (jq's error is above)"
   {
-    graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]'
-    # The owner's own repositories leave out enforced ones another account owns (an organization's, where a
-    # merge queue is possible): each of those is read by name.
+    [[ -z $listed ]] || printf '%s\n' "$listed"
     # One that cannot be read (deleted, transferred, access lost) shows as an alarm instead of hiding the rest;
     # gh's error still goes to stderr.
     while IFS= read -r repo; do
-      [[ -n $repo && $(tr '[:upper:]' '[:lower:]' <<<"${repo%%/*}") != $(tr '[:upper:]' '[:lower:]' <<<"$owner") ]] || continue
+      [[ -n $repo ]] || continue
       if ! node=$(gh api graphql -f owner="${repo%%/*}" -f name="${repo#*/}" -f query="$project_query" --jq .data.repository) ||
         [[ -z $node || $node == null ]]; then
         node=$(jq -n -c --arg repo "$repo" '{nameWithOwner: $repo, unreadable: true, isFork: false, isPrivate: true,
           pushedAt: "", viewerPermission: "READ", pullRequests: {totalCount: 0}}')
       fi
       printf '%s\n' "$node"
-    done < <(registered_repos)
-  } | project_states "$owner" "$(registered_repos)" "$app" "$installed"
+    done <<<"$extra"
+  } | jq -c -s 'sort_by(.pushedAt // "") | reverse | .[]' | project_states "$owner" "$(registered_repos)" "$app" "$installed"
 }
 
 prs_json() {
