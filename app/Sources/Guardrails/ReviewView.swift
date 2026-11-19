@@ -196,13 +196,12 @@ struct ReviewView: View {
                 openDiff(pr, model: model)
             } label: {
                 OcticonLabel("Open changes on GitHub", icon: .linkExternal)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
             .primaryAction()
             .disabled(pr.compareURL == nil)
         } else {
-            confirmButton(model)
-                .frame(maxWidth: .infinity)
+            confirmButton(model, wide: true)
         }
     }
 
@@ -406,13 +405,15 @@ struct ReviewView: View {
     }
 
     @ViewBuilder
-    private func confirmButton(_ model: ActionModel) -> some View {
+    /// - Parameter wide: fill the column it sits in (the decision column), instead of hugging its title.
+    private func confirmButton(_ model: ActionModel, wide: Bool = false) -> some View {
         switch model.phase {
         case .awaitingConfirmation(let pending):
             let button = Button {
                 Task { await model.confirm() }
             } label: {
                 OcticonLabel(confirmTitle(pending, ownMerge: model.plan?.pullRequest?.isOwnMerge == true), icon: .passkey)
+                    .frame(maxWidth: wide ? .infinity : nil)
             }
             .disabled(prMoved(model))
             .help(prMoved(model) ? "The PR has a newer commit than the one shown here." : "")
