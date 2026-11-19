@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
-# Usage: approve-head <pr-link-or-number>   (run by the HUMAN owner in their own terminal)
-# With a PR link it works from any directory; a bare number uses the current directory's repository.
-# Gives the owner's merge approval for the exact current HEAD of a PR. In status mode (the agent works with
-# the owner's login) it posts the commit status `merge-approval` = success, which the ruleset requires. In
-# review mode (the agent pushes as its App's bot) it submits an approving GitHub review pinned to that commit
-# (commit_id), which the ruleset requires from a code owner; GitHub dismisses it when a push changes the PR.
-# Either way a new push needs a new approval.
-# Lives in the kit install directory, outside every project, so an agent cannot edit the copy you run.
-# Refuses in the agent's environment (GH_TOKEN, GITHUB_TOKEN or GH_CONFIG_DIR set) and when the PR is not
-# ready: base must be the default branch, the `guard` run for that SHA must have succeeded, no workflow may
-# grant `statuses: write` or `checks: write`.
+# Usage: approve-head <pr-link-or-number> (the human owner, in an interactive terminal).
+# All inspected files and the resulting approval must use the same PR head.
 set -euo pipefail
 kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
@@ -25,58 +16,62 @@ target=$(pr_target "$1") || exit 1
 read -r repo pr <<<"$target"
 default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name) ||
   die "cannot read the default branch of $repo"
-pr_json=$(gh pr view "$pr" -R "$repo" --json headRefOid,baseRefName,title,url,isDraft,author) ||
-  die "cannot read PR #$pr of $repo"
-sha=$(jq -r .headRefOid <<<"$pr_json")
-base=$(jq -r .baseRefName <<<"$pr_json")
 
+# Read both commit IDs together. A later lookup by PR number might describe a different diff.
+read_pr() { gh api "repos/$repo/pulls/$pr"; }
+pr_json=$(read_pr) || die "cannot read PR #$pr of $repo"
+sha=$(jq -er '.head.sha | strings | select(test("^[0-9a-f]{40}$"))' <<<"$pr_json") || die "invalid PR head SHA"
+base_sha=$(jq -er '.base.sha | strings | select(test("^[0-9a-f]{40}$"))' <<<"$pr_json") || die "invalid PR base SHA"
+base=$(jq -r .base.ref <<<"$pr_json")
 [[ $base == "$default_branch" ]] || die "PR #$pr targets '$base', not the default branch '$default_branch'"
-[[ $(jq -r .isDraft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
+jq -e '.state == "open" and .draft == false' <<<"$pr_json" >/dev/null || die "PR #$pr is closed or a draft"
 
-# The approval must protect something: the live rulesets must be in status or review mode (approval_mode).
 mode=$(approval_mode "$repo") || exit 1
 [[ $mode != - ]] ||
   die "the agent-guardrails rulesets on $repo are missing, inactive or changed, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
 
-# The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
-# from any check run named "guard": a workflow added by the PR could report a check run of that name. The run
-# must belong to this PR into the default branch: another PR with the same head into a branch the agent can
-# push to would run that branch's own agent-guard.yml (see guard_conclusion).
+# Use only the trusted default-branch workflow for this PR; another check named guard is not evidence.
 guard_runs=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target&per_page=100") ||
   die "cannot read the guard runs of $sha; nothing approved"
 guard=$(guard_conclusion "$pr" "$default_branch" <<<"$guard_runs")
 [[ $guard == success ]] || die "guard run of PR #$pr into $default_branch at $sha is '$guard'; wait for it or fix the PR"
 
-# Read in full before the loop: a failed listing or download must stop the approval, not skip the scan.
+# Read in full before the loop: a failed listing or download must stop the approval.
 workflows=$(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] | select(.type == "file") | .path') ||
   die "cannot list the workflows of $sha; nothing approved"
 while IFS= read -r workflow; do
   [[ -n $workflow ]] || continue
   content=$(gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content) || die "cannot read $workflow at $sha; nothing approved"
-  if base64 --decode <<<"$content" | grants_check_or_status_writes; then
+  decoded=$(base64 --decode <<<"$content") || die "cannot decode $workflow at $sha; nothing approved"
+  if grants_check_or_status_writes <<<"$decoded"; then
     die "$workflow lets its token write checks or statuses (could fake a required check); refuse to approve"
   fi
 done <<<"$workflows"
 
-# GitHub does not let the owner approve their own PR. In review mode the owner, as admin, may bypass the review
-# ruleset for it (never the checks), so "approving" their own PR merges it at exactly the confirmed commit.
 own_merge=false
-if [[ $mode == review && $(jq -r .author.login <<<"$pr_json") == "$(gh api user --jq .login)" ]]; then
+if [[ $mode == review && $(jq -r .user.login <<<"$pr_json") == "$(gh api user --jq .login)" ]]; then
   own_merge=true
 fi
-# With a merge queue nobody merges directly: the branch ruleset's queue rule has no bypass, and gh refuses
-# --delete-branch there. The owner's own PR is added to the queue instead, still pinned to the confirmed commit.
 queue=false
 if [[ $own_merge == true ]]; then
   branch_rules=$(ruleset_by_name "$repo" agent-guardrails) || exit 1
   queue=$(ruleset_has_merge_queue <<<"$branch_rules")
 fi
 
-files=$(pr_files "$repo" "$pr")
-# Titles are written by the agent: drop control characters so they cannot redraw the lines below.
+# GitHub's three-dot comparison uses the merge base and returns at most 300 files. Fail closed at
+# that limit; include both sides of renames so moving a guarded path still asks for confirmation.
+comparison=$(gh api "repos/$repo/compare/$base_sha...$sha?per_page=1&page=1") ||
+  die "cannot compare $base_sha and $sha; nothing approved"
+files=$(jq -r '
+  .files | if type != "array" or length >= 300 then error("comparison file list missing or potentially truncated") else . end
+  | [ .[] | .filename, (.previous_filename // empty) ]
+  | if any(.[]; type != "string" or length == 0 or test("[[:cntrl:]]")) then error("invalid comparison path") else . end
+  | unique[]
+' <<<"$comparison") || die "cannot read the complete changed-file list; nothing approved"
+
 title=$(jq -r '.title | gsub("[[:cntrl:]]"; "?")' <<<"$pr_json")
-url=$(jq -r .url <<<"$pr_json")
-printf '\nPR #%s %s\n%s\nhead: %s\n\nChanged files:\n' "$pr" "$title" "$url" "$sha"
+url=$(jq -r .html_url <<<"$pr_json")
+printf '\nPR #%s %s\n%s\nbase: %s\nhead: %s\n\nChanged files:\n' "$pr" "$title" "$url" "$base_sha" "$sha"
 workflow_changes=""
 marked=""
 while IFS= read -r file; do
@@ -94,8 +89,8 @@ printf '\n(! human-owned, !! workflow or guardrail file: can change what CI enfo
 
 short=${sha:0:7}
 emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
-  --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" --argjson queue "$queue" \
-  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files, merge: $merge,
+  --arg base "$base_sha" --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" --argjson queue "$queue" \
+  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, base: $base, files: $files, merge: $merge,
     mergeQueue: $queue}')"
 if [[ $queue == true ]]; then
   confirm commit "$short" "This is your own PR. Type $short to add exactly this commit to the merge queue (your admin bypass skips the review, not the checks): "
@@ -108,6 +103,13 @@ if [[ -n $workflow_changes ]]; then
   confirm workflows workflows "Workflow or guardrail files change ($workflow_changes). Type 'workflows' to confirm you reviewed them: "
 fi
 
+# Do not act on a stale screen. All subsequent writes also name the approved head explicitly;
+# another push after this read must never cause the write to target that newer head.
+current=$(read_pr) || die "cannot re-read PR #$pr of $repo; nothing approved"
+jq -e --arg base "$base_sha" --arg branch "$base" --arg head "$sha" \
+  '.state == "open" and .draft == false and .base.sha == $base and .base.ref == $branch and .head.sha == $head' \
+  <<<"$current" >/dev/null || die "PR #$pr changed during approval; review a fresh plan"
+
 if [[ $mode == status ]]; then
   gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=merge-approval \
     -f description="Approved by owner for PR #$pr" >/dev/null
@@ -115,9 +117,7 @@ if [[ $mode == status ]]; then
   exit 0
 fi
 if [[ $queue == true ]]; then
-  # enqueuePullRequest adds the PR now or fails with GitHub's reason; gh pr merge would instead turn on
-  # auto-merge and wait silently when a requirement is missing. expectedHeadOid pins the confirmed commit.
-  pr_id=$(gh pr view "$pr" -R "$repo" --json id --jq .id) || die "cannot read PR #$pr of $repo; nothing queued"
+  pr_id=$(jq -er '.node_id | strings | select(length > 0)' <<<"$current") || die "missing PR ID; nothing queued"
   # shellcheck disable=SC2016 # $id and $head are GraphQL variables
   gh api graphql -f id="$pr_id" -f head="$sha" -f query='mutation($id: ID!, $head: GitObjectID!) {
     enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $head}) { mergeQueueEntry { position } }
@@ -130,12 +130,10 @@ if [[ $own_merge == true ]]; then
   printf 'merged your own PR #%s at %s\n' "$pr" "$sha"
   exit 0
 fi
-# The review names the commit the owner saw, so a push between showing and approving cannot receive it.
 review_id=$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f commit_id="$sha" -f event=APPROVE \
   -f body="Approved by the owner for $sha after the agent-guardrails checks." --jq .id)
 now=$(gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid)
 if [[ $now != "$sha" ]]; then
-  # Do not leave an approval behind on a PR that moved; GitHub's handling of it is not something to rely on.
   gh api -X PUT "repos/$repo/pulls/$pr/reviews/$review_id/dismissals" \
     -f message="The PR moved to ${now:0:7} while the owner approved ${sha:0:7}" -f event=DISMISS >/dev/null
   die "PR #$pr moved to ${now:0:7} while you approved ${sha:0:7}; your review was dismissed. Review the new head."
