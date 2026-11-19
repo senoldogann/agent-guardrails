@@ -12,15 +12,16 @@ Usage (the workflow on stdin):
 Exit status 0 means the check ran: no output accepts the workflow, each line is a problem. Any other status
 means it could not run, which the callers treat as a failure.
 
-ci-guard (CI) and the owner's approval (bin/guardrails-lib.sh) run this same file. Its parser is PyYAML's
-scanner and parser, used for events only (guardrails_pyyaml/): no constructor or resolver runs, so nothing in
-the document is ever built into an object, and every scalar stays the string it spells, `on` included (a
-YAML 1.1 resolver would turn it into true). Escapes, quoting, flow collections and block scalars are read the
-way YAML defines them. Forms where parsers disagree or that hide one value behind another fail closed:
-duplicate keys (compared trimmed and case-insensitively), anchors, aliases and merge keys (GitHub supports
-anchors and aliases since 2025, but not merge keys; workflows here stay without them so every key reads in
-place), explicit tags, directives, more than one document, keys that are not scalars, the characters YAML 1.1
-and 1.2 read differently (NEL, U+2028, U+2029, a byte order mark, a lone CR), deep nesting and large files.
+ci-guard (CI) and the owner's approval (bin/guardrails-lib.sh) run this same file. Both pass -B, so no
+bytecode lands next to it. Its parser is PyYAML's scanner and parser, used for events only
+(guardrails_pyyaml/): no constructor or resolver runs, so nothing in the document is ever built into an
+object, and every scalar stays the string it spells, `on` included (a YAML 1.1 resolver would turn it into
+true). Escapes, quoting, flow collections and block scalars are read the way YAML defines them. Forms where
+parsers disagree or that hide one value behind another fail closed: duplicate keys (compared trimmed and
+case-insensitively), anchors, aliases and merge keys (GitHub supports anchors and aliases since 2025, but
+not merge keys; workflows here stay without them so every key reads in place), explicit tags, directives,
+more than one document, keys that are not scalars, the characters YAML 1.1 and 1.2 read differently (NEL,
+U+2028, U+2029, a byte order mark, a lone CR), deep nesting and large files.
 """
 
 from __future__ import annotations
@@ -32,11 +33,10 @@ import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
-sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from guardrails_pyyaml.error import MarkedYAMLError, YAMLError  # noqa: E402
-from guardrails_pyyaml.events import (  # noqa: E402
+from guardrails_pyyaml.error import MarkedYAMLError, YAMLError
+from guardrails_pyyaml.events import (
     AliasEvent,
     DocumentEndEvent,
     DocumentStartEvent,
@@ -50,9 +50,9 @@ from guardrails_pyyaml.events import (  # noqa: E402
     StreamEndEvent,
     StreamStartEvent,
 )
-from guardrails_pyyaml.parser import Parser  # noqa: E402
-from guardrails_pyyaml.reader import Reader  # noqa: E402
-from guardrails_pyyaml.scanner import Scanner  # noqa: E402
+from guardrails_pyyaml.parser import Parser
+from guardrails_pyyaml.reader import Reader
+from guardrails_pyyaml.scanner import Scanner
 
 YamlValue = Union[str, List["YamlValue"], Dict[str, "YamlValue"]]
 YamlMapping = Dict[str, "YamlValue"]

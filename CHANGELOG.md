@@ -8,6 +8,9 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- In a Python project, `make lint` failed on the kit's own `.agent/workflow/check.py`: `escape-check` found
+  its `# noqa: E402` comments. The file now needs no suppression, and the smoke test runs `escape-check` in
+  every language over the kit's own files.
 - A command that runs past the app's time limit is now always followed by SIGKILL to its whole process group
   after the grace. Before, SIGKILL was skipped once the output streams ended, so a child in the group that
   ignored SIGTERM and let go of its output kept running after the timeout.

@@ -253,6 +253,10 @@ git add -A && git commit -qm "spec(ABC-1): lock"
 expect_success "spec-commit-ticket names the locking commit" .agent/bin/spec-commit-ticket
 expect_out "ticket detected" "ABC-1"
 expect_success "clean ts passes" .agent/bin/escape-check ts .
+# The kit's own files are tracked in every project, so they must pass the check in each language.
+for lang in ts py rs swift; do
+  expect_success "the kit's own files pass escape-check $lang" .agent/bin/escape-check "$lang" .
+done
 printf '// @ts-ignore\nexport {};\n' >src/domain/percent.ts
 git add -A
 expect_failure "@ts-ignore fails" .agent/bin/escape-check ts .
