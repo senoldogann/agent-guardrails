@@ -190,6 +190,12 @@ expect_eq "the unlock confirmation is asked" "$(jq -r -s '[.[] | select(.event =
 expect_eq "a refused unlock confirmation writes nothing" "$(cat "$fake/writes.log")" ""
 expect_eq "with both confirmations it approves" "$(approve aaaaaaa unlock)" 0
 expect_eq "and writes once, on the head" "$(grep -c "statuses/$head" "$fake/writes.log")" 1
+pr_json "$moved" 3 >"$fake/pr.2.json"
+expect_eq "a push while the dropped file is confirmed stops the approval" "$(approve aaaaaaa unlock)" 1
+expect_eq "after both confirmations were asked" "$(jq -r -s '[.[] | select(.event == "confirm") | .step] | join(" ")' "$work/events")" \
+  "commit unlock"
+expect_eq "and nothing is written" "$(cat "$fake/writes.log")" ""
+rm -f "$fake/pr.2.json"
 
 lock_json "$(sum specs/A-1/locked-files; sum tests/a.test.ts; sum tests/keep.test.ts; sum tests/b.test.ts)" >"$fake/lock.head.json"
 expect_eq "a lock that only adds files needs no unlock confirmation" "$(approve aaaaaaa)" 0

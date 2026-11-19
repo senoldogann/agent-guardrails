@@ -11,14 +11,14 @@ GitHub teams that already let coding agents open pull requests are bottlenecked 
 For a repository turned on in review mode, on the default branch:
 
 - **Exact head.** No PR merges unless the default branch's guard and the required checks passed on its exact head commit.
-- **Locked contract.** The agent cannot change the locked spec and tests of a ticket without the guard failing or showing the change to the owner. A new lock that drops a protected file is listed for the owner.
-- **Exact-commit approval.** A human approves the exact commit, and a new push needs a new approval. The approval shows the files of exactly that base and head, and changes to guardrail files need a second confirmation.
+- **Locked contract.** The agent cannot change the locked spec and tests of a ticket without the guard failing or showing the change to the owner. A re-lock that stops protecting a file is shown at approval, by ticket and path, and needs its own confirmation.
+- **Exact-commit approval.** A human approves the exact commit, and a new push needs a new approval. The approval in the CLI or the app shows the files of exactly that base and head, and changes to guardrail files need a second confirmation there; an approval on github.com or GitHub Mobile skips both.
 - **Detected weakening.** The owner's inbox raises an alarm when the rulesets stop protecting the default branch. Causes include a ruleset that is disabled, retargeted, excluded, missing a rule, or carries an extra bypass actor.
 - **Visible exceptions.** Merges that skipped an approval are visible afterwards (`guardrails report`).
 
 ## What it does not promise
 
-- **Business correctness.** The checks prove the code meets the spec the team locked, not that the spec is right.
+- **Business correctness or complete coverage.** A green run records that the evaluated commit passed the locked tests and the configured checks. It does not prove that those tests cover the whole specification, or that the specification is right.
 - **Isolation from an agent running as the same computer user.** Local hooks and the app are conveniences, not a boundary. The README's "Security model and limits" section is the reference.
 - **Protection in status mode against a deliberately hostile agent.**
 - **Protection against repository administrators.** They can merge without review in review mode, and can change or remove rulesets. The kit detects and reports this; it does not prevent it.

@@ -61,10 +61,13 @@ func runCommand(command: [String], environment: [String: String], limit: Command
 }
 
 /// The command runs in its own process group, so a timeout reaches every descendant that stayed in it: SIGTERM
-/// first, SIGKILL after `stopGrace` for whatever ignored it. A descendant that left the group (`setsid`, job
-/// control) cannot be reached that way and may keep the output pipes open forever, so after the second grace the
-/// pipes are closed without waiting for their end. The command itself stays unreaped until then, which keeps its
-/// process ID, and with it the group ID, from being reused while the group is signalled.
+/// first, then SIGKILL for whatever is left of the group after `stopGrace`. The end of the output streams and the
+/// command's exit say nothing about the rest of the group (a child that ignores SIGTERM may have let go of the
+/// pipes), so SIGKILL always follows; the wait before it only ends early once the group holds nothing but the
+/// command. A descendant that left the group (`setsid`, job control) cannot be reached by group signals at all and
+/// may keep the output pipes open forever, so after the second grace the pipes are closed without waiting for
+/// their end. The command itself stays unreaped until both signals are sent, which keeps its process ID, and with
+/// it the group ID, from being reused while the group is signalled.
 private func runCommandBlocking(command: [String], environment: [String: String], limit: CommandTimeLimit) throws
     -> CommandResult
 {
@@ -77,11 +80,12 @@ private func runCommandBlocking(command: [String], environment: [String: String]
             standardOutput: String(decoding: streams.outputData, as: UTF8.self),
             standardError: String(decoding: streams.errorData, as: UTF8.self))
     }
+    let termDeadline = clock.now + .seconds(limit.stopGrace)
     kill(-streams.pid, SIGTERM)
-    if try !streams.drain(until: clock.now + .seconds(limit.stopGrace)) {
-        kill(-streams.pid, SIGKILL)
-        _ = try streams.drain(until: clock.now + .seconds(limit.stopGrace))
-    }
+    _ = try streams.drain(until: termDeadline)
+    waitUntilGroupHoldsOnly(leader: streams.pid, until: termDeadline)
+    kill(-streams.pid, SIGKILL)
+    _ = try streams.drain(until: clock.now + .seconds(limit.stopGrace))
     if streams.hasExited {
         _ = try reap(streams.pid, command: command)
     } else {
@@ -215,6 +219,24 @@ private func spawnInOwnGroup(command: [String], environment: [String: String]) t
     return CommandStreams(
         pid: pid, command: command, output: output.read, error: errors.read, exitNotice: exitNotice.read,
         open: [output.read, errors.read, exitNotice.read])
+}
+
+/// Gives the processes of the group that `leader` leads time to act on SIGTERM: returns once none but the leader
+/// (still unreaped, so possibly a zombie) is left in the group, or at the deadline.
+private func waitUntilGroupHoldsOnly(leader: pid_t, until deadline: ContinuousClock.Instant) {
+    while ContinuousClock.now < deadline, groupHasOtherMembers(leader: leader) {
+        usleep(20_000)
+    }
+}
+
+/// Whether the process group that `leader` leads holds any process besides it. A list that cannot be read counts
+/// as yes: the caller then waits out its grace and sends SIGKILL to the group either way.
+private func groupHasOtherMembers(leader: pid_t) -> Bool {
+    var members = [pid_t](repeating: 0, count: 256)
+    let bytes = proc_listpids(
+        UInt32(PROC_PGRP_ONLY), UInt32(leader), &members, Int32(members.count * MemoryLayout<pid_t>.size))
+    guard bytes >= 0 else { return true }
+    return members.prefix(Int(bytes) / MemoryLayout<pid_t>.size).contains { $0 != 0 && $0 != leader }
 }
 
 /// Collects the exit status of a command that has exited.

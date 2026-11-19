@@ -6,6 +6,14 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- A command that runs past the app's time limit is now always followed by SIGKILL to its whole process group
+  after the grace. Before, SIGKILL was skipped once the output streams ended, so a child in the group that
+  ignored SIGTERM and let go of its output kept running after the timeout.
+- `docs/pilot.md` no longer says that the checks prove the code meets the locked spec. A green run records
+  that the evaluated commit passed the locked tests and configured checks; it does not prove complete coverage.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added
