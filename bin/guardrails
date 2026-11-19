@@ -464,16 +464,19 @@ bootstrap_items() {
 }
 
 # Prints the live rulesets of a repository as {branch, review, tag} (null when missing) for ruleset_problems,
-# with mergeQueue: whether the owner turned the merge queue on for it (this Mac's list). Dies when GitHub cannot
-# be read.
+# with mergeQueue: whether the owner turned the merge queue on for it (this Mac's list), and defaultBranch: the
+# branch the rulesets must cover. Dies when GitHub cannot be read.
 live_rulesets() {
-  local branch review tag queue=false
+  local branch review tag default_branch queue=false
   branch=$(ruleset_by_name "$1" "$ruleset_name") || exit 1
   review=$(ruleset_by_name "$1" "$review_ruleset_name") || exit 1
   tag=$(ruleset_by_name "$1" "$tag_ruleset_name") || exit 1
+  default_branch=$(gh api "repos/$1" --jq .default_branch) || die "cannot read the default branch of $1"
+  [[ -n $default_branch ]] || die "GitHub returned no default branch for $1"
   if queue_listed "$1"; then queue=true; fi
   jq -n -c --argjson branch "${branch:-null}" --argjson review "${review:-null}" --argjson tag "${tag:-null}" \
-    --argjson queue "$queue" '{branch: $branch, review: $review, tag: $tag, mergeQueue: $queue}'
+    --argjson queue "$queue" --arg default_branch "$default_branch" \
+    '{branch: $branch, review: $review, tag: $tag, mergeQueue: $queue, defaultBranch: $default_branch}'
 }
 
 # Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
@@ -483,7 +486,7 @@ live_rulesets() {
 # sixth field, the PR's HEAD SHA, so the app notifies again when a push changes a PR that waits.
 # Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state rulesets items kind url title note sha problem queued
+  local repo state rulesets problems items kind url title note sha problem queued
   kit_install_alarm
   topic_alarms || exit 1
   while IFS= read -r repo; do
@@ -496,11 +499,13 @@ inbox_items() {
     fi
     state=$(jq -r '.branch.enforcement // "missing"' <<<"$rulesets")
     printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
+    # Read in full first: a failed evaluation inside a process substitution would read as "no problems".
+    problems=$(ruleset_problems <<<"$rulesets") || die "cannot evaluate the live rulesets of $repo (jq's error is above)"
     while IFS= read -r problem; do
       [[ -n $problem ]] || continue
       printf 'alarm\037%s\037\037\037%s: %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
         "$repo" "$repo" "$problem" "$repo"
-    done < <(ruleset_problems <<<"$rulesets")
+    done <<<"$problems"
     items=$(repo_items "$repo" "$queued") || exit 1
     while IFS=$'\t' read -r kind url title note sha; do
       [[ -n $kind ]] || continue
@@ -765,7 +770,7 @@ status() {
     dir=$(clone_at "$repo" "$default_branch") || exit 1
     tmp_dirs+=" $dir"
     drift=$(kit_drift "$dir")
-    mode=$(approval_mode "$repo") || exit 1
+    mode=$(approval_mode "$repo" "$default_branch") || exit 1
     state=$(ruleset_state "$repo") || exit 1
     tags=$(ruleset_enforcement "$repo" "$tag_ruleset_name") || exit 1
     printf '%-45s ruleset %-8s approval %-6s tags %-8s kit files %s\n' "$repo" "$state" "$mode" "$tags" \

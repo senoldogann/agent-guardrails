@@ -660,19 +660,87 @@ ruleset_enforcement() {
   if [[ -z $ruleset ]]; then printf 'missing\n'; else jq -r .enforcement <<<"$ruleset"; fi
 }
 
+# jq definitions shared by ruleset_approval_mode and ruleset_problems, so an approval and the inbox judge the
+# same thing as protection. An active ruleset protects only the refs its target and conditions select: one whose
+# conditions.ref_name was retargeted, or that excludes the default branch, still reads as active with every rule
+# in place, yet no longer applies to the default branch. GitHub's documented semantics (REST "Repository
+# rules", "Creating rulesets for a repository"): include accepts ref names, fnmatch patterns and the keywords
+# ~DEFAULT_BRANCH and ~ALL, one of which must match; no exclude entry may match. Patterns match the full ref
+# (refs/heads/<branch>, refs/tags/<tag>) with File.fnmatch: `*` and `?` never match `/`, `**/` spans
+# directories, [...] is a character set that never matches `/`, a backslash does not quote and braces do not
+# expand. A pattern this reading cannot translate counts as not including and as excluding, and an exclude entry is
+# also read against the bare branch name: when unsure, the ruleset does not count as covering the branch. A set is
+# read only when it is plain: single characters and ascending ranges, no `-` at either end of its body and no
+# chained range (a-c-e), whose meaning differs between fnmatch and a regex.
+#   set_regex              the input [...] token as a regex that never matches `/`, null when it is not plain
+#   fnmatch_regex          the input pattern as an anchored regex, null when this reading cannot translate it
+#   ref_hit($refs)         whether the input include/exclude entry matches one of $refs: true, false, or null
+#                          when it cannot tell
+#   covers_default($b)     the input ruleset targets branches and covers refs/heads/$b
+#   protects_default($b)   the input ruleset is active and covers_default($b)
+#   covers_all_tags        the input ruleset targets tags and covers every tag as tag_ruleset sets it up
+#                          (include ~ALL, no exclude)
+#   bypass_list            the input ruleset's bypass actors, comparable as values
+#   kit_bypass($kit)       the input ruleset's bypass list is exactly $kit's (a ruleset as a builder makes it)
+#   unbypassed_default($b) protects_default($b) and nobody may bypass it, as branch_ruleset sets it up
+#   actor_text             one bypass actor in words: "RepositoryRole 5 (always)"
+# shellcheck disable=SC2016 # jq's $variables, not the shell's
+ruleset_jq_defs='
+def set_regex:
+  (.[1:2] | IN("!", "^")) as $negated
+  | (if $negated then .[2:-1] else .[1:-1] end) as $body
+  | if ($body | test("^(?:[^-]|[^-]-[^-])+$") | not) then null
+    elif any($body | scan("([^-])-([^-])"); (.[0] | explode[0]) > (.[1] | explode[0])) then null
+    else "(?!/)[" + (if $negated then "^" else "" end) + $body + "]" end;
+def fnmatch_regex:
+  if test("\\\\") then null
+  else [scan("\\[[!^]?[^\\]/\\[&]+\\]|\\*\\*/|\\*+|\\?|.")] as $tokens
+  | [foreach $tokens[] as $t ({start: true};
+        .re = (if $t == "**/" and .start then "(?:[^/]*/)*"
+               elif $t == "**/" then "[^/]*/"
+               elif ($t | startswith("*")) then "[^/]*"
+               elif $t == "?" then "[^/]"
+               elif $t == "[" then null
+               elif ($t | length) > 1 then ($t | set_regex)
+               elif ($t | test("[.^$|()+{}\\]]")) then "\\" + $t
+               else $t end)
+        | .start = ($t | endswith("/"));
+        .re)] as $parts
+  | if any($parts[]; . == null) then null else "^" + ($parts | join("")) + "$" end
+  end;
+def ref_hit($refs):
+  if IN("~ALL", "~DEFAULT_BRANCH") then true
+  elif startswith("~") then null
+  else fnmatch_regex as $re | if $re == null then null else any($refs[]; test($re)) end end;
+def covers_default($b):
+  .target == "branch"
+  and any(.conditions.ref_name.include[]?; ref_hit(["refs/heads/" + $b]) == true)
+  and all(.conditions.ref_name.exclude[]?; ref_hit(["refs/heads/" + $b, $b]) == false);
+def protects_default($b): .enforcement == "active" and covers_default($b);
+def covers_all_tags:
+  .target == "tag" and any(.conditions.ref_name.include[]?; . == "~ALL")
+  and (.conditions.ref_name.exclude // []) == [];
+def bypass_list: [.bypass_actors[]? | {actor_id, actor_type, bypass_mode}];
+def kit_bypass($kit): (bypass_list | sort) == ($kit | bypass_list | sort);
+def unbypassed_default($b): protects_default($b) and kit_bypass({bypass_actors: []});
+def actor_text: [.actor_type, (.actor_id // empty | tostring), "(\(.bypass_mode))"] | join(" ");
+'
+
 # Prints "review", "status" or "-": how the live rulesets of a repository expect the owner's approval. Status
-# mode needs the branch ruleset agent-guardrails to be active and require merge-approval; review mode needs it
-# active next to the review ruleset agent-guardrails-review with every review setting on. Argument: owner/repo.
+# mode needs the branch ruleset agent-guardrails to be active on the default branch with nobody to bypass it and
+# require merge-approval; review mode needs it the same way next to the review ruleset agent-guardrails-review, also
+# on the default branch, with every review setting on and only the bypass review_ruleset sets. These are the
+# invariants ruleset_problems alarms on (ruleset_jq_defs). Arguments: owner/repo, its default branch.
 approval_mode() {
   local branch review
   branch=$(ruleset_by_name "$1" agent-guardrails) || exit 1
-  if [[ -n $branch && $(ruleset_approval_mode <<<"$branch") == status ]]; then
+  if [[ -n $branch && $(ruleset_approval_mode "$2" <<<"$branch") == status ]]; then
     printf 'status\n'
     return 0
   fi
   review=$(ruleset_by_name "$1" agent-guardrails-review) || exit 1
-  if [[ -n $branch && $(jq -r .enforcement <<<"$branch") == active && -n $review &&
-    $(ruleset_approval_mode <<<"$review") == review ]]; then
+  if [[ -n $branch && $(jq -r --arg b "$2" "$ruleset_jq_defs"' unbypassed_default($b)' <<<"$branch") == true &&
+    -n $review && $(ruleset_approval_mode "$2" <<<"$review") == review ]]; then
     printf 'review\n'
     return 0
   fi
@@ -680,37 +748,61 @@ approval_mode() {
 }
 
 # Reads a live ruleset (GET /repos/{r}/rulesets/{id}) and prints its approval mode for the default branch:
-# "status" when it is active and requires merge-approval, "review" when it is an active review ruleset as
-# review_ruleset builds it (all four review settings on), "-" otherwise.
+# "status" when it is active on that branch, nobody may bypass it and it requires merge-approval; "review" when it
+# is an active review ruleset on that branch as review_ruleset builds it (all four review settings on, admins may
+# bypass it only through a PR); "-" otherwise. A ruleset that no longer covers the default branch, or that someone
+# else may bypass, protects nothing an approval is for. Argument: the default branch.
 ruleset_approval_mode() {
-  jq -r 'if .enforcement != "active" then "-"
+  jq -r --arg b "$1" --argjson review_kit "$(review_ruleset agent-guardrails-review)" "$ruleset_jq_defs"'
+    if protects_default($b) | not then "-"
     elif any(.rules[]; .type == "required_status_checks"
-      and any(.parameters.required_status_checks[]; .context == "merge-approval")) then "status"
+      and any(.parameters.required_status_checks[]; .context == "merge-approval"))
+    then (if kit_bypass({bypass_actors: []}) then "status" else "-" end)
     elif any(.rules[]; .type == "pull_request" and .parameters.required_approving_review_count >= 1
       and .parameters.require_code_owner_review and .parameters.dismiss_stale_reviews_on_push
-      and .parameters.require_last_push_approval) then "review"
+      and .parameters.require_last_push_approval)
+    then (if kit_bypass($review_kit) then "review" else "-" end)
     else "-" end'
 }
 
-# Reads {branch, review, tag, mergeQueue}: the live rulesets agent-guardrails, agent-guardrails-review and
-# agent-guardrails-tags (each null when missing) and whether the owner turned the merge queue on for the
-# repository (true or false), and prints one line per way they no longer protect what the kit set up: inactive or
-# missing, a bypass list where there was none, a lost rule, guard, security or every checks-<lang> job not required
-# from GitHub Actions, other merge methods, no rule left that requires the owner's approval (neither
-# merge-approval nor an intact review ruleset), and a merge queue that is gone or no longer squashes only PRs
-# that pass. Prints nothing when they still hold. The exact list of checks-<lang> jobs is not compared: it
-# depends on the repository's languages.
+# Reads {branch, review, tag, mergeQueue, defaultBranch}: the live rulesets agent-guardrails,
+# agent-guardrails-review and agent-guardrails-tags (each null when missing), whether the owner turned the merge
+# queue on for the repository (true or false) and the repository's current default branch, and prints one line per
+# way they no longer protect what the kit set up: inactive or missing; a branch ruleset that no longer targets
+# branches or no longer covers the default branch (see ruleset_jq_defs); a tag ruleset that no longer targets every
+# tag or lost its creation, update or deletion rule; a bypass list other than the one `guardrails on` applies
+# (nobody on the branch ruleset, admins through a PR on the review ruleset, admins on the tag ruleset); a lost rule;
+# guard, security or every checks-<lang> job not required from GitHub Actions; other merge methods; no rule left
+# that requires the owner's approval (neither merge-approval nor an intact review ruleset); and a merge queue that
+# is gone or no longer squashes only PRs that pass. Prints nothing when they still hold. The exact list of
+# checks-<lang> jobs is not compared: it depends on the repository's languages. Fails without defaultBranch, so a
+# caller that forgot it cannot read as healthy.
 ruleset_problems() {
-  jq -r '
+  jq -r --argjson review_kit "$(review_ruleset agent-guardrails-review)" \
+    --argjson tag_kit "$(tag_ruleset agent-guardrails-tags)" "$ruleset_jq_defs"'
     def rule($r; $t): [$r.rules[]? | select(.type == $t)][0];
     def checks($r): rule($r; "required_status_checks").parameters.required_status_checks // [];
     def pinned($r; f): any(checks($r)[]; (.context | f) and .integration_id == 15368);
-    def actors($r): [$r.bypass_actors[]? | {actor_id, actor_type, bypass_mode}];
-    (.branch) as $b | (.review) as $v | (.tag) as $t | (.mergeQueue) as $wanted
+    def bypass_problem($r; $name; $kit):
+      ($r | bypass_list) as $live | ($kit | bypass_list) as $want
+      | if $r | kit_bypass($kit) then empty
+        else "the \($name) ruleset has a changed bypass list ("
+          + ([($live - $want)[] | "unexpected " + actor_text] + [($want - $live)[] | "missing " + actor_text]
+             | join(", ")) + ")" end;
+    def branch_coverage_problem($r; $name; $default):
+      if $r.target != "branch" then "the \($name) ruleset targets \($r.target | tojson) instead of \"branch\""
+      elif ($r | covers_default($default)) then empty
+      else "the \($name) ruleset no longer covers the default branch \($default) (ref_name \($r.conditions.ref_name // null | tojson))"
+      end;
+    (if (.defaultBranch | type) != "string" or .defaultBranch == "" then
+       error("ruleset_problems needs the default branch (defaultBranch) to tell whether the rulesets cover it")
+     else . end)
+    | (.branch) as $b | (.review) as $v | (.tag) as $t | (.mergeQueue) as $wanted | (.defaultBranch) as $default
     # Without the branch ruleset nothing is enforced: that one line says it all.
     | if $b == null then "the agent-guardrails ruleset is missing" else
          (if $b.enforcement != "active" then "the agent-guardrails ruleset is \($b.enforcement)" else empty end),
-         (if (actors($b) | length) > 0 then "the agent-guardrails ruleset has a bypass list" else empty end),
+         branch_coverage_problem($b; "agent-guardrails"; $default),
+         bypass_problem($b; "agent-guardrails"; {bypass_actors: []}),
          (["deletion", "non_fast_forward", "required_linear_history", "pull_request", "required_status_checks"][]
            | select(rule($b; .) == null) | "the agent-guardrails ruleset lost its \(.) rule"),
          (if pinned($b; . == "guard") then empty else "guard is no longer a required check from GitHub Actions" end),
@@ -730,16 +822,22 @@ ruleset_problems() {
        elif $v == null then "no ruleset requires your approval any more (neither merge-approval nor agent-guardrails-review)"
        else
          (if $v.enforcement != "active" then "the agent-guardrails-review ruleset is \($v.enforcement)" else empty end),
-         (if actors($v) == [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}] then empty
-          else "the agent-guardrails-review ruleset has a changed bypass list" end),
+         branch_coverage_problem($v; "agent-guardrails-review"; $default),
+         bypass_problem($v; "agent-guardrails-review"; $review_kit),
          (rule($v; "pull_request").parameters as $p
           | if ($p.required_approving_review_count // 0) >= 1 and $p.require_code_owner_review
               and $p.dismiss_stale_reviews_on_push and $p.require_last_push_approval then empty
             else "the agent-guardrails-review ruleset no longer requires a fresh code owner review" end)
        end),
-      (if $t == null then "the agent-guardrails-tags ruleset is missing"
-       elif $t.enforcement != "active" then "the agent-guardrails-tags ruleset is \($t.enforcement)"
-       else empty end)
+      (if $t == null then "the agent-guardrails-tags ruleset is missing" else
+         (if $t.enforcement != "active" then "the agent-guardrails-tags ruleset is \($t.enforcement)" else empty end),
+         (if $t.target != "tag" then "the agent-guardrails-tags ruleset targets \($t.target | tojson) instead of \"tag\""
+          elif ($t | covers_all_tags) then empty
+          else "the agent-guardrails-tags ruleset no longer covers every tag (ref_name \($t.conditions.ref_name // null | tojson); the kit includes ~ALL and excludes nothing)"
+          end),
+         ($tag_kit.rules[].type | select(rule($t; .) == null) | "the agent-guardrails-tags ruleset lost its \(.) rule"),
+         bypass_problem($t; "agent-guardrails-tags"; $tag_kit)
+       end)
       end'
 }
 
