@@ -93,6 +93,7 @@ struct MenuBarLabel: View {
             follow(route)
         }
         .task {
+            applyAppearance(storedAppearance())
             // The first launch opens the welcome checklist; closing it once is enough.
             guard !UserDefaults.standard.bool(forKey: Onboarding.completedKey) else { return }
             model.workspace.show(.welcome)

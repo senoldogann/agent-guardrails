@@ -9,6 +9,7 @@ struct MainWindow: View {
     let projects: ProjectsModel
     @State private var search = ""
     @FocusState private var searchFocused: Bool
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
 
     var body: some View {
         let workspace = model.workspace
@@ -48,10 +49,17 @@ struct MainWindow: View {
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .frame(minWidth: 900, minHeight: 600)
-        // The window itself is glass: the desktop shows through, blurred, behind the pages.
-        .containerBackground(.thinMaterial, for: .window)
+        // Glass: the desktop shows through, blurred, behind the pages. Solid: one near-black or near-white color.
+        .containerBackground(windowBackground, for: .window)
         .onAppear { bringWindowsForward() }
         .task { await refreshWhileOpen() }
+    }
+
+    private var windowBackground: AnyShapeStyle {
+        switch style {
+        case .glass: AnyShapeStyle(.thinMaterial)
+        case .solid: AnyShapeStyle(Palette.canvas)
+        }
     }
 
     /// The sidebar marks the browse tab's page while that tab is selected, and nothing while another tab is,
@@ -193,6 +201,7 @@ struct WorkspaceTab: View {
     let select: () -> Void
     let close: () -> Void
     @State private var isHovered = false
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
 
     var body: some View {
         HStack(spacing: 7) {
@@ -222,15 +231,37 @@ struct WorkspaceTab: View {
         .padding(.trailing, canClose ? 7 : 12)
         .frame(height: 30)
         .frame(maxWidth: 240)
-        // The selected tab is a piece of glass; the others are labels on the window until hovered.
-        .glassEffect(isSelected ? .regular.interactive() : (isHovered ? .clear.interactive() : .identity), in: .capsule)
-        .contentShape(Capsule())
+        .modifier(TabSurface(style: style, isSelected: isSelected, isHovered: isHovered))
         .onTapGesture(perform: select)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: "Select", select)
+    }
+}
+
+/// The selected tab is a piece of glass (glass style) or a raised control (solid style); the others are labels
+/// on the window until hovered.
+struct TabSurface: ViewModifier {
+    let style: AppStyle
+    let isSelected: Bool
+    let isHovered: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .glass:
+            content
+                .glassEffect(isSelected ? .regular.interactive() : (isHovered ? .clear.interactive() : .identity), in: .capsule)
+                .contentShape(Capsule())
+        case .solid:
+            let shape = RoundedRectangle(cornerRadius: 7)
+            content
+                .background(shape.fill(isSelected ? Palette.control : (isHovered ? Palette.surfaceMuted : .clear)))
+                .overlay(shape.strokeBorder(isSelected ? Palette.hairline : .clear))
+                .contentShape(shape)
+        }
     }
 }
 

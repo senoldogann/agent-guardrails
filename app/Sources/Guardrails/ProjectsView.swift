@@ -11,6 +11,7 @@ struct ProjectSidebar: View {
     let createAgent: () -> Void
     /// Most of an owner's repositories are off; the group stays closed unless the owner opens it.
     @AppStorage("showsOffProjects") private var showsOff = false
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
 
     var body: some View {
         let groups = groupProjects(projects.projects, matching: search)
@@ -42,6 +43,8 @@ struct ProjectSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(style == .solid ? .hidden : .automatic)
+        .background(style == .solid ? Palette.sidebar : .clear)
         .overlay {
             SidebarOverlay(isLoading: projects.isLoading, isEmpty: projects.projects.isEmpty, error: projects.lastError)
         }
@@ -77,7 +80,7 @@ struct AgentPanel: View {
                 .help(detail)
         }
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius))
+        .floatingPanel(cornerRadius: Metrics.cardRadius)
         .padding(10)
     }
 }

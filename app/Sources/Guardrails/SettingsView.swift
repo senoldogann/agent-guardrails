@@ -14,6 +14,10 @@ struct SettingsView: View {
                 LoginItemToggle()
                 RefreshPicker(model: model)
             }
+            Section("Appearance") {
+                StylePicker()
+                AppearancePicker()
+            }
             Section {
                 NotificationSetting(shown: model.notificationsShown)
             } header: {
@@ -89,6 +93,31 @@ struct LoginItemToggle: View {
             problem = "Could not change the login item: \(error.localizedDescription)"
             opensAtLogin = registered
         }
+    }
+}
+
+struct StylePicker: View {
+    @AppStorage(AppStyle.key) private var style = AppStyle.glass
+
+    var body: some View {
+        Picker("Style", selection: $style) {
+            ForEach(AppStyle.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+    }
+}
+
+struct AppearancePicker: View {
+    @AppStorage(AppearanceChoice.key) private var appearance = AppearanceChoice.system
+
+    var body: some View {
+        Picker("Appearance", selection: $appearance) {
+            ForEach(AppearanceChoice.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+        .onChange(of: appearance) { _, choice in applyAppearance(choice) }
     }
 }
 
