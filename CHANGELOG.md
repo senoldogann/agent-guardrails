@@ -53,6 +53,10 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- The guard fetches a PR's head commit (and a merge group's commits) with the run's read-only token when the
+  default branch checkout does not already hold it, so fork PRs and private repositories are judged instead
+  of failing the fetch. `make check` runs `tests/notify.sh` again; a stray line continuation passed it to
+  `tests/report.sh` as an argument.
 - In the Liquid Glass style a light-mode window over a dark one (or an inactive window) turned a muddy gray:
   the window material took the color of what was behind it. A light veil (dark in dark mode) now keeps the
   page clean in both modes. Borders and dividers are softer.
