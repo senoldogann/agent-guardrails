@@ -8,6 +8,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Added
 
+- Cursor and Codex agents are guarded by the same bash-guard rules as Claude Code. `install.sh` registers the
+  hooks in `~/.cursor/hooks.json` and `~/.codex/hooks.json` when those tools are set up (trust them once in
+  Codex's `/hooks`), Cursor's file reads are checked for credentials, and `/guardrails-init` commits
+  `.cursor/hooks.json` so teammates' Cursor agents are guarded too. Cursor and Codex work with the owner's gh
+  login; the agent App identity stays Claude Code only. README "Supported agents" lists what each agent
+  enforces.
 - `guardrails report [owner/repo] [--days N] [--json]` and a Reports page in the app. Both are read-only and
   show, for each enforced repository over the last 7, 30 or 90 days: merged pull requests by the agent App and
   by people; median and 90th percentile time from ready for review to approval and to merge; re-approvals
