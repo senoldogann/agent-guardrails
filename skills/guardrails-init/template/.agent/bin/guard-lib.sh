@@ -57,83 +57,51 @@ guard_changed_files() {
 # GitHub Actions app as the real checks, so a job named like a required check, or a token allowed to write
 # checks or statuses, could stand in for the owner's approval. Changed workflow files therefore may not
 # request any write permission, name the required checks outside their own file (guard, security,
-# checks-<lang>, merge-approval), compute or escape names, or use YAML forms this line-based check cannot read (flow
-# mappings, anchors, block-scalar names). Unchanged workflows may not write checks or statuses either, because
-# pull_request runs execute the PR's code with their token.
-# A line holding nothing but a write value: the value of a key on an earlier line (`statuses:` then `  write`).
-write_value_line="^[[:space:]]*(:[[:space:]]*)?(-[[:space:]]+)?(!!str[[:space:]]+)?[\"']?write(-all)?[\"']?[[:space:]]*(#.*)?$"
-# checks or statuses granted write, in every spelling YAML allows on a line; the same patterns as
-# grants_check_or_status_writes in the kit's guardrails-lib.sh.
-check_or_status_write="^[^#]*(checks|statuses)[\"']?[[:space:]]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)"
+# checks-<lang>, merge-approval) or compute a job name, and the guard workflow may not change its triggers.
+# Unchanged workflows may not write checks or statuses either, because pull_request runs execute the PR's code
+# with their token. ../workflow/check.py reads each file with a real YAML parser, as data, and fails closed on
+# YAML it does not accept; the owner's approval runs the same file from the kit install.
+workflow_checker="$(cd "$(dirname "${BASH_SOURCE[0]}")/../workflow" && pwd -P)/check.py"
 
-# Prints nothing when the guard workflow's `on:` block is exactly the kit's: pull_request_target (judged from
-# the default branch) and merge_group with only checks_requested (judged with the default branch's guard too),
-# each once, with nothing else. A PR may not add a trigger (a push or pull_request run would execute the
-# workflow as the PR wrote it, for every PR) nor remove one (without merge_group a merge queue waits forever,
-# without pull_request_target no PR is judged). Every top-level line must be a plain `key:`, so a second `on`
-# spelled another way (`on :`, `? on`, a quoted or escaped key, a second YAML document) cannot hide from this
-# line-based check. Argument: the workflow's content.
-guard_trigger_problems() {
-  local content=$1
-  ! grep -Ev '^([a-z][a-z-]*:([[:space:]].*)?|#.*|[[:space:]].*)?$' <<<"$content" >/dev/null &&
-    grep -Eq '^on:[[:space:]]*$' <<<"$content" &&
-    [[ $(awk '/^["'\'']?on["'\'']?:/ {n++} /^true:/ {n++} END {print n + 0}' <<<"$content") == 1 ]] &&
-    awk '/^on:[[:space:]]*$/ {inside = 1; next} inside && /^[^[:space:]#]/ {inside = 0}
-      !inside || !NF || /^[[:space:]]*#/ {next}
-      /^  pull_request_target:[[:space:]]*$/ {target++; event = "target"; next}
-      /^  merge_group:[[:space:]]*$/ {group++; event = "group"; next}
-      event == "target" && /^    types:[[:space:]]*\[[a-z_, ]+\][[:space:]]*$/ {next}
-      event == "group" && /^    types:[[:space:]]*\[[[:space:]]*checks_requested[[:space:]]*\][[:space:]]*$/ {next}
-      {bad = 1}
-      END {exit !(bad == 0 && target == 1 && group == 1)}' <<<"$content" ||
-    printf 'changes the guard trigger (it must stay pull_request_target and merge_group with checks_requested only)\n'
+# Succeeds for a path GitHub may load as a workflow. The extension is compared case-insensitively, so no file
+# GitHub might read is skipped. Argument: path.
+is_workflow_path() {
+  case $(tr '[:upper:]' '[:lower:]' <<<"$1") in
+    .github/workflows/*.yml | .github/workflows/*.yaml) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
-workflow_problems() {
-  local path=$1 content=$2 name=${1##*/} own_job="" ids
-  [[ $name == checks-*.yml || $name == security.yml ]] && own_job=${name%.yml}
-  # The guard workflow may define `guard` only: on merge_group GitHub runs the PR's own copy of it, where a job
-  # named like another required check would report on the group commit.
-  [[ $path == .github/workflows/agent-guard.yml ]] && own_job=guard
-  grep -Eiq -e "^[^#]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)" -e "$write_value_line" -e 'write-all' <<<"$content" &&
-    printf 'requests a write permission for its token (workflows changed by a PR stay read-only)\n'
-  grep -Eq '(^|[[:space:]])!![A-Za-z]' <<<"$content" && printf 'uses a YAML tag\n'
-  # shellcheck disable=SC1003 # the backslashes are literal regex characters
-  grep -Eq '^[[:space:]]+name:[^#]*\\|^[[:space:]]+["'\''][^"'\'']*\\' <<<"$content" && printf 'escapes characters in a name\n'
-  grep -Eq '^[^#]*:[[:space:]]*\{([^{]|$)' <<<"$content" && printf 'uses a YAML flow mapping\n'
-  grep -Eq '(^|[[:space:]])[&*][A-Za-z0-9_-]+([[:space:]]|$)' <<<"$content" && printf 'uses a YAML anchor or alias\n'
-  # shellcheck disable=SC1003 # the backslashes are literal regex characters
-  grep -Eq '^[[:space:]]+name:[^#]*\$\{\{' <<<"$content" && printf 'computes a name with an expression\n'
-  grep -Eq '^[[:space:]]+name:[[:space:]]*[|>]' <<<"$content" && printf 'uses a block scalar as a name\n'
-  if [[ $path == .github/workflows/agent-guard.yml ]]; then
-    # Its comments explain merge-approval; it cannot post statuses (guard_workflows checks every workflow for that).
-    guard_trigger_problems "$content"
-  else
-    grep -F 'merge-approval' <<<"$content" >/dev/null && printf 'names merge-approval\n'
+# Fails each problem check.py reports for one workflow of head, or the workflow when check.py cannot run.
+# Arguments: head commit, path, check.py arguments.
+guard_workflow_check() {
+  local head=$1 path=$2 shown problems problem
+  shift 2
+  # Unchanged files never passed guard_changed_files' name check, so drop control characters before printing.
+  shown=$(LC_ALL=C tr -d '\000-\037\177' <<<"$path")
+  if ! problems=$(git show "$head:$path" | python3 -I -S -B "$workflow_checker" "$@"); then
+    fail "workflow $shown could not be checked: $workflow_checker needs python3 3.8 or newer"
+    return 0
   fi
-  ids=$(sed -nE 's/^[[:space:]]+(name:[[:space:]]*)?["'\'']?(guard|merge-approval|security|checks-[A-Za-z0-9_-]+)["'\'']?[[:space:]]*:?[[:space:]]*(#.*)?$/\2/p' <<<"$content" | sort -u)
-  while IFS= read -r id; do
-    [[ -n $id && $id != "$own_job" ]] && printf 'defines a job or name "%s", which belongs to a required check\n' "$id"
-  done <<<"$ids"
-  return 0
+  while IFS= read -r problem; do
+    [[ -z $problem ]] || fail "workflow $shown $problem"
+  done <<<"$problems"
 }
 
 # Judges the changed workflow files and every workflow of head. Argument: head commit.
 guard_workflows() {
-  local head=$1 path problem
+  local head=$1 path
   while IFS= read -r path; do
-    [[ $path == .github/workflows/*.yml || $path == .github/workflows/*.yaml ]] || continue
+    is_workflow_path "$path" || continue
     git cat-file -e "$head:$path" 2>/dev/null || continue
-    while IFS= read -r problem; do
-      [[ -z $problem ]] || fail "workflow $path $problem"
-    done < <(workflow_problems "$path" "$(git show "$head:$path")")
+    guard_workflow_check "$head" "$path" changed-problems "$path"
   done <<<"$changed"
-  while IFS= read -r path; do
-    [[ $path == .github/workflows/*.yml || $path == .github/workflows/*.yaml ]] || continue
-    if git show "$head:$path" | grep -Ei -e "$check_or_status_write" -e "$write_value_line" -e 'write-all' >/dev/null; then
-      fail "workflow $path lets its token write checks or statuses, which could fake a required check"
-    fi
-  done < <(git ls-tree -r --name-only "$head" -- .github/workflows)
+  # NUL-separated: without -z git quotes names with non-ASCII or special characters, which would then not
+  # look like workflow paths and escape the check.
+  while IFS= read -r -d '' path; do
+    is_workflow_path "$path" || continue
+    guard_workflow_check "$head" "$path" token-problems
+  done < <(git ls-tree -r -z --name-only "$head" -- .github/workflows)
 }
 
 # Prints the tickets whose specs/<TICKET>/ the changes touch, one per line.

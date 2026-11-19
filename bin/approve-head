@@ -45,10 +45,11 @@ base=$(jq -r .base.ref <<<"$pr_json")
 [[ $(jq -r .state <<<"$pr_json") == open ]] || die "PR #$pr is not open"
 [[ $(jq -r .draft <<<"$pr_json") == false ]] || die "PR #$pr is a draft"
 
-# The approval must protect something: the live rulesets must be in status or review mode (approval_mode).
-mode=$(approval_mode "$repo") || exit 1
+# The approval must protect something: the live rulesets must be in status or review mode on the default branch
+# (approval_mode).
+mode=$(approval_mode "$repo" "$default_branch") || exit 1
 [[ $mode != - ]] ||
-  die "the agent-guardrails rulesets on $repo are missing, inactive or changed, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
+  die "the agent-guardrails rulesets on $repo are missing, inactive, changed or no longer cover $default_branch, so an approval would not protect anything. Check the audit log, then restore them with: guardrails on $repo"
 
 # The guard result comes from the run of the default branch's agent-guard.yml (pull_request_target), not
 # from any check run named "guard": a workflow added by the PR could report a check run of that name. The run
@@ -64,11 +65,14 @@ workflows=$(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] |
   die "cannot list the workflows of $sha; nothing approved"
 while IFS= read -r workflow; do
   [[ -n $workflow ]] || continue
-  content=$(gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content) || die "cannot read $workflow at $sha; nothing approved"
+  is_workflow_file "$workflow" || continue
+  content=$(gh api "repos/$repo/contents/$(contents_api_path "$workflow")?ref=$sha" --jq .content) ||
+    die "cannot read $workflow at $sha; nothing approved"
   decoded=$(base64 --decode <<<"$content") || die "cannot decode $workflow at $sha; nothing approved"
-  if grants_check_or_status_writes <<<"$decoded"; then
-    die "$workflow lets its token write checks or statuses (could fake a required check); refuse to approve"
-  fi
+  problems=$(workflow_token_problems <<<"$decoded") || die "cannot check $workflow at $sha; nothing approved"
+  [[ -z $problems ]] ||
+    die "$workflow could let its token write checks or statuses (could fake a required check); refuse to approve:
+$problems"
 done <<<"$workflows"
 
 # GitHub does not let the owner approve their own PR. In review mode the owner, as admin, may bypass the review

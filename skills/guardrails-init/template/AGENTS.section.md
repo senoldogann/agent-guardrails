@@ -20,6 +20,12 @@ Deterministic checks and the owner's approval decide whether work is done, not t
   Teams channel when a PR waits for approval, is blocked, asks a question (`needs-decision`), is approved or
   merged. The message shows the PR title, so keep titles short and plain. The workflow and its secrets are
   the owner's: never change them or where it posts.
+- Local hooks (Claude Code) catch mistakes early; they are conveniences, not the enforcement. write-guard blocks
+  edits to files the active phase does not allow. When the agent tries to finish, the Stop hook runs `make check-spec`
+  (spec phase) or `make check` (implement phase) and sends it back while that fails. After three failures in a
+  row it lets the agent stop with a warning that the work is not done; that is not a finish. After
+  `.agent/bin/block` it lets the agent stop and shows the question. What merges is decided on GitHub: the guard
+  (`ci-guard`), the required checks and the owner's approval of the exact HEAD.
 - Locked files (`specs/<ID>/spec.lock`, test IDs in `tests.lock`) change only by re-locking in a reviewed PR.
 - CI also mutates the changed source (`make mutation BASE_SHA=...` locally): every mutant must be killed by a
   locked test; proven-equivalent mutants are accepted only by the owner in `specs/<ID>/mutants-accepted`.

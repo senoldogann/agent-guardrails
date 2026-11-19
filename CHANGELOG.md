@@ -6,6 +6,40 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Changed
+
+- The README no longer says that nothing merges until the human approves the exact commit without naming
+  the exceptions. It now states what approvals on github.com or GitHub Mobile skip in review mode, and that
+  administrators (including the owner for their own PRs and for Cursor or Codex PRs) can merge without a
+  review. `docs/pilot.md` holds the pilot brief: the promise the kit can back, what it does not promise, what
+  to measure and the proposed decision thresholds.
+
+### Fixed
+
+- The guard and the owner's approval read workflow files with a real YAML parser (vendored PyYAML 6.0.3
+  scanner and parser, run as data with `python3`) instead of line regexes. Escaped or quoted spellings of
+  `checks`/`statuses` write, `write-all` and reserved job names are now caught, and duplicate keys, anchors,
+  aliases, merge keys, tags, multiple documents and non-scalar keys fail closed. `python3` 3.8 or newer is now
+  required for the owner's commands.
+- The inbox and `guardrails approve` notice when a ruleset stops protecting the default branch. Each of these
+  raises an alarm:
+  - a branch or review ruleset that no longer targets branches;
+  - one that no longer covers the current default branch: its `ref_name` conditions were retargeted or exclude
+    the default branch. Patterns that GitHub and the kit could read differently count as excluding it;
+  - a tag ruleset that no longer covers every tag, or that lost its creation, update or deletion rule;
+  - a bypass list other than the one `guardrails on` applies.
+
+  Approval mode applies the same rules, so `guardrails approve` refuses while the rulesets do not protect the
+  default branch.
+- The app's command timeout now always ends. A timed-out command and its process group get SIGTERM, then
+  SIGKILL after a short grace, and the app stops reading output that an escaped child process keeps open.
+  Before, a command that ignored SIGTERM, or a background child holding its output, could keep a refresh
+  waiting indefinitely.
+- README, AGENTS.md, the project AGENTS section and the ticket-implement skill now describe the stop-check
+  hook exactly. It sends the agent back while checks fail, and after three failures in a row it lets the agent
+  stop with a warning. It is a local convenience; GitHub's guard, required checks and approvals decide what
+  merges.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added

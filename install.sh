@@ -21,8 +21,9 @@ kit=$(cd "$(dirname "$0")" && pwd -P)
 
 # Everything the install needs is checked before anything changes, so a failed run leaves no half install.
 missing=""
-# curl and openssl sign the agent App's requests (creating the App and the agent-identity hook).
-for tool in git gh jq curl openssl; do
+# curl and openssl sign the agent App's requests (creating the App and the agent-identity hook). python3 runs
+# the workflow check before an approval (.agent/workflow/check.py in the template, standard library only).
+for tool in git gh jq curl openssl python3; do
   command -v "$tool" >/dev/null || missing="$missing $tool"
 done
 [[ -z $missing ]] || {
