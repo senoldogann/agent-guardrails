@@ -20,6 +20,16 @@ Deterministic checks and the owner's approval decide whether work is done, not t
 - CI also mutates the changed source (`make mutation BASE_SHA=...` locally): every mutant must be killed by a
   locked test; proven-equivalent mutants are accepted only by the owner in `specs/<ID>/mutants-accepted`.
   Swift has no mutation gate; its rules rely on fixed examples and exhaustive tables.
+- The required CI check `security` (`.github/workflows/security.yml`, runs only in CI) fails a PR on: a secret
+  in any of its commits (gitleaks), a known vulnerability in a dependency lockfile (osv-scanner), or insecure
+  code new in a changed file (Semgrep CE, pinned security rules). Its job summary lists each finding as
+  `<scanner> <id>  <where>`. Handle one by fixing the cause: remove a secret from every commit of the branch
+  (rewrite it) and tell the owner to rotate it; raise a vulnerable dependency to a fixed version (lockfiles are
+  human-owned: ask the owner with `.agent/bin/block` when the ticket does not allow it); change the code. A
+  false positive is reported with `.agent/bin/block`, recommending a line for the owner's
+  `.github/security-ignore` (`<scanner> <id> <path> # <reason>`; gitleaks and semgrep lines count only in
+  the PR that adds them, osv lines while they stay). Never add `nosemgrep` or `gitleaks:allow` comments,
+  scanner ignore files or config: the check ignores them.
 - Human-owned, never edited by agents during a ticket: `.agent/`, `.claude/`, `.cursor/`, `.codex/`, `.github/`,
   `specs/`, tests, configs, manifests, lockfiles, dotfiles, `AGENTS.md`, `CLAUDE.md`, `Makefile`.
 - A check that looks wrong is reported (`.agent/bin/block "<question>"`), never changed, loosened or skipped.

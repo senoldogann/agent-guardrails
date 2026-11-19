@@ -1,6 +1,7 @@
 # Lints and tests the kit itself: shellcheck, global hook table tests, template smoke tests.
 # The slow per-language adapter suite (make test-lang) runs locally. app-check builds the macOS app and runs
-# its core tests (parsing, confirmation checks, the pseudo-terminal driver).
+# its core tests (parsing, confirmation checks, the pseudo-terminal driver). security runs the template's
+# security check on the kit's own PRs, with the same scripts a project's security.yml runs.
 name: ci
 on:
   pull_request:
@@ -30,3 +31,22 @@ jobs:
           [[ -n $xcode ]] && sudo xcode-select -s "$xcode"
           xcodebuild -version
       - run: make app-test
+  security:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned scanners
+        run: skills/guardrails-init/template/.agent/bin/security-tools "$RUNNER_TEMP/security-tools"
+      - name: Scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          skills/guardrails-init/template/.agent/bin/security-scan "$base" "$HEAD_SHA" "$RUNNER_TEMP/security-tools"

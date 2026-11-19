@@ -3,7 +3,8 @@
 # Every PR merges only after the owner approves its exact HEAD: the owner runs the kit's
 # `guardrails approve` (or `approve-head <pr>`) in their own terminal, which posts the commit status
 # `merge-approval`; the agent's bash-guard blocks both. Repository setup (`guardrails on`): a ruleset
-# requiring `guard`, `checks-<lang>` (GitHub Actions) and `merge-approval`. Job names must stay unique.
+# requiring `guard`, `security`, `checks-<lang>` (GitHub Actions) and `merge-approval`. Job names must stay
+# unique.
 name: agent-guard
 on:
   pull_request_target:

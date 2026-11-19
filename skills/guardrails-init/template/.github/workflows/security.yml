@@ -1,0 +1,49 @@
+# Scans every PR with free, open-source scanners and fails it on a finding: gitleaks (secrets in the PR's
+# commits), osv-scanner (known vulnerabilities in dependency lockfiles) and Semgrep CE (insecure code in the
+# changed files, with community rules pinned to a commit; no Semgrep login, registry or token).
+# .agent/bin/security-tools pins every tool and verifies it by checksum; .agent/bin/security-scan runs them.
+# A finding is accepted only by a line in .github/security-ignore, which approve-head marks "!!" for the
+# owner's second confirmation. Runs on the PR head commit with read-only permissions, no secrets and no caches.
+# The job name `security` is a required check of the ruleset (`guardrails on`).
+name: security
+on: pull_request
+permissions:
+  contents: read
+concurrency:
+  group: security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  security:
+    # A fixed image: Semgrep's hashed pins are resolved for its Python (3.12).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned scanners
+        run: .agent/bin/security-tools "$RUNNER_TEMP/security-tools"
+      # The report names files of the PR. Workflow commands stay off while it prints, and the summary is plain
+      # text in a fence the report cannot close (security-scan turns backticks and control characters into "?").
+      - name: Scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          token=$(openssl rand -hex 16)
+          echo "::stop-commands::${token}"
+          set +e
+          .agent/bin/security-scan "$base" "$HEAD_SHA" "$RUNNER_TEMP/security-tools" | tee "$RUNNER_TEMP/security.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "::${token}::"
+          {
+            echo '### security'
+            echo '```text'
+            cat "$RUNNER_TEMP/security.txt"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"

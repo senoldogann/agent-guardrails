@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Usage: security-tools <dir>
+# Installs the scanners of the security check (.agent/bin/security-scan) into <dir>, each at an exact version
+# and verified before it runs:
+#   gitleaks, osv-scanner  release binaries, checked against the SHA-256 below
+#   semgrep                Semgrep CE from PyPI with pip --require-hashes: it and every package it needs are
+#                          pinned with their hashes in .agent/security/semgrep-pins.txt
+#   semgrep rules          semgrep/semgrep-rules at the commit below, fetched with git, which checks every
+#                          object against that commit ID. No Semgrep login, registry or token is involved; the
+#                          rules are under the Semgrep Rules License v1.0 and are fetched into the run, never
+#                          committed to the project.
+# Only rules under security/ directories, outside audit/, are kept (semgrep_rule_files). Linux x86_64 only:
+# the security job runs on GitHub's ubuntu runners.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd -P)
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/security-lib.sh"
+require_args 1 $# "security-tools <dir>"
+dir=$1
+
+gitleaks_version=8.30.1
+gitleaks_sha256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+osv_version=2.7.0
+osv_sha256=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+rules_commit=16b9e6d45f10649f6a531ec4838ed9924372c3bc
+pins="$here/../security/semgrep-pins.txt"
+
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] ||
+  die "security-tools installs Linux x86_64 tools for the security job; this is $(uname -s) $(uname -m)"
+semgrep_version=$(sed -nE 's/^semgrep==([0-9.]+).*/\1/p' "$pins")
+[[ -n $semgrep_version ]] || die "no semgrep==<version> line in $pins"
+mkdir -p "$dir"
+# Work from the tools directory, never the checkout: Python and git must not pick up files of the PR there.
+dir=$(cd "$dir" && pwd -P)
+cd "$dir"
+
+# curl retries the same download with growing pauses and says so on each attempt.
+download() {
+  local url=$1 file=$2
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --retry 4 --retry-all-errors \
+    --output "$file" "$url" || die "could not download $url"
+}
+
+verify() {
+  local file=$1 want=$2 url=$3 got
+  got=$(shasum -a 256 "$file" | cut -d' ' -f1)
+  [[ $got == "$want" ]] || die "checksum mismatch for $url: want sha256 $want, got $got"
+}
+
+# Runs a command up to four times, pausing 5, 10 and 15 seconds between attempts with a warning each time.
+retry() {
+  local attempt=1
+  until "$@"; do
+    [[ $attempt -lt 4 ]] || die "failed after $attempt attempts: $*"
+    printf 'warning: attempt %d of 4 failed, retrying in %ds: %s\n' "$attempt" $((attempt * 5)) "$*" >&2
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
+  done
+}
+
+url="https://github.com/gitleaks/gitleaks/releases/download/v$gitleaks_version/gitleaks_${gitleaks_version}_linux_x64.tar.gz"
+download "$url" "$dir/gitleaks.tar.gz"
+verify "$dir/gitleaks.tar.gz" "$gitleaks_sha256" "$url"
+tar -xzf "$dir/gitleaks.tar.gz" -C "$dir" gitleaks
+rm -f "$dir/gitleaks.tar.gz"
+
+url="https://github.com/google/osv-scanner/releases/download/v$osv_version/osv-scanner_linux_amd64"
+download "$url" "$dir/osv-scanner"
+verify "$dir/osv-scanner" "$osv_sha256" "$url"
+chmod +x "$dir/osv-scanner"
+
+# Binary wheels only: building a source distribution would run its setup code. -I: Python ignores the current
+# directory and PYTHON* variables, so a pip/ or venv/ directory elsewhere cannot stand in for the real module.
+python3 -I -m venv "$dir/semgrep"
+"$dir/semgrep/bin/python" -I -m pip install --quiet --disable-pip-version-check --no-input --require-hashes \
+  --only-binary=:all: --no-deps -r "$pins"
+
+rules_src="$dir/semgrep-rules-src"
+git init --quiet "$rules_src"
+retry git -C "$rules_src" fetch --quiet --depth 1 https://github.com/semgrep/semgrep-rules.git "$rules_commit"
+git -C "$rules_src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+[[ $(git -C "$rules_src" rev-parse HEAD) == "$rules_commit" ]] || die "semgrep-rules is not at $rules_commit"
+rules_files=$(semgrep_rule_files "$rules_src")
+[[ -n $rules_files ]] || die "no rule files found in semgrep-rules at $rules_commit"
+while IFS= read -r file; do
+  mkdir -p "$dir/semgrep-rules/$(dirname "$file")"
+  cp "$rules_src/$file" "$dir/semgrep-rules/$file"
+done <<<"$rules_files"
+rm -rf "$rules_src"
+
+# Each tool must report the version that was pinned.
+"$dir/gitleaks" version | grep -Fx "$gitleaks_version" >/dev/null ||
+  die "gitleaks reports $("$dir/gitleaks" version), not $gitleaks_version"
+"$dir/osv-scanner" --version | grep -F "osv-scanner version: $osv_version" >/dev/null ||
+  die "osv-scanner does not report version $osv_version"
+installed=$(SEMGREP_ENABLE_VERSION_CHECK=0 "$dir/semgrep/bin/semgrep" --version)
+[[ $installed == "$semgrep_version" ]] || die "semgrep reports $installed, not $semgrep_version"
+printf 'gitleaks %s, osv-scanner %s, semgrep %s, semgrep-rules %s (%d rule files)\n' "$gitleaks_version" \
+  "$osv_version" "$semgrep_version" "${rules_commit:0:7}" "$(grep -c '' <<<"$rules_files")" | tee "$dir/versions"

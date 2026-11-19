@@ -7,7 +7,8 @@
 #                    dependency/vendor directories, broken spec locks, ambiguous or invalid tickets,
 #                    write-allow patterns that reach guarded paths, workflow files that could stand
 #                    in for a required check or post statuses
-#   review summary - head SHA, ticket, and every human-owned path the PR changes
+#   review summary - head SHA, ticket, accepted mutants and security findings, and every human-owned
+#                    path the PR changes
 # Pattern syntax in write-allow: bash glob, where "*" also matches "/".
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -58,8 +59,8 @@ done < <(git diff --raw -z --no-renames "$base" "$head")
 # A PR's own workflows run on the PR (pull_request, push) and their jobs report check runs under the same
 # GitHub Actions app as the real checks, so a job named like a required check, or a token allowed to write
 # checks or statuses, could stand in for the owner's approval. Changed workflow files therefore may not
-# request any write permission, name the required checks outside their own file (guard, checks-<lang>,
-# merge-approval), compute or escape names, or use YAML forms this line-based check cannot read (flow
+# request any write permission, name the required checks outside their own file (guard, security,
+# checks-<lang>, merge-approval), compute or escape names, or use YAML forms this line-based check cannot read (flow
 # mappings, anchors, block-scalar names). The guard workflow itself only runs from the default branch
 # (pull_request_target), so its trigger may not change. Unchanged workflows may not write checks or
 # statuses either, because pull_request runs execute the PR's code with their token.
@@ -70,7 +71,7 @@ write_value_line="^[[:space:]]*(:[[:space:]]*)?(-[[:space:]]+)?(!!str[[:space:]]
 check_or_status_write="^[^#]*(checks|statuses)[\"']?[[:space:]]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)"
 workflow_problems() {
   local path=$1 content=$2 name=${1##*/} own_job="" ids
-  [[ $name == checks-*.yml ]] && own_job=${name%.yml}
+  [[ $name == checks-*.yml || $name == security.yml ]] && own_job=${name%.yml}
   grep -Eiq -e "^[^#]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)" -e "$write_value_line" -e 'write-all' <<<"$content" &&
     printf 'requests a write permission for its token (workflows changed by a PR stay read-only)\n'
   grep -Eq '(^|[[:space:]])!![A-Za-z]' <<<"$content" && printf 'uses a YAML tag\n'
@@ -92,7 +93,7 @@ workflow_problems() {
     return 0
   fi
   grep -F 'merge-approval' <<<"$content" >/dev/null && printf 'names merge-approval\n'
-  ids=$(sed -nE 's/^[[:space:]]+(name:[[:space:]]*)?["'\'']?(guard|merge-approval|checks-[A-Za-z0-9_-]+)["'\'']?[[:space:]]*:?[[:space:]]*(#.*)?$/\2/p' <<<"$content" | sort -u)
+  ids=$(sed -nE 's/^[[:space:]]+(name:[[:space:]]*)?["'\'']?(guard|merge-approval|security|checks-[A-Za-z0-9_-]+)["'\'']?[[:space:]]*:?[[:space:]]*(#.*)?$/\2/p' <<<"$content" | sort -u)
   while IFS= read -r id; do
     [[ -n $id && $id != "$own_job" ]] && printf 'defines a job or name "%s", which belongs to a required check\n' "$id"
   done <<<"$ids"
@@ -173,6 +174,11 @@ if [[ $spec_count -gt 1 ]]; then
 fi
 accepted_added=$(git diff "$base" "$head" -- 'specs/*/mutants-accepted' | awk '/^\+[^+]/ { print "  " substr($0, 2) }')
 [[ -z $accepted_added ]] || printf 'MUTANTS ACCEPTED AS EQUIVALENT (owner decision; check each reason):\n%s\n' "$accepted_added"
+# Lines the PR adds to the ignore file of the security job: each one accepts a finding. Control characters and
+# backticks are dropped, so a line cannot break out of the summary's fence.
+ignored_added=$(git diff "$base" "$head" -- .github/security-ignore | awk '/^\+[^+]/ { print "  " substr($0, 2) }' |
+  LC_ALL=C tr -d '\000-\010\013-\037\140\177')
+[[ -z $ignored_added ]] || printf 'SECURITY FINDINGS ACCEPTED (owner decision; check each reason):\n%s\n' "$ignored_added"
 workflows=$(grep -E '^\.github/(workflows|actions)/' <<<"$changed" || true)
 [[ -z $workflows ]] || printf 'WORKFLOW FILES CHANGED (could add fake required checks; review line by line):\n%s\n' "$workflows"
 owned=""

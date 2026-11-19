@@ -8,6 +8,13 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Added
 
+- A required `security` check in every kit project: gitleaks (secrets in the PR's commits), osv-scanner
+  (known vulnerabilities in dependency lockfiles) and Semgrep CE (insecure code in changed files, pinned
+  community security rules, no login). The tools are pinned and checked by SHA-256 or pip hashes. Inline
+  suppressions and the scanners' own ignore files have no effect. Only a reviewed line in
+  `.github/security-ignore` (marked `!!` for the owner) accepts a finding. gitleaks and Semgrep lines count
+  only in the PR that adds them. Projects set up earlier need a kit
+  update PR and `guardrails on <owner/repo>` again; until then the inbox shows an alarm.
 - Cursor and Codex agents are guarded by the same bash-guard rules as Claude Code. `install.sh` registers the
   hooks in `~/.cursor/hooks.json` and `~/.codex/hooks.json` when those tools are set up (trust them once in
   Codex's `/hooks`), Cursor's file reads are checked for credentials, and `/guardrails-init` commits

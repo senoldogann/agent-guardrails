@@ -26,7 +26,7 @@ new_project() {
   cp -R "$template/.agent" "$dir/.agent"
   cp "$template/.claude/settings.json" "$dir/.claude/settings.json"
   cp "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json"
-  cp "$template/.github/workflows/agent-guard.yml" "$dir/.github/workflows/"
+  cp "$template/.github/workflows/agent-guard.yml" "$template/.github/workflows/security.yml" "$dir/.github/workflows/"
   cp "$template/ci/checks-node.yml" "$dir/.github/workflows/"
   cp "$template/makefiles/Makefile.typescript" "$dir/Makefile"
   printf 'name: other\n' >"$dir/.github/workflows/release.yml"
@@ -50,8 +50,15 @@ expect_eq "added kit file is drift" "$(kit_drift "$project")" "not in the kit: .
 project=$(new_project drift3)
 printf '#\n' >>"$project/.github/workflows/agent-guard.yml"
 printf '#\n' >>"$project/.github/workflows/checks-node.yml"
+printf '#\n' >>"$project/.github/workflows/security.yml"
 expect_eq "edited workflows are drift" "$(kit_drift "$project")" "differs or missing: .github/workflows/agent-guard.yml
+differs or missing: .github/workflows/security.yml
 differs from the kit: .github/workflows/checks-node.yml"
+project=$(new_project drift3b)
+rm "$project/.github/workflows/security.yml"
+printf 'semgrep rule src/a.ts # accepted by the owner\n' >"$project/.github/security-ignore"
+expect_eq "missing security workflow is drift; the project's ignore file is not" "$(kit_drift "$project")" \
+  "differs or missing: .github/workflows/security.yml"
 project=$(new_project drift4)
 rm "$project/.github/workflows/checks-node.yml"
 expect_eq "missing checks workflow is drift" "$(kit_drift "$project")" "missing: .github/workflows/checks-<lang>.yml"
@@ -78,6 +85,7 @@ expect_eq "check jobs come from the workflows" "$(check_jobs "$(new_project jobs
 
 echo "remove_kit_files"
 project=$(new_project remove)
+printf 'semgrep rule src/a.ts # accepted by the owner\n' >"$project/.github/security-ignore"
 notes=$(remove_kit_files "$project")
 expect_eq "only specs is noted" "$notes" "kept (decided requirements stay as documentation): specs/"
 expect_eq "files left" "$(cd "$project" && find . -type f | sort)" "./.github/workflows/release.yml
@@ -151,18 +159,24 @@ fixture='[
  {"url":"u7","title":"feat(A-7): revoked","isDraft":false,"labels":[],"statusCheckRollup":[
    {"__typename":"CheckRun","name":"guard","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
    {"__typename":"CheckRun","name":"checks-node","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
-   {"__typename":"StatusContext","context":"merge-approval","state":"FAILURE","createdAt":"2026-01-02T00:00:00Z"}]}
+   {"__typename":"CheckRun","name":"security","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
+   {"__typename":"StatusContext","context":"merge-approval","state":"FAILURE","createdAt":"2026-01-02T00:00:00Z"}]},
+ {"url":"u8","title":"feat(A-8): leak","isDraft":false,"labels":[],"statusCheckRollup":[
+   {"__typename":"CheckRun","name":"guard","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
+   {"__typename":"CheckRun","name":"checks-node","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
+   {"__typename":"CheckRun","name":"security","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-02T00:00:00Z"}]}
 ]'
 tab=$'\t'
 expect_eq "inbox items" "$(classify_prs <<<"$fixture")" "answer${tab}u1${tab}spec(A-1): x${tab}the agent is waiting for your decision${tab}
 approve${tab}u3${tab}feat(A-3): ready${tab}checks running${tab}abc123
 blocked${tab}u5${tab}feat(A-5): bad${tab}guard failed: the agent has to fix the PR${tab}
 wait${tab}u6${tab}feat(A-6): new${tab}guard is running${tab}
-approve${tab}u7${tab}feat(A-7): revoked${tab}checks green${tab}"
+approve${tab}u7${tab}feat(A-7): revoked${tab}checks green${tab}
+approve${tab}u8${tab}feat(A-8): leak${tab}checks failing${tab}"
 
 echo "pr_states"
 expect_eq "every open PR has a kind" "$(pr_states <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
-  "u1 answer u2 draft u3 approve u4 approved u5 blocked u6 wait u7 approve "
+  "u1 answer u2 draft u3 approve u4 approved u5 blocked u6 wait u7 approve u8 approve "
 auto=$(jq -c '[.[] | select(.url == "u4")] | [.[0], (.[0] | .autoMergeRequest = {"mergeMethod": "SQUASH"})]' <<<"$fixture" |
   pr_states | jq -r '"\(.autoMerge) \(.note)"')
 expect_eq "an approved PR says whether it merges itself" "$auto" "false approved; auto-merge is off, so merge it yourself
@@ -264,6 +278,8 @@ acme/shop
   wait     feat(A-6): new (guard is running)
   approve  feat(A-7): revoked (checks green)
            guardrails approve u7
+  approve  feat(A-8): leak (checks failing)
+           guardrails approve u8
 
 Not enforced yet
   turn on  chore: install the kit
@@ -276,6 +292,7 @@ expect_eq "inbox json" "$inbox_json" '{"kind":"alarm","repo":"acme/lost","url":"
 {"kind":"blocked","repo":"acme/shop","url":"u5","title":"feat(A-5): bad","note":"guard failed: the agent has to fix the PR","sha":""}
 {"kind":"wait","repo":"acme/shop","url":"u6","title":"feat(A-6): new","note":"guard is running","sha":""}
 {"kind":"approve","repo":"acme/shop","url":"u7","title":"feat(A-7): revoked","note":"checks green","sha":""}
+{"kind":"approve","repo":"acme/shop","url":"u8","title":"feat(A-8): leak","note":"checks failing","sha":""}
 {"kind":"repo","repo":"acme/off","url":"","title":"","note":"missing","sha":""}
 {"kind":"alarm","repo":"acme/off","url":"","title":"","note":"acme/off: the agent-guardrails ruleset is missing. If you did not change it, check the audit log; restore with: guardrails on acme/off","sha":""}
 {"kind":"turn-on","repo":"acme/new","url":"https://github.com/acme/new/pull/1","title":"chore: install the kit","note":"","sha":""}'
@@ -302,7 +319,7 @@ if (PATH="$fake_bin:$PATH" pr_files acme/shop 4 >/dev/null 2>&1); then
 else ok; fi
 
 echo "changes_enforcement"
-for path in .github/workflows/ci.yml .github/CODEOWNERS .agent/bin/run-checks .claude/settings.json Makefile \
+for path in .github/workflows/ci.yml .github/security-ignore .github/CODEOWNERS .agent/bin/run-checks .claude/settings.json Makefile \
   sub/Makefile .agent/common.mk CODEOWNERS .cursor/hooks.json .codex/hooks.json; do
   if changes_enforcement "$path"; then ok; else fail "$path changes what CI enforces"; fi
 done
@@ -382,25 +399,27 @@ expect_eq "lost required checks and a bypass on the branch ruleset are alarms" "
   <<<"$review_mode" | ruleset_problems)" "the agent-guardrails ruleset has a bypass list
 the agent-guardrails ruleset lost its required_status_checks rule
 guard is no longer a required check from GitHub Actions
+security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)
 no checks-<lang> job is a required check from GitHub Actions any more"
 expect_eq "a check reported by another App does not count" "$(jq -c \
   '(.branch.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(del(.integration_id))' \
   <<<"$review_mode" | ruleset_problems)" "guard is no longer a required check from GitHub Actions
+security is not a required check from GitHub Actions (a project set up before the kit had it needs a kit update PR first)
 no checks-<lang> job is a required check from GitHub Actions any more"
 
 echo "rulesets and CODEOWNERS"
 checks=$(pinned_checks $'checks-node\n')
 expect_eq "checks pinned to GitHub Actions" "$checks" \
-  '[{"context":"guard","integration_id":15368},{"context":"checks-node","integration_id":15368}]'
+  '[{"context":"guard","integration_id":15368},{"context":"security","integration_id":15368},{"context":"checks-node","integration_id":15368}]'
 status_rules=$(status_mode_ruleset agent-guardrails "$checks")
 expect_eq "status mode requires merge-approval, no review" \
   "$(jq -c '[(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks | map(.context)),
     (.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count), .bypass_actors]' <<<"$status_rules")" \
-  '[["guard","checks-node","merge-approval"],0,[]]'
+  '[["guard","security","checks-node","merge-approval"],0,[]]'
 branch_rules=$(branch_ruleset agent-guardrails "$checks")
 expect_eq "review mode's branch ruleset: the checks, no merge-approval, nobody bypasses" \
   "$(jq -c '[(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks | map(.context)),
-    .bypass_actors]' <<<"$branch_rules")" '[["guard","checks-node"],[]]'
+    .bypass_actors]' <<<"$branch_rules")" '[["guard","security","checks-node"],[]]'
 expect_eq "both modes keep history linear and the branch undeletable" \
   "$(jq -c '[.rules[].type]' <<<"$branch_rules") $(jq -c '[.rules[].type]' <<<"$status_rules")" \
   '["deletion","non_fast_forward","required_linear_history","pull_request","required_status_checks"] ["deletion","non_fast_forward","required_linear_history","pull_request","required_status_checks"]'
