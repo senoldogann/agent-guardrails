@@ -16,6 +16,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- The guard and the owner's approval read workflow files with a real YAML parser (vendored PyYAML 6.0.3
+  scanner and parser, run as data with `python3`) instead of line regexes. Escaped or quoted spellings of
+  `checks`/`statuses` write, `write-all` and reserved job names are now caught, and duplicate keys, anchors,
+  aliases, merge keys, tags, multiple documents and non-scalar keys fail closed. `python3` 3.8 or newer is now
+  required for the owner's commands.
 - The inbox and `guardrails approve` notice when a ruleset stops protecting the default branch. Each of these
   raises an alarm:
   - a branch or review ruleset that no longer targets branches;

@@ -81,13 +81,44 @@ kit_local_changes() {
   kit_git ls-files -v | awk '$1 != "H" { sub(/^[^ ]+ /, ""); print "not watched by git: " $0 }'
 }
 
-# Succeeds when the workflow on stdin lets its token write check runs or commit statuses (and so could fake a
-# required check or an approval): `checks: write`, `statuses: write` or `write-all`, in every spelling YAML
-# allows on a line (quoted, tagged `!!str`, inside a flow mapping). A line holding nothing but a write value
-# (the value of a key on an earlier line) counts too, so the check fails closed. ci-guard's copy of these
-# patterns must stay the same.
-grants_check_or_status_writes() {
-  grep -Ei -e "^[^#]*(checks|statuses)[\"']?[[:space:]]*:[[:space:]]*(!!str[[:space:]]+)?[\"']?write[\"']?([[:space:],}#]|$)" -e "^[[:space:]]*(:[[:space:]]*)?(-[[:space:]]+)?(!!str[[:space:]]+)?[\"']?write(-all)?[\"']?[[:space:]]*(#.*)?$" -e 'write-all' >/dev/null
+# Prints, one per line, why the workflow on stdin could let its token write check runs or commit statuses (and
+# so fake a required check or an approval): `checks` or `statuses` at write, `write-all`, a permission GitHub
+# does not define, or YAML the check cannot read. Nothing printed means none. It runs the template's
+# .agent/workflow/check.py, the same file ci-guard runs, so the owner's side and CI cannot disagree; it dies
+# when that check cannot run.
+workflow_token_problems() {
+  python3 -I -S -B "$template/.agent/workflow/check.py" token-problems ||
+    die "could not check a workflow: $template/.agent/workflow/check.py needs python3 3.8 or newer"
+}
+
+# Succeeds for a file name GitHub may load as a workflow (.yml or .yaml in any case), as ci-guard decides it.
+is_workflow_file() {
+  case $(tr '[:upper:]' '[:lower:]' <<<"$1") in
+    *.yml | *.yaml) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Dies when any workflow of the checkout could write check runs or commit statuses (and so fake a
+# required check or merge-approval): pull_request runs execute the PR's code with that token. find lists
+# dot-named files too, which a shell glob would skip. Argument: the checkout's directory.
+require_no_status_rights() {
+  local dir=$1 workflow problems
+  [[ -d $dir/.github/workflows ]] || return 0
+  while IFS= read -r -d '' workflow; do
+    [[ -f $workflow ]] || continue
+    is_workflow_file "$workflow" || continue
+    problems=$(workflow_token_problems <"$workflow")
+    [[ -z $problems ]] ||
+      die "${workflow#"$dir"/} could let its token write checks or statuses (could fake an approval); fix that first:
+$problems"
+  done < <(find "$dir/.github/workflows" -mindepth 1 -maxdepth 1 ! -type d -print0)
+}
+
+# Prints a repository path for a contents API URL: each segment percent-encoded, so a file name holding ?, &
+# or # cannot change the request (such as its ref). Argument: the path.
+contents_api_path() {
+  jq -rn --arg path "$1" '$path | split("/") | map(@uri) | join("/")'
 }
 
 # Succeeds for a changed file that can change what CI enforces: workflows and other GitHub config (including

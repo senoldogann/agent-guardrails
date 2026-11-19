@@ -53,10 +53,13 @@ workflows=$(gh api "repos/$repo/contents/.github/workflows?ref=$sha" --jq '.[] |
   die "cannot list the workflows of $sha; nothing approved"
 while IFS= read -r workflow; do
   [[ -n $workflow ]] || continue
-  content=$(gh api "repos/$repo/contents/$workflow?ref=$sha" --jq .content) || die "cannot read $workflow at $sha; nothing approved"
-  if base64 --decode <<<"$content" | grants_check_or_status_writes; then
-    die "$workflow lets its token write checks or statuses (could fake a required check); refuse to approve"
-  fi
+  is_workflow_file "$workflow" || continue
+  content=$(gh api "repos/$repo/contents/$(contents_api_path "$workflow")?ref=$sha" --jq .content) ||
+    die "cannot read $workflow at $sha; nothing approved"
+  problems=$(base64 --decode <<<"$content" | workflow_token_problems) || die "cannot check $workflow at $sha; nothing approved"
+  [[ -z $problems ]] ||
+    die "$workflow could let its token write checks or statuses (could fake a required check); refuse to approve:
+$problems"
 done <<<"$workflows"
 
 # GitHub does not let the owner approve their own PR. In review mode the owner, as admin, may bypass the review

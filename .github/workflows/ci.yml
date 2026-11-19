@@ -1,4 +1,5 @@
-# Lints and tests the kit itself: shellcheck, global hook table tests, template smoke tests.
+# Lints and tests the kit itself: shellcheck, global hook table tests, template smoke tests, and the vendored
+# YAML parser of the workflow check against its pinned PyYAML release.
 # The slow per-language adapter suite (make test-lang) runs locally. app-check builds the macOS app and runs
 # its core tests (parsing, confirmation checks, the pseudo-terminal driver). security runs the template's
 # security check on the kit's own PRs, with the same scripts a project's security.yml runs.
@@ -17,8 +18,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Tool versions
-        run: shellcheck --version && jq --version && make --version | head -1
+        run: shellcheck --version && jq --version && python3 --version && make --version | head -1
       - run: make check
+      - name: Vendored YAML parser matches its PyYAML release
+        run: scripts/check-vendored-pyyaml.sh
   app-check:
     runs-on: macos-26
     steps:
