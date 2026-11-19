@@ -8,7 +8,8 @@
 guard_status=0
 # Paths changed between the judged base and head, one per line (set by guard_changed_files).
 changed=""
-# "  <lock> no longer locks <path>" and "  <lock> now also locks <path>" lines (set by guard_lock_manifests).
+# "  <lock> no longer locks "<path>"" and "  <lock> now also locks "<path>"" lines, paths quoted by quoted_path (set
+# by guard_lock_manifests).
 lock_scope_changes=""
 
 fail() {
@@ -145,7 +146,7 @@ guard_touched_tickets() {
 guard_ticket_spec() {
   local ticket=$1 head=$2 allow_file tracked pattern path
   [[ $ticket =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]] || fail "invalid ticket id '$ticket' (expected e.g. ABC-123)"
-  git cat-file -e "$head:specs/$ticket/spec.lock" 2>/dev/null ||
+  [[ $(git cat-file -t "$head:specs/$ticket/spec.lock" 2>/dev/null) == blob ]] ||
     fail "spec for $ticket is not locked yet (draft); answer its questions and run spec-lock before merging"
   allow_file="specs/$ticket/write-allow"
   if git cat-file -e "$head:$allow_file" 2>/dev/null; then
@@ -187,7 +188,7 @@ guard_lock_manifests() {
       fail "spec lock $lock is not in a ticket directory (specs/<TICKET>, e.g. specs/ABC-123)"
       continue
     fi
-    if ! git cat-file -e "$head:$dir/locked-files" 2>/dev/null; then
+    if [[ $(git cat-file -t "$head:$dir/locked-files" 2>/dev/null) != blob ]]; then
       fail "spec lock $lock has no $dir/locked-files to check it against"
       continue
     fi
@@ -203,7 +204,8 @@ guard_lock_manifests() {
 
   while IFS= read -r lock; do
     [[ -n $lock ]] || continue
-    if ! git cat-file -e "$head:$lock" 2>/dev/null; then
+    # A directory of the same name would hide the lock from every check that looks for spec.lock files.
+    if [[ $(git cat-file -t "$head:$lock" 2>/dev/null) != blob ]]; then
       fail "spec lock $lock is on the base and missing at the head; a locked spec may change only by re-locking it"
       continue
     fi
@@ -211,12 +213,12 @@ guard_lock_manifests() {
     head_paths=$(git show "$head:$lock" | manifest_paths)
     while IFS= read -r path; do
       if [[ -n $path ]] && ! grep -Fx -- "$path" <<<"$head_paths" >/dev/null; then
-        lock_scope_changes+="  $lock no longer locks $path"$'\n'
+        lock_scope_changes+="  $lock no longer locks $(quoted_path "$path")"$'\n'
       fi
     done <<<"$base_paths"
     while IFS= read -r path; do
       if [[ -n $path ]] && ! grep -Fx -- "$path" <<<"$base_paths" >/dev/null; then
-        lock_scope_changes+="  $lock now also locks $path"$'\n'
+        lock_scope_changes+="  $lock now also locks $(quoted_path "$path")"$'\n'
       fi
     done <<<"$head_paths"
   done < <(ticket_locks "$base")

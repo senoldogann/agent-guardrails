@@ -334,6 +334,12 @@ $extra_workflows"
       mergeQueue: $queue}')"
   confirm commit "${sha:0:7}" "Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
 
+  # Act only on what the owner saw; the merge below is pinned to the head as well.
+  jq -e --arg base "$base_sha" --arg branch "$base" --arg head "$sha" \
+    '.state == "open" and .base.sha == $base and .base.ref == $branch and .head.sha == $head' \
+    <<<"$(gh api "repos/$repo/pulls/$pr")" >/dev/null ||
+    die "PR #$pr changed while you reviewed it, or cannot be read again; nothing merged. Run the command again to review its new state."
+
   # Listed before the merge, so a failure in between still shows up as an alarm in the inbox.
   register "$repo"
   trap 'printf "guardrails on stopped before merging. Retry with: guardrails on %s\n" "$1" >&2; cleanup' EXIT

@@ -10,6 +10,7 @@ require_args 1 $# "lock-verify <TICKET>"
 cd_project_root
 
 lock="specs/$1/spec.lock"
+[[ $1 =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]] || die "$lock is not in a ticket directory (specs/<TICKET>, e.g. specs/ABC-123)"
 [[ -f $lock ]] || die "$lock is missing; run the spec phase and spec-lock first"
 dir="specs/$1"
 [[ -f "$dir/locked-files" ]] || die "$dir/locked-files is missing; the spec lock cannot be checked without it"

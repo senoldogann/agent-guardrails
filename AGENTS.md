@@ -132,4 +132,6 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
   each, by plain repository-relative paths. `lib.sh` holds the checks (`locked_files_problems`, `manifest_problems`)
   that `spec-lock`, `lock-verify` and both guards (`guard_lock_manifests`) share. A lock may not disappear; a re-lock
   that covers other files than the base passes and is listed under "SPEC LOCK SCOPE CHANGED" for the owner.
-  `tests/spec-lock.sh` runs these cases through `ci-guard` and `ci-guard-group`.
+  `tests/spec-lock.sh` runs these cases through `ci-guard` and `ci-guard-group`. A project whose existing locks break
+  these rules (a duplicate or `./` entry in `locked-files`) sees its kit update PR fail `lock-verify-all` in its own
+  checks; it re-locks those tickets, one PR each, before taking the update.

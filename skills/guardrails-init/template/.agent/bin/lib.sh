@@ -49,16 +49,40 @@ spec_lock_metadata() {
 # Succeeds for a plain repository-relative path: not empty, not absolute, no empty, "." or ".." component and
 # no trailing slash, so it cannot point outside the repository or name one file two ways. Control characters,
 # backslashes and backticks are refused too: shasum escapes names with a backslash or newline, and the others
-# could forge lines in the guard's output.
+# could forge lines in the guard's output. So is whitespace at either end of a component, which would make a
+# look-alike twin of a locked file ("tests/a.test.ts ").
 is_repo_path() {
   local path=$1
   case $path in
     *[[:cntrl:]]* | *\\* | *\`*) return 1 ;;
   esac
   case "/$path/" in
-    *//* | */./* | */../*) return 1 ;;
+    *//* | */./* | */../* | */[[:space:]]* | *[[:space:]]/*) return 1 ;;
   esac
   return 0
+}
+
+# Prints a path in double quotes with every byte outside printable ASCII, and the quote, backslash and backtick, as
+# an octal escape (as git quotes paths), so look-alike names (a non-breaking or zero-width space, another Unicode
+# form of a letter) read differently in the owner's summary.
+quoted_path() {
+  local LC_ALL=C
+  local path=$1 out="" char code i
+  for ((i = 0; i < ${#path}; i++)); do
+    char=${path:i:1}
+    case $char in
+      '"' | \\ | '`') ;;
+      [[:print:]])
+        out+=$char
+        continue
+        ;;
+    esac
+    code=$(printf '%d' "'$char")
+    # Bash reads a byte above 127 as a negative char on some platforms.
+    [[ $code -ge 0 ]] || code=$((code + 256))
+    out+=$(printf '\\%03o' "$code")
+  done
+  printf '"%s"\n' "$out"
 }
 
 # Reads a ticket's locked-files on stdin and prints one problem per line: no entries, an entry that is not a plain

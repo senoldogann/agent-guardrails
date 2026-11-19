@@ -103,6 +103,12 @@ printf 'tests/a.test.txt\ntests/a.test.txt\n' >specs/T-1/locked-files
 if .agent/bin/spec-lock T-1 >"$work/out" 2>&1; then fail "spec-lock refuses a locked file listed twice"; else ok "spec-lock refuses a locked file listed twice"; fi
 printf 'tests/a.test.txt\n../outside.txt\n' >specs/T-1/locked-files
 if .agent/bin/spec-lock T-1 >"$work/out" 2>&1; then fail "spec-lock refuses a path outside the repository"; else ok "spec-lock refuses a path outside the repository"; fi
+cp tests/b.test.txt "tests/b.test.txt "
+printf 'tests/a.test.txt\ntests/b.test.txt \n' >specs/T-1/locked-files
+if .agent/bin/spec-lock T-1 >"$work/out" 2>&1; then fail "spec-lock refuses a look-alike name with a trailing space"; else
+  ok "spec-lock refuses a look-alike name with a trailing space"
+fi
+rm "tests/b.test.txt "
 if [[ -z $(git ls-files --others --exclude-standard) ]]; then ok "a refused spec-lock leaves no files behind"; else
   git ls-files --others --exclude-standard >"$work/out"
   fail "a refused spec-lock leaves no files behind"
@@ -172,13 +178,34 @@ git rm -q specs/T-1/spec.lock
 commit "remove the lock"
 implement removed
 expect_guards "removing a lock fails" fail "spec lock specs/T-1/spec.lock is on the base and missing at the head"
+branch feat/T-1-lock-dir
+git rm -q specs/T-1/spec.lock
+mkdir specs/T-1/spec.lock
+printf 'x\n' >specs/T-1/spec.lock/keep
+printf 'weakened\n' >tests/b.test.txt
+commit "replace the lock with a directory"
+implement lock-dir
+expect_guards "replacing a lock with a directory fails" fail "spec lock specs/T-1/spec.lock is on the base and missing at the head"
+branch feat/T-1-twin
+cp tests/b.test.txt "tests/b.test.txt "
+printf 'weakened\n' >tests/b.test.txt
+printf 'tests/a.test.txt\ntests/b.test.txt \nsrc/contract.txt\n' >specs/T-1/locked-files
+(
+  while IFS= read -r path; do shasum -a 256 "$path"; done <<<"$(printf '%s\n' specs/T-1/locked-files specs/T-1/write-allow \
+    specs/T-1/acceptance-criteria.md specs/T-1/OPEN_QUESTIONS.md specs/T-1/tests.lock tests/a.test.txt \
+    "tests/b.test.txt " src/contract.txt)"
+) >specs/T-1/spec.lock
+commit "lock a look-alike twin instead of the test"
+implement twin
+expect_guards "a look-alike twin with a trailing space fails" fail \
+  "specs/T-1/locked-files lists 'tests/b.test.txt ', which is not a plain repository-relative path"
 branch feat/T-1-reduced
 printf 'tests/a.test.txt\nsrc/contract.txt\n' >specs/T-1/locked-files
 .agent/bin/spec-lock T-1 >/dev/null
 commit "spec(T-1): unlock tests/b.test.txt"
 implement reduced
 expect_guards "a re-lock that drops a locked file passes and names the reduction" pass \
-  "  specs/T-1/spec.lock no longer locks tests/b.test.txt"
+  '  specs/T-1/spec.lock no longer locks "tests/b.test.txt"'
 expect_guards "the owner sees the reduction under its own heading" pass "SPEC LOCK SCOPE CHANGED"
 
 echo "legitimate amendment"
@@ -188,7 +215,16 @@ printf 'c amended\n' >tests/c.test.txt
 .agent/bin/spec-lock T-1 >/dev/null
 commit "spec(T-1): lock the third test"
 implement amended
-expect_guards "an amendment re-locked with spec-lock passes" pass "  specs/T-1/spec.lock now also locks tests/c.test.txt"
+expect_guards "an amendment re-locked with spec-lock passes" pass '  specs/T-1/spec.lock now also locks "tests/c.test.txt"'
+branch feat/T-1-unicode
+nbsp=$(printf 'tests/c\302\240.test.txt')
+printf 'look-alike\n' >"$nbsp"
+printf 'tests/a.test.txt\ntests/b.test.txt\n%s\nsrc/contract.txt\n' "$nbsp" >specs/T-1/locked-files
+.agent/bin/spec-lock T-1 >/dev/null
+commit "spec(T-1): lock a file with a non-breaking space"
+implement unicode
+expect_guards "a name with a non-breaking space is listed with its bytes escaped" pass \
+  '  specs/T-1/spec.lock now also locks "tests/c\302\240.test.txt"'
 expect_local "the amended lock passes locally" pass ""
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

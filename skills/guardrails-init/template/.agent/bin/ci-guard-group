@@ -8,9 +8,9 @@
 # Every PR in the group already passed ci-guard and the owner's approval at its exact head; this re-checks
 # what can break when approved PRs are combined or rebased onto a newer default branch: merge commits,
 # file names and modes, workflows that could stand in for a required check, spec locks (complete, well formed,
-# still present, matching their files; scope changes listed) and the touched tickets' specs. It leaves out what only a PR has: its branch name (a group's
-# ref is gh-readonly-queue/...) and "HEAD is a spec commit" (the queue squashes a PR's spec and
-# implementation commits into one, and the checks-<lang> workflows run the full gate on it).
+# still present, matching their files; scope changes listed) and the touched tickets' specs. It leaves out what
+# only a PR has: its branch name (a group's ref is gh-readonly-queue/...) and "HEAD is a spec commit" (the queue
+# squashes a PR's spec and implementation commits into one, and the checks-<lang> workflows run the full gate on it).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/guard-lib.sh"
