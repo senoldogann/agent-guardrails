@@ -6,6 +6,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Added
+
+- CI runs the real language-adapter tests for every supported language on PRs and on `main`, and before each
+  release.
+
 ### Changed
 
 - The README no longer says that nothing merges until the human approves the exact commit without naming
@@ -16,6 +21,18 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- The guard and the merge queue guard reject a spec lock that is not exactly what `spec-lock` writes: an
+  empty, malformed or duplicated manifest, a path outside the repository, a missing metadata or locked file,
+  or a lock that disappears. A re-lock that changes which files are locked passes as an amendment and is
+  listed for the owner under "SPEC LOCK SCOPE CHANGED". `spec-lock` and `lock-verify` check the same locally.
+- `approve-head` and `guardrails on <PR>` show the files of exactly the base and head they read, so a push
+  during the review can no longer swap the list. A PR whose file list GitHub may have cut off (300 files or
+  more) is refused, and the approval writes nothing if the PR moved. A project whose existing spec locks are
+  not what `spec-lock` writes must re-lock them before updating, because its update PR's checks fail
+  otherwise.
+- The guard summary drops control characters and backticks from the accepted-mutant lines a PR adds, as it
+  already did for accepted security findings, so a reason cannot close the summary's code fence and hide the
+  sections after it.
 - The guard and the owner's approval read workflow files with a real YAML parser (vendored PyYAML 6.0.3
   scanner and parser, run as data with `python3`) instead of line regexes. Escaped or quoted spellings of
   `checks`/`statuses` write, `write-all` and reserved job names are now caught, and duplicate keys, anchors,
