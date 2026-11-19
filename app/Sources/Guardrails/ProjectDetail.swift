@@ -36,8 +36,7 @@ struct ProjectDetail: View {
                 }
             }
             .padding(Metrics.windowPadding)
-            .frame(maxWidth: pageWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(project.name)
         .sheet(isPresented: $showsSetup) {

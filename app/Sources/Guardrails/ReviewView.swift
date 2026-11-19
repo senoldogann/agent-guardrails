@@ -24,9 +24,8 @@ struct ReviewView: View {
                         logSection(model)
                     }
                 }
-                .frame(maxWidth: pageWidth, alignment: .leading)
                 .padding(Metrics.windowPadding)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let model { actionBar(model) }
         }
