@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Usage: notify-team
+# Run by .github/workflows/agent-notify.yml from the default branch. Reads GitHub's event from
+# GITHUB_EVENT_PATH, checks it against the PR's current state and posts one short message per PR to the
+# Slack and/or Microsoft Teams webhook in GUARDRAILS_SLACK_WEBHOOK and GUARDRAILS_TEAMS_WEBHOOK. Without
+# either secret it does nothing and succeeds. The webhook URLs are secrets: they reach curl through its
+# standard input, never its arguments or the log.
+set -euo pipefail
+here=$(dirname "$0")
+source "$here/lib.sh"
+source "$here/notify-lib.sh"
+
+slack=${GUARDRAILS_SLACK_WEBHOOK:-}
+teams=${GUARDRAILS_TEAMS_WEBHOOK:-}
+if [[ -z $slack && -z $teams ]]; then
+  printf 'Team notifications are off: neither GUARDRAILS_SLACK_WEBHOOK nor GUARDRAILS_TEAMS_WEBHOOK is set.\n'
+  exit 0
+fi
+# Checked here because curl's config format quotes the URL: a quote or backslash would end it early.
+for name in GUARDRAILS_SLACK_WEBHOOK GUARDRAILS_TEAMS_WEBHOOK; do
+  value=${!name:-}
+  [[ -z $value || $value =~ ^https://[^[:space:]\"\\]+$ ]] ||
+    die "the secret $name is not an https:// URL; set it to the webhook URL Slack or Teams showed you"
+done
+
+event_name=${GITHUB_EVENT_NAME:?run this from GitHub Actions}
+event_file=${GITHUB_EVENT_PATH:?run this from GitHub Actions}
+repo=${GITHUB_REPOSITORY:?run this from GitHub Actions}
+server=${GITHUB_SERVER_URL:?run this from GitHub Actions}
+attempts=4
+
+# GitHub API reads, retried with backoff; each failed attempt is logged and the last error ends the run.
+gh_read() {
+  local attempt=1 out
+  while true; do
+    if out=$(gh api "$@"); then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    [[ $attempt -lt $attempts ]] || die "GitHub API call failed $attempts times: gh api $*"
+    printf '::warning::GitHub API call failed (attempt %d of %d): gh api %s\n' "$attempt" "$attempts" "$*" >&2
+    sleep $((attempt * attempt))
+    attempt=$((attempt + 1))
+  done
+}
+
+# Posts a payload file to a webhook, retried with backoff. Prints a warning per failed attempt with curl's exit
+# code, the HTTP status and the start of the response body, never the URL. Fails after the last attempt.
+# Arguments: name (Slack or Teams), webhook URL, payload file.
+post_webhook() {
+  local name=$1 url=$2 payload=$3 attempt=1 code status body
+  body=$(mktemp)
+  while true; do
+    status=0
+    code=$(printf 'url = "%s"\n' "$url" | curl --config - --silent --show-error --fail-with-body --proto '=https' \
+      --connect-timeout 5 --max-time 15 --header 'Content-Type: application/json' \
+      --data-binary "@$payload" --output "$body" --write-out '%{http_code}') || status=$?
+    if [[ $status -eq 0 ]]; then
+      rm -f "$body"
+      printf '%s: posted (HTTP %s)\n' "$name" "$code"
+      return 0
+    fi
+    printf '::warning::%s webhook post failed (attempt %d of %d): curl exit %d, HTTP %s, response: %s\n' \
+      "$name" "$attempt" "$attempts" "$status" "${code:-none}" "$(LC_ALL=C tr -d '\000-\037\177' <"$body" | cut -c1-300)" >&2
+    if [[ $attempt -ge $attempts ]]; then
+      rm -f "$body"
+      return 1
+    fi
+    sleep $((attempt * attempt))
+    attempt=$((attempt + 1))
+  done
+}
+
+# Runs one of the notify-lib checks, which succeed (0) or fail (1); dies on any other status, so a jq error is
+# never read as an answer.
+check() {
+  local status=0
+  "$@" || status=$?
+  [[ $status -le 1 ]] || die "$1 failed with status $status"
+  return "$status"
+}
+
+default_branch=$(jq -r '.repository.default_branch // empty' "$event_file")
+[[ -n $default_branch ]] || die "the $event_name event names no default branch of $repo"
+candidates=$(notify_candidates "$event_name" <"$event_file")
+if [[ -z $candidates ]]; then
+  printf 'Nothing to notify for this %s event.\n' "$event_name"
+  exit 0
+fi
+
+failed=""
+payload=$(mktemp)
+while IFS=$'\t' read -r kind sha pr run_id; do
+  if [[ -z $pr ]]; then
+    prs=$(gh_read "repos/$repo/commits/$sha/pulls" | notify_prs_at_head "$sha" "$default_branch")
+  else
+    prs=$pr
+  fi
+  [[ -n $prs ]] || printf 'No open PR into %s has HEAD %s; nothing to notify.\n' "$default_branch" "$sha"
+  for number in $prs; do
+    pr_json=$(gh_read "repos/$repo/pulls/$number")
+    if ! check notify_still_current "$kind" "$sha" "$default_branch" <<<"$pr_json"; then
+      printf 'PR #%s changed since this event (%s); not notified.\n' "$number" "$kind"
+      continue
+    fi
+    if [[ $kind == approve ]]; then
+      checks=$(gh_read "repos/$repo/commits/$sha/check-runs?check_name=guard&per_page=100" --jq '[.check_runs[] | {status, conclusion}]')
+      if ! check notify_guard_passed <<<"$checks"; then
+        printf 'PR #%s: guard has not passed on %s; not notified.\n' "$number" "${sha:0:7}"
+        continue
+      fi
+    fi
+    if [[ -n $run_id ]]; then
+      # Only the fields notify_guard_seen reads: a run object is large, and the list must stay small.
+      runs=$(gh_read "repos/$repo/actions/runs?head_sha=$sha&event=pull_request_target&per_page=100" \
+        --jq '[.workflow_runs[] | {id, path, event, status, conclusion, created_at, pull_requests: [.pull_requests[]? | {number}]}]')
+      events=$(gh_read --paginate "repos/$repo/issues/$number/events?per_page=100" --jq '.[] | {event, created_at}' | jq -s -c .)
+      conclusion=$(jq -r .workflow_run.conclusion "$event_file")
+      if printf '{"runs": %s, "events": %s}' "$runs" "$events" | check notify_guard_seen "$run_id" "$number" "$conclusion"; then
+        printf 'PR #%s: this guard result for %s was already notified.\n' "$number" "${sha:0:7}"
+        continue
+      fi
+    fi
+    message=$(notify_message "$server" "$repo" "$kind" <<<"$pr_json")
+    printf 'PR #%s: %s\n' "$number" "$kind"
+    if [[ -n $slack ]]; then
+      notify_slack_payload <<<"$message" >"$payload"
+      post_webhook Slack "$slack" "$payload" || failed+=" Slack(PR #$number)"
+    fi
+    if [[ -n $teams ]]; then
+      notify_teams_payload <<<"$message" >"$payload"
+      post_webhook Teams "$teams" "$payload" || failed+=" Teams(PR #$number)"
+    fi
+  done
+done <<<"$candidates"
+rm -f "$payload"
+[[ -z $failed ]] || die "could not post to:$failed (see the warnings above)"

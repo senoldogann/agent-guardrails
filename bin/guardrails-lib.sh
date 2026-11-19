@@ -7,8 +7,9 @@ template="$kit/skills/guardrails-init/template"
 
 # Prints every way the kit-owned files of a checkout differ from the installed kit's template, one per line.
 # Nothing printed means the checkout carries exactly this kit: .agent/, .claude/settings.json, .cursor/hooks.json,
-# the guard and security workflows and each checks-<lang> workflow. The Makefile, AGENTS.md and
-# .github/security-ignore hold project judgment and are not compared.
+# the guard, security and team notification workflows and each checks-<lang> workflow. The notification
+# workflow holds the webhook secrets, so where it posts may not change without the kit. The Makefile,
+# AGENTS.md and .github/security-ignore hold project judgment and are not compared.
 kit_drift() {
   local dir=$1 workflow name
   [[ -d "$dir/.agent" ]] || {
@@ -36,10 +37,10 @@ kit_drift() {
     printf 'differs or missing: .claude/settings.json\n'
   cmp -s "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json" ||
     printf 'differs or missing: .cursor/hooks.json\n'
-  cmp -s "$template/.github/workflows/agent-guard.yml" "$dir/.github/workflows/agent-guard.yml" ||
-    printf 'differs or missing: .github/workflows/agent-guard.yml\n'
-  cmp -s "$template/.github/workflows/security.yml" "$dir/.github/workflows/security.yml" ||
-    printf 'differs or missing: .github/workflows/security.yml\n'
+  for name in agent-guard.yml security.yml agent-notify.yml; do
+    cmp -s "$template/.github/workflows/$name" "$dir/.github/workflows/$name" ||
+      printf 'differs or missing: .github/workflows/%s\n' "$name"
+  done
   local found=0
   for workflow in "$dir"/.github/workflows/checks-*.yml; do
     [[ -e $workflow ]] || continue
@@ -183,7 +184,8 @@ check_jobs() {
 remove_kit_files() {
   local dir=$1 workflow name makefile lang
   rm -rf "$dir/.agent"
-  rm -f "$dir/.github/workflows/agent-guard.yml" "$dir/.github/workflows/security.yml" "$dir/.github/security-ignore"
+  rm -f "$dir/.github/workflows/agent-guard.yml" "$dir/.github/workflows/security.yml" "$dir/.github/security-ignore" \
+    "$dir/.github/workflows/agent-notify.yml"
   for workflow in "$dir"/.github/workflows/checks-*.yml; do
     [[ -e $workflow ]] || continue
     name=${workflow##*/}

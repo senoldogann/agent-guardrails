@@ -13,7 +13,10 @@ acceptance scenarios up front; deterministic checks (local hooks + CI) decide wh
 - `template/.agent/bin/` project-side scripts; `template/.agent/hooks/` per-project Claude Code hooks
   (write-guard, stop-check, and a bash-guard shim so teammates' agents are guarded too) and the Cursor shim
   `cursor-guard.sh`, run from `template/.cursor/hooks.json`;
-  `template/.github/workflows/agent-guard.yml` base-branch guard.
+  `template/.github/workflows/agent-guard.yml` base-branch guard; `template/.github/workflows/agent-notify.yml`
+  team notifications to Slack or Microsoft Teams (inert without the owner's webhook secrets), whose payloads
+  `template/.agent/bin/notify-team` builds from the pure functions in `notify-lib.sh` (tested offline in
+  `tests/notify.sh`). Both workflows are kit files: `kit_drift` compares them byte for byte.
 - The `security` check: `template/.github/workflows/security.yml` runs `template/.agent/bin/security-tools`
   (pinned gitleaks, osv-scanner, Semgrep CE and semgrep-rules commit, verified by checksum; Semgrep's hashed
   pins in `template/.agent/security/semgrep-pins.txt`) and `security-scan`; the report parsing and the

@@ -137,6 +137,61 @@ github.com or GitHub Mobile (**review mode**):
    is then required, and GitHub dismisses it when a push changes the PR. **Review** on your own PR merges it
    with your admin bypass, which skips the review but never the checks.
 
+## Team notifications (Slack, Microsoft Teams)
+
+The menu bar app tells you; a team channel can hear about the same events for every enforced repository. Each
+project carries the workflow `.github/workflows/agent-notify.yml`, which stays off until you add a webhook
+secret. It posts one short line per event, with a link to the PR:
+
+> acme/shop #12 · feat: add cart — waits for your approval
+
+The events are: a PR waits for approval (guard passed, or the agent's question was answered and its label
+removed), is blocked (guard failed), the agent asks for a decision (label `needs-decision`), a PR was approved
+(status mode) or merged. A guard pass is announced only when no guard run on that commit failed. Approving still happens in your
+own tools; the message only informs, and no ruleset requires the workflow, so it never blocks a merge.
+
+**Slack:**
+
+1. At [api.slack.com/apps](https://api.slack.com/apps), **Create New App** → **From scratch**, in your
+   workspace.
+2. **Incoming Webhooks** → turn on **Activate Incoming Webhooks** → **Add New Webhook to Workspace**, pick the
+   channel, **Allow**, and copy the webhook URL.
+3. Add it as the secret `GUARDRAILS_SLACK_WEBHOOK`.
+
+**Microsoft Teams** (Office 365 connector webhooks are retired; Teams uses Workflows):
+
+1. In the channel, **More options (…)** → **Workflows** → the template **Send webhook alerts to a channel**,
+   set the team and channel, **Save**, and copy the webhook URL.
+2. Add it as the secret `GUARDRAILS_TEAMS_WEBHOOK`.
+3. The workflow belongs to the person who created it; add a co-owner in the Workflows app so it outlives a
+   departure.
+
+**The secret:** for one repository, its **Settings** → **Secrets and variables** → **Actions** → **New
+repository secret**, or `gh secret set GUARDRAILS_SLACK_WEBHOOK -R <owner/repo>` (it asks for the value). For
+several repositories, add an organization secret with access for the enforced repositories. Set one secret or
+both. Without either, the workflow does nothing and succeeds.
+
+**Limits:**
+
+- In review mode an approval is a GitHub review, and no review event runs a workflow from the default branch,
+  so the channel hears about an approved PR when it merges.
+- Each guard result is posted once per commit: the guard runs again when a PR's title or description changes,
+  and the repeat is not posted. Drafts are not announced until they are ready for review.
+- PRs from forks are not supported (as for the guard).
+- Every event starts a short job; in private repositories it counts toward your GitHub Actions minutes.
+
+**Security:** the workflow holds the webhook URL and reads PR titles the agent wrote. It runs only on events
+that take the workflow from the base branch (`pull_request_target`, `workflow_run` of agent-guard, `status`),
+checks out only the default branch's `.agent/bin`, never PR code, and has read-only permissions. The payloads
+are built with `jq`: titles lose control and invisible formatting characters, Slack shows them as literal rich
+text (no mentions such as `<!channel>`, no links), and the only link is the PR, built from the repository and
+the PR number. curl reads the URL from its standard input, so it never appears in arguments or the log. The
+workflow and `.agent/bin/notify-team` are kit files: `guardrails on` refuses a project whose copies differ
+from your installed kit, and `guardrails approve` marks a change to them `!!`. Anyone who can push a workflow
+to the repository can read its secrets; the agent App cannot change workflows, but in status mode the agent
+works with your login. A leaked webhook can only post to its one channel: give it a channel of its own, and
+replace the webhook if it leaks.
+
 ## What it changes on GitHub
 
 `guardrails on` sets, for that repository: the `agent-guardrails` ruleset on the default branch (no deletion,

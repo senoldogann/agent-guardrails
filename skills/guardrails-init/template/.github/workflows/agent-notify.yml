@@ -1,0 +1,51 @@
+# Tells the team's Slack or Microsoft Teams channel what happens to the agent's PRs: a PR waits for approval
+# (guard passed), is blocked (guard failed), the agent asks a question (label needs-decision), a PR was
+# approved or merged. It stays off until the owner adds the repository or organization secret
+# GUARDRAILS_SLACK_WEBHOOK and/or GUARDRAILS_TEAMS_WEBHOOK; without them it does nothing and succeeds. It only
+# informs: no ruleset requires it, so it never blocks a merge.
+#
+# It holds a secret and reads PR titles the agent wrote, so it runs only on events that take this file from
+# the base branch, never from the PR: pull_request_target (question asked or answered, merge), workflow_run
+# of agent-guard (the guard result, once per HEAD) and status (the owner's approval of a HEAD in status mode).
+# A GitHub review has no such event, so in review mode the channel hears about an approved PR when it merges.
+# It checks out only the default branch's .agent/bin, never PR code; the script reads the event from
+# GITHUB_EVENT_PATH (no expressions in run scripts), builds the payloads with jq and posts them with curl. The
+# script, not the job condition, picks the approval status by name: ci-guard keeps that name out of workflows.
+# Kit file: `guardrails on` compares it with the installed kit, and an approval marks a change to it as a
+# guardrail change.
+name: agent-notify
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, closed]
+  workflow_run:
+    workflows: [agent-guard]
+    types: [completed]
+  status:
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: read
+  checks: read
+jobs:
+  notify:
+    # A first filter on fields GitHub sets, so most events do not start a runner; the script checks again.
+    if: >-
+      (github.event_name == 'pull_request_target' && (github.event.action == 'closed' || github.event.label.name == 'needs-decision'))
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_target'
+        && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'))
+      || (github.event_name == 'status' && github.event.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .agent/bin
+          persist-credentials: false
+      - name: Notify the team channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUARDRAILS_SLACK_WEBHOOK: ${{ secrets.GUARDRAILS_SLACK_WEBHOOK }}
+          GUARDRAILS_TEAMS_WEBHOOK: ${{ secrets.GUARDRAILS_TEAMS_WEBHOOK }}
+        run: .agent/bin/notify-team
