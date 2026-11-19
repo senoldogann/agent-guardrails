@@ -1,0 +1,54 @@
+[
+  {"number": 11, "title": "feat(A-11): status mode, fixed after a failed guard", "url": "u11",
+   "createdAt": "2026-11-02T08:00:00Z", "closedAt": "2026-11-02T12:00:00Z", "mergedAt": "2026-11-02T12:00:00Z",
+   "author": {"__typename": "Bot", "login": "guardrails-agent-acme"}, "mergedBy": {"login": "owner"},
+   "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": [
+     {"__typename": "ReadyForReviewEvent", "createdAt": "2026-11-02T09:00:00Z"}]},
+   "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": [
+     {"commit": {"oid": "a1", "statusCheckRollup": {"contexts": {"nodes": [
+       {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "FAILURE", "completedAt": "2026-11-02T08:05:00Z"},
+       {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-02T08:06:00Z"}]}}}},
+     {"commit": {"oid": "a2", "statusCheckRollup": {"contexts": {"nodes": [
+       {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-02T09:05:00Z"},
+       {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-02T09:06:00Z"},
+       {"__typename": "StatusContext", "context": "merge-approval", "state": "SUCCESS", "createdAt": "2026-11-02T11:00:00Z"}]}}}}]}},
+  {"number": 12, "title": "feat(A-12): review mode, approved twice", "url": "u12",
+   "createdAt": "2026-11-03T08:00:00Z", "closedAt": "2026-11-03T14:00:00Z", "mergedAt": "2026-11-03T14:00:00Z",
+   "author": {"__typename": "Bot", "login": "Guardrails-Agent-Acme"}, "mergedBy": {"login": "owner"},
+   "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": [
+     {"__typename": "PullRequestReview", "id": "R1", "state": "DISMISSED", "submittedAt": "2026-11-03T09:00:00Z", "commit": {"oid": "b1"}},
+     {"__typename": "ReviewDismissedEvent", "previousReviewState": "APPROVED", "review": {"id": "R1"}},
+     {"__typename": "PullRequestReview", "id": "R2", "state": "COMMENTED", "submittedAt": "2026-11-03T10:00:00Z", "commit": {"oid": "b2"}},
+     {"__typename": "PullRequestReview", "id": "R3", "state": "APPROVED", "submittedAt": "2026-11-03T13:00:00Z", "commit": {"oid": "b2"}}]},
+   "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": [
+     {"commit": {"oid": "b1", "statusCheckRollup": null}},
+     {"commit": {"oid": "b2", "statusCheckRollup": {"contexts": {"nodes": [
+       {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-03T12:00:00Z"},
+       {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-03T12:00:00Z"}]}}}}]}},
+  {"number": 13, "title": "docs: the owner's own change\u001b[2J", "url": "u13",
+   "createdAt": "2026-11-04T08:00:00Z", "closedAt": "2026-11-04T08:10:00Z", "mergedAt": "2026-11-04T08:10:00Z",
+   "author": {"__typename": "User", "login": "owner"}, "mergedBy": {"login": "owner"},
+   "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+   "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": [
+     {"commit": {"oid": "c1", "statusCheckRollup": {"contexts": {"nodes": [
+       {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-04T08:05:00Z"},
+       {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-04T08:05:00Z"}]}}}}]}},
+  {"number": 14, "title": "chore(deps): bump", "url": "u14",
+   "createdAt": "2026-11-05T08:00:00Z", "closedAt": null, "mergedAt": null,
+   "author": {"__typename": "Bot", "login": "dependabot"}, "mergedBy": null,
+   "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+   "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": [
+     {"commit": {"oid": "d1", "statusCheckRollup": {"contexts": {"nodes": [
+       {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "CANCELLED", "completedAt": "2026-11-05T08:05:00Z"},
+       {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "TIMED_OUT", "completedAt": "2026-11-05T08:05:00Z"}]}}}}]}},
+  {"number": 15, "title": "feat: closed before the window", "url": "u15",
+   "createdAt": "2026-10-01T08:00:00Z", "closedAt": "2026-10-20T08:00:00Z", "mergedAt": "2026-10-20T08:00:00Z",
+   "author": {"__typename": "User", "login": "owner"}, "mergedBy": {"login": "owner"},
+   "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+   "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": []}},
+  {"number": 16, "title": "feat(A-16): a long one", "url": "u16",
+   "createdAt": "2026-10-15T08:00:00Z", "closedAt": null, "mergedAt": null,
+   "author": {"__typename": "Bot", "login": "guardrails-agent-acme"}, "mergedBy": null,
+   "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+   "commits": {"pageInfo": {"hasPreviousPage": true}, "nodes": []}}
+]

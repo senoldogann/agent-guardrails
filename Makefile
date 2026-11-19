@@ -16,6 +16,7 @@ test:
 	tests/release.sh
 	tests/agent-app.sh
 	tests/kit-update.sh
+	tests/report.sh
 
 ## Slow: real TS/Python/Rust/Swift mini projects (needs pnpm, uv, cargo, swift).
 test-lang:

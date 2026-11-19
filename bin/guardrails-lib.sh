@@ -309,6 +309,166 @@ project_states() {
                   else "missing" end)}'
 }
 
+# jq definitions shared by the report functions.
+#   epoch            a GitHub timestamp in seconds; REST answers carry fractions and offsets
+#                    (2026-11-17T12:49:41.541+02:00), which jq's fromdateiso8601 refuses.
+#   nearest_rank($q) the nearest-rank percentile of an array of numbers, null for an empty one.
+#   ruleset_changes  the differences between two ruleset states {before, after} in words, one string each.
+# shellcheck disable=SC2016 # jq's $variables, not the shell's
+report_jq_defs='
+  def epoch: capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})$")
+    | (.d + "Z" | fromdateiso8601)
+      - (if .z == "Z" then 0
+         else (if .z[0:1] == "-" then -1 else 1 end) * ((.z[1:3] | tonumber) * 3600 + (.z[4:6] | tonumber) * 60) end);
+  def nearest_rank($q): if length == 0 then null else sort | .[([(length * $q | ceil) - 1, 0] | max)] end;
+  def stats: {count: length, median: nearest_rank(0.5), p90: nearest_rank(0.9)};
+  def words: if type == "array" and length > 0 and all(.[]; type == "object" and has("context")) then map(.context) | join(", ")
+    elif type == "array" and length == 0 then "none" elif type == "string" then . else tojson end;
+  def actors: [.bypass_actors[]? | "\(.actor_type) \(.actor_id) (\(.bypass_mode))"] | if length == 0 then "nobody" else join(", ") end;
+  def rule($s; $t): [$s.rules[]? | select(.type == $t)][0];
+  def ruleset_changes:
+    .before as $b | .after as $a
+    | if $b == null then ["created: \($a.target // "branch") ruleset, \($a.enforcement), rules \([$a.rules[]?.type] | join(", "))"]
+      else
+        [ (if $b.name != $a.name then "renamed from \($b.name)" else empty end),
+          (if $b.enforcement != $a.enforcement then "enforcement \($b.enforcement) → \($a.enforcement)" else empty end),
+          (if ($b | actors) != ($a | actors) then "bypass list \($b | actors) → \($a | actors)" else empty end),
+          (if $b.conditions != $a.conditions then "targets \($b.conditions | tojson) → \($a.conditions | tojson)" else empty end),
+          (([$b.rules[]?.type] - [$a.rules[]?.type])[] | "removed rule \(.)"),
+          (([$a.rules[]?.type] - [$b.rules[]?.type])[] | "added rule \(.)"),
+          ([$a.rules[]?.type][] as $t | rule($b; $t) as $old | rule($a; $t) as $new | select($old != null)
+            | ((($old.parameters // {}) | keys) + (($new.parameters // {}) | keys) | unique[]) as $k
+            | select($old.parameters[$k] != $new.parameters[$k])
+            | (if $k == "required_status_checks" then "required checks" else "\($t) \($k)" end) as $what
+            | "\($what) \($old.parameters[$k] | words) → \($new.parameters[$k] | words)")
+        ] | if length == 0 then ["saved without changes"] else . end
+      end;
+'
+
+# Prints the start of a report window as a UTC timestamp. Arguments: now (epoch seconds), days.
+report_since() {
+  jq -n -r --argjson now "$1" --argjson days "$2" '$now - $days * 86400 | todate'
+}
+
+# Reads the pull requests a report covers (a JSON array of GraphQL PullRequest nodes, see `guardrails report`)
+# and prints one compact JSON object with the window's numbers. A PR counts when it was open at some time in
+# the window (still open, or closed or merged since then); the time and merge numbers count the PRs merged in it.
+#   merged            {total, agent, people, otherBots}: merged PRs by author; agent is the agent App's bot
+#   approve, merge    {count, median, p90} in seconds, from ready for review (the last ReadyForReviewEvent
+#                     before the merge, else the PR's creation) to the first approval after it, and to the merge
+#   reapproved        PRs approved on more than one commit: a push needed a new approval
+#   guardFailed, checksFailed, failed, failedThenMerged
+#                     PRs with a failed guard run, a failed checks-<lang> run, either, and of those the ones
+#                     merged with guard and every checks-<lang> job green on the final commit
+#   adminMerges       merged PRs with no approval on their final commit (no standing approving review, no
+#                     merge-approval success): an admin bypassed the review rule, or the PR merged before the
+#                     guardrails were on. {number, title, url, mergedBy, mergedAt}
+#   partial           PRs with more commits or timeline events than the query reads; their numbers can be short
+# An approval is an approving review (also one a later push dismissed) or a merge-approval success. Titles are
+# written by the agent, so control characters are replaced. Arguments: window start (timestamp), agent App slug
+# ("" when none is registered).
+pr_report() {
+  jq -c --arg since "$1" --arg agent "$2" "$report_jq_defs"'
+    def clean: gsub("[[:cntrl:]]"; "?");
+    def failed: .__typename == "CheckRun" and .status == "COMPLETED"
+      and (.conclusion | IN("SUCCESS", "CANCELLED", "SKIPPED", "NEUTRAL") | not);
+    def runs: [.commits.nodes[]? | .commit as $c | $c.statusCheckRollup.contexts.nodes[]? | . + {oid: $c.oid}];
+    def head_runs: [.commits.nodes[-1]?.commit.statusCheckRollup.contexts.nodes[]?];
+    def approvals:
+      [.timelineItems.nodes[]? | select(.__typename == "ReviewDismissedEvent" and .previousReviewState == "APPROVED")
+        | .review.id] as $dismissed
+      | [(.timelineItems.nodes[]? | select(.__typename == "PullRequestReview"
+            and (.state == "APPROVED" or (.state == "DISMISSED" and (.id as $id | $dismissed | index($id) != null))))
+          | {at: (.submittedAt | epoch), oid: .commit.oid}),
+         (runs[] | select(.__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS")
+          | {at: (.createdAt | epoch), oid})]
+      | sort_by(.at);
+    def ready_at($until): ([.timelineItems.nodes[]? | select(.__typename == "ReadyForReviewEvent") | .createdAt | epoch
+      | select(. <= $until)] | max) // (.createdAt | epoch);
+    def green_head: head_runs as $runs
+      | ([$runs[] | select(.__typename == "CheckRun" and (.name == "guard" or (.name | startswith("checks-"))))]
+         | group_by(.name) | map(sort_by(.completedAt // "") | last)) as $latest
+      | any($latest[]; .name == "guard") and all($latest[]; .conclusion == "SUCCESS");
+    def standing_approval: any(.timelineItems.nodes[]?; .__typename == "PullRequestReview" and .state == "APPROVED")
+      or any(head_runs[]; .__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS");
+    def author_kind: (.author.login // "" | ascii_downcase | sub("\\[bot\\]$"; "")) as $login
+      | if .author.__typename == "Bot" and $agent != "" and $login == ($agent | ascii_downcase) then "agent"
+        elif .author.__typename == "Bot" then "otherBots" else "people" end;
+    ($since | epoch) as $from
+    | [.[] | select(.closedAt == null or (.closedAt | epoch) >= $from)] as $prs
+    | [$prs[] | select(.mergedAt != null) | . + {merged_at: (.mergedAt | epoch)}] as $merged
+    | [$prs[] | select(any(runs[]; failed and (.name == "guard" or (.name | startswith("checks-")))))] as $failed
+    | {
+        prs: ($prs | length),
+        merged: ({total: ($merged | length), agent: 0, people: 0, otherBots: 0}
+          + ($merged | group_by(author_kind) | map({key: (.[0] | author_kind), value: length}) | from_entries)),
+        approve: [$merged[] | ready_at(.merged_at) as $ready | [approvals[] | select(.at >= $ready)][0]
+          | select(. != null) | .at - $ready] | stats,
+        merge: [$merged[] | .merged_at - ready_at(.merged_at)] | stats,
+        reapproved: [$prs[] | select([approvals[].oid] | unique | length > 1)] | length,
+        guardFailed: [$prs[] | select(any(runs[]; failed and .name == "guard"))] | length,
+        checksFailed: [$prs[] | select(any(runs[]; failed and (.name | startswith("checks-"))))] | length,
+        failed: ($failed | length),
+        failedThenMerged: [$failed[] | select(.mergedAt != null and green_head)] | length,
+        adminMerges: [$merged[] | select(standing_approval | not)
+          | {number, title: (.title | clean), url, mergedBy: ((.mergedBy.login // "") | clean), mergedAt}],
+        partial: [$prs[] | select(.commits.pageInfo.hasPreviousPage or .timelineItems.pageInfo.hasNextPage) | .number]
+      }'
+}
+
+# Reads the history of one ruleset (GET /repos/{r}/rulesets/{id}/history, one version per line or as arrays)
+# and prints the version IDs whose state the report needs: every version in the window, and the newest one before
+# it, which the oldest change in the window is compared with. Argument: window start (timestamp).
+ruleset_versions_needed() {
+  jq -s -r --arg since "$1" "$report_jq_defs"'
+    ($since | epoch) as $from
+    | [.[] | if type == "array" then .[] else . end] | sort_by(.updated_at | epoch)
+    | ([.[] | select((.updated_at | epoch) < $from)] | last // empty), (.[] | select((.updated_at | epoch) >= $from))
+    | .version_id'
+}
+
+# Reads the versions of one ruleset as a JSON array (GET /repos/{r}/rulesets/{id}/history/{version}, each with
+# a login: the actor's GitHub login, or null when the actor is not a user) and prints one compact JSON object per
+# version in the window: {time (UTC), actor, ruleset, changes}. changes compares a version with the one before it;
+# the oldest version a ruleset has is its creation. Arguments: window start (timestamp), ruleset name.
+ruleset_audit() {
+  jq -c --arg since "$1" --arg name "$2" "$report_jq_defs"'
+    ($since | epoch) as $from
+    | sort_by(.updated_at | epoch) as $versions
+    | range(0; $versions | length) as $i
+    | $versions[$i] | select((.updated_at | epoch) >= $from)
+    | {time: (.updated_at | epoch | todate), actor: (.login // "\(.actor.type) \(.actor.id)"), ruleset: $name,
+       changes: ({before: (if $i == 0 then null else $versions[$i - 1].state end), after: .state} | ruleset_changes)}'
+}
+
+# Reads report lines (one JSON object per repository, as `guardrails report --json` prints them) and prints them
+# for a person to read.
+report_text() {
+  jq -r "$report_jq_defs"'
+    def span: if . == null then "-" elif . < 60 then "\(.) s" elif . < 3600 then "\(. / 60 | floor) min"
+      elif . < 172800 then "\(. / 3600 * 10 | floor / 10) h" else "\(. / 86400 * 10 | floor / 10) days" end;
+    def prs($n): if $n == 1 then "1 PR" else "\($n) PRs" end;
+    def day: .[0:16] | sub("T"; " ");
+    "\(.repo), last \(.days) days (since \(.since | day) UTC)",
+    "  pull requests    \(.merged.total) merged: \(.merged.agent) by the agent App, \(.merged.people) by people"
+      + (if .merged.otherBots > 0 then ", \(.merged.otherBots) by other bots" else "" end)
+      + " (\(prs(.prs)) open in the window)",
+    "  time to approve  " + (if .approve.count == 0 then "no approved PR merged"
+      else "median \(.approve.median | span), 90th percentile \(.approve.p90 | span) (\(prs(.approve.count)))" end),
+    "  time to merge    " + (if .merge.count == 0 then "no PR merged"
+      else "median \(.merge.median | span), 90th percentile \(.merge.p90 | span) (\(prs(.merge.count)))" end),
+    "  re-approvals     \(prs(.reapproved)) needed a new approval after a push",
+    "  guard and checks \(prs(.failed)) had a failing run (guard \(.guardFailed), checks-<lang> \(.checksFailed)); \(.failedThenMerged) merged after a later green run",
+    "  admin merges     \(.adminMerges | length) merged without an approval on the final commit",
+    (.adminMerges[] | "                   #\(.number) \(.title) (merged by \(.mergedBy) \(.mergedAt | day))"),
+    "  ruleset changes  " + (if (.rulesetChanges | length) == 0 then "none" else "\(.rulesetChanges | length)" end),
+    (.rulesetChanges[] | "                   \(.time | day)  \(.actor)  \(.ruleset): \(.changes | join("; "))"),
+    (if (.partial | length) > 0 then
+       "  note             " + (.partial | map("#\(.)") | join(", ")) + " have more commits or events than were read; their numbers may be short"
+     else empty end),
+    ""'
+}
+
 # Runs a read-only, paginated GraphQL query and prints its --jq output. A query GitHub cannot finish in time
 # comes back as an HTML error page, which gh reports as "invalid character '<' looking for beginning of
 # value"; the same call is then retried after $2, 2*$2, ... seconds with a warning per failed attempt. The

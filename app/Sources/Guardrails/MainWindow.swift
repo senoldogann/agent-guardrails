@@ -88,6 +88,10 @@ struct MainWindow: View {
     private func refreshAll() async {
         await model.refresh()
         await projects.loadProjects()
+        // A report reads the whole window from GitHub, so it reloads only while its page is shown.
+        if model.workspace.strip.selected == .reports {
+            await projects.reports.reload(projects.reports.window)
+        }
     }
 
     /// Loads when the window opens and every 15 minutes while it stays open.
@@ -140,6 +144,8 @@ struct WorkspacePageView: View {
         switch page {
         case .overview:
             OverviewView(model: model, projects: projects) { model.workspace.show(.repository($0)) }
+        case .reports:
+            ReportsView(reports: projects.reports)
         case .repository(let repo):
             if let project = projects.project(named: repo) {
                 ProjectDetail(project: project, model: model, projects: projects).id(project.repo)
@@ -325,6 +331,7 @@ struct WorkspaceStatusBar: View {
 func pageTitle(_ page: WorkspacePage, workspace: Workspace, projects: ProjectsModel) -> String {
     switch page {
     case .overview: return "Overview"
+    case .reports: return "Reports"
     case .repository(let repo): return projects.project(named: repo)?.name ?? repo
     case .settings: return "Settings"
     case .welcome: return "Welcome"
@@ -341,6 +348,7 @@ func pageTitle(_ page: WorkspacePage, workspace: Workspace, projects: ProjectsMo
 func pageSymbol(_ page: WorkspacePage, workspace: Workspace) -> Octicon {
     switch page {
     case .overview: .apps
+    case .reports: .graph
     case .repository: .repo
     case .settings: .gear
     case .welcome: .info

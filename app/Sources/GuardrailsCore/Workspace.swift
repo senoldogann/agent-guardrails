@@ -3,6 +3,8 @@ import Foundation
 /// A page of the main window.
 public enum WorkspacePage: Hashable, Sendable {
     case overview
+    /// How agent work went across the enforced repositories, read-only.
+    case reports
     case repository(String)
     case settings
     case pullRequest(PullRequestRef)
@@ -13,14 +15,14 @@ public enum WorkspacePage: Hashable, Sendable {
     /// Pages the sidebar shows in the browse tab; the others open in tabs of their own.
     public var isBrowsePage: Bool {
         switch self {
-        case .overview, .repository, .settings: true
+        case .overview, .reports, .repository, .settings: true
         case .pullRequest, .review, .welcome: false
         }
     }
 }
 
-/// The main window's tabs, as in an editor: the first tab shows what the sidebar selects (the overview, a
-/// repository, settings); pull requests, reviews and the welcome checklist open in tabs of their own, next to
+/// The main window's tabs, as in an editor: the first tab shows what the sidebar selects (the overview, the
+/// reports, a repository, settings); pull requests, reviews and the welcome checklist open in tabs of their own, next to
 /// the selected one, and a page already open is selected instead of opened twice.
 public struct TabStrip: Equatable, Sendable {
     /// What the browse tab shows.

@@ -6,6 +6,14 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Added
+
+- `guardrails report [owner/repo] [--days N] [--json]` and a Reports page in the app. Both are read-only and
+  show, for each enforced repository over the last 7, 30 or 90 days: merged pull requests by the agent App and
+  by people; median and 90th percentile time from ready for review to approval and to merge; re-approvals
+  after a push; failing guard and checks runs; merges without an approval on the final commit; and every
+  ruleset change with its time, author and what changed.
+
 ### Changed
 
 - Settings is a plain button in the sidebar's bottom corner, as in Claude and Linear, instead of a list row;
