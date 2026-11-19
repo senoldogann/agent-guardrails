@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-19
+
 ### Added
 
 - Opt-in GitHub merge queue for organization repositories in review mode: `guardrails on <owner/repo>
@@ -42,11 +44,21 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Changed
 
+- Pages are left-aligned and fill the window instead of a centered column of at most 760 points, so a
+  full-screen window uses its width.
+- The Code tab of a pull request starts with the number of files and lines changed and a Collapse all /
+  Expand all button; each file still opens and closes on its own.
+- A pull request page reads the PR again every 20 seconds while a check runs, so it shows the checks finish
+  instead of "1 running" until you refresh.
 - Settings is a plain button in the sidebar's bottom corner, as in Claude and Linear, instead of a list row;
   the agent App panel moved from the sidebar into Settings → Agent (its name, and Manage… or Create…).
 
 ### Fixed
 
+- The guard fetches a PR's head commit (and a merge group's commits) with the run's read-only token when the
+  default branch checkout does not already hold it, so fork PRs and private repositories are judged instead
+  of failing the fetch. `make check` runs `tests/notify.sh` again; a stray line continuation passed it to
+  `tests/report.sh` as an argument.
 - In the Liquid Glass style a light-mode window over a dark one (or an inactive window) turned a muddy gray:
   the window material took the color of what was behind it. A light veil (dark in dark mode) now keeps the
   page clean in both modes. Borders and dividers are softer.
@@ -252,7 +264,8 @@ First versioned release of the kit as it is used today.
 - The Projects list no longer fails with "invalid character '<'" when GitHub takes long to answer the repository query:
   smaller pages and retries with backoff.
 
-[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.1.0...v0.2.0

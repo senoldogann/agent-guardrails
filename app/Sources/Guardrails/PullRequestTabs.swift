@@ -69,8 +69,7 @@ struct PullRequestSummary: View {
                 }
             }
         }
-        .frame(maxWidth: pageWidth, alignment: .leading)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -185,8 +184,7 @@ struct PullRequestTimeline: View {
                 TimelineRow(event: event)
             }
         }
-        .frame(maxWidth: pageWidth, alignment: .leading)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -251,9 +249,11 @@ struct TimelineRow: View {
     }
 }
 
-/// The diff, file by file; long files start closed.
+/// The diff, file by file; long files start closed. Collapse all / Expand all act on every file at once.
 struct PullRequestCode: View {
     let pullRequest: PullRequestModel
+    /// Paths of the files the owner closed; nil until the diff loads, then long files start closed.
+    @State private var collapsed: Set<String>?
 
     var body: some View {
         Group {
@@ -265,9 +265,17 @@ struct PullRequestCode: View {
                     .padding(Metrics.windowPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .loaded(let files):
+                let closed = collapsed ?? Set(files.filter { $0.lines.count > 400 }.map(\.path))
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(files) { FileDiffCard(file: $0) }
+                        DiffToolbar(files: files, allClosed: closed.count == files.count) { closeAll in
+                            collapsed = closeAll ? Set(files.map(\.path)) : []
+                        }
+                        ForEach(files) { file in
+                            FileDiffCard(file: file, isExpanded: !closed.contains(file.path)) {
+                                collapsed = closed.symmetricDifference([file.path])
+                            }
+                        }
                     }
                     .padding(Metrics.windowPadding)
                 }
@@ -279,20 +287,39 @@ struct PullRequestCode: View {
     }
 }
 
+/// The Code tab's first row: how many files and lines change, and one button for every file.
+struct DiffToolbar: View {
+    let files: [FileDiff]
+    let allClosed: Bool
+    let setAll: (_ closeAll: Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(files.count == 1 ? "1 file" : "\(files.count) files")
+                .font(.system(size: 12, weight: .medium))
+            Text("+\(files.reduce(0) { $0 + $1.additions })").foregroundStyle(Palette.textSecondary)
+            Text("−\(files.reduce(0) { $0 + $1.deletions })").foregroundStyle(Palette.danger)
+            Spacer(minLength: 8)
+            Button {
+                setAll(!allClosed)
+            } label: {
+                OcticonLabel(allClosed ? "Expand all" : "Collapse all", icon: allClosed ? .chevronDown : .chevronRight)
+            }
+            .secondaryAction()
+            .controlSize(.small)
+        }
+        .font(.system(size: 12).monospacedDigit())
+    }
+}
+
 struct FileDiffCard: View {
     let file: FileDiff
-    @State private var isExpanded: Bool
-
-    init(file: FileDiff) {
-        self.file = file
-        _isExpanded = State(initialValue: file.lines.count <= 400)
-    }
+    let isExpanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                isExpanded.toggle()
-            } label: {
+            Button(action: toggle) {
                 HStack(spacing: 8) {
                     OcticonImage(icon: isExpanded ? .chevronDown : .chevronRight, size: 12)
                     Text(displaySafe(file.path)).font(.mono).lineLimit(1).truncationMode(.middle)

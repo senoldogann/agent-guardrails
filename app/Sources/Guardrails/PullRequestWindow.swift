@@ -28,6 +28,24 @@ struct PullRequestPage: View {
             // Loaded once when the tab opens; Refresh (⌘R in the page) loads it again.
             if case .loading = pullRequest.detail { await pullRequest.load() }
         }
+        .task(id: checksRunning) {
+            // While checks run, read the PR again every 20 seconds, so the page shows them finish; the task
+            // ends when no check runs any more.
+            guard checksRunning else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                } catch {
+                    return
+                }
+                await pullRequest.load()
+            }
+        }
+    }
+
+    private var checksRunning: Bool {
+        guard case .loaded(let pr) = pullRequest.detail else { return false }
+        return pr.checks.contains { $0.outcome == .running }
     }
 }
 
@@ -109,9 +127,7 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, Metrics.windowPadding)
         .padding(.vertical, 16)
-        // The same centered column as the page below it.
-        .frame(maxWidth: pageWidth + 2 * Metrics.windowPadding)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

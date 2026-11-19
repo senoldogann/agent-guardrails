@@ -322,10 +322,6 @@ struct AlarmBanner: View {
     }
 }
 
-/// Every page is one centered column this wide at most, as in Claude and Linear: lines stay readable in a
-/// full-screen window, and every page lines up with the others.
-let pageWidth: CGFloat = 760
-
 /// Rows of one kind in a single container, split by hairlines, instead of a card per row.
 struct RowGroup<Content: View>: View {
     @ViewBuilder let content: Content
