@@ -14,6 +14,20 @@ struct ReviewView: View {
     private var evidence: PullRequestEvidence { session.evidence }
 
     var body: some View {
+        Group {
+            if let model, let pr = model.plan?.pullRequest {
+                decisionBoard(pr, model: model)
+            } else {
+                scrollingBody
+            }
+        }
+        .task(id: model?.plan?.pullRequest?.sha) {
+            if let pr = model?.plan?.pullRequest, evidence.loadedSHA != pr.sha { await evidence.load(pr) }
+        }
+    }
+
+    /// Every other kind of action: the plan, the result and the guarded buttons in one column.
+    private var scrollingBody: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -28,9 +42,6 @@ struct ReviewView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let model { actionBar(model) }
-        }
-        .task(id: model?.plan?.pullRequest?.sha) {
-            if let pr = model?.plan?.pullRequest, evidence.loadedSHA != pr.sha { await evidence.load(pr) }
         }
     }
 
@@ -50,8 +61,10 @@ struct ReviewView: View {
             }
         case .update(let update):
             UpdatePlanCard(update: update)
-        case .approve(let pr), .turnOn(let pr):
-            pullRequestPlan(pr, model: model)
+        case .approve, .turnOn:
+            // Drawn by decisionBoard(_:model:), which needs the whole window: the chain, the evidence and the
+            // commit the approval lands on.
+            EmptyView()
         case .turnOnRepo(let repoPlan):
             Card {
                 VStack(alignment: .leading, spacing: 6) {
@@ -69,65 +82,194 @@ struct ReviewView: View {
         }
     }
 
-    private func pullRequestPlan(_ pr: PullRequestPlan, model: ActionModel) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Card {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("\(pr.repo) · PR #\(pr.pr)").font(.caption).foregroundStyle(Palette.textSecondary)
-                    Text(displaySafe(pr.title)).font(.system(size: 15, weight: .medium)).fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        SHABadge(sha: pr.shortSHA)
-                        Text("exactly this commit").font(.caption).foregroundStyle(Palette.textSecondary)
-                        if case .loaded(let now) = evidence.snapshot, now.head.sha == pr.sha {
-                            DiffStatsLabel(diff: .loaded(now.stats))
-                        }
-                        Spacer()
-                        Button("Open changes on GitHub") { openDiff(pr, model: model) }
+    // MARK: decision board
+
+    /// A pull request's review as one board: the chain of gates on top, the evidence on the left and the commit
+    /// the approval lands on, with the one button that closes the last link, on the right.
+    private func decisionBoard(_ pr: PullRequestPlan, model: ActionModel) -> some View {
+        let (links, verdict) = PullRequestChain.chain(plan: pr, evidence: evidence)
+        return VStack(spacing: 0) {
+            boardHeader(pr, model: model)
+            GateRail(links: links, verdict: verdict)
+                .padding(.horizontal, Metrics.windowPadding)
+                .padding(.bottom, 14)
+            Rectangle().fill(Palette.hairline).frame(height: 1)
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        statusSection(model)
+                        ChecksCard(pr: pr, evidence: evidence)
+                        if let spec = evidence.spec { SpecCard(spec: spec) }
+                        if !pr.lockScopeChanges.isEmpty { LockScopeGroups(changes: pr.lockScopeChanges) }
+                        FileGroups(files: pr.files)
+                        logSection(model)
+                    }
+                    .padding(Metrics.windowPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Rectangle().fill(Palette.hairline).frame(width: 1)
+                ScrollView {
+                    boardDecision(pr, model: model)
+                        .padding(Metrics.windowPadding)
+                }
+                .frame(width: 322)
+            }
+        }
+    }
+
+    private func boardHeader(_ pr: PullRequestPlan, model: ActionModel) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                OcticonImage(icon: .pullRequest, size: 12)
+                    .foregroundStyle(Palette.textSecondary)
+                Text("\(pr.repo) · PR #\(pr.pr)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.textSecondary)
+                Spacer()
+                if model.isRunning {
+                    Button("Cancel") { model.cancel() }
                         .secondaryAction()
-                        .disabled(pr.compareURL == nil)
-                        .help("GitHub's diff of exactly the listed files (base...\(pr.shortSHA)), even if the PR moves on")
-                    }
-                    if case .failed(let message) = evidence.snapshot {
-                        Text("Could not read the PR from GitHub, so the diff link waits: \(message). Load again with the button under Checks.")
-                            .font(.caption)
-                            .foregroundStyle(Palette.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                    }
-                    if case .loaded(let now) = evidence.snapshot, now.head.sha != pr.sha {
-                        OcticonLabel("The PR moved to \(now.head.sha.prefix(7)) after this check. Close this and review the new commit.", icon: .alert)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Palette.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if case .turnOn = model.plan {
-                        OcticonLabel("Kit files match your installed kit", icon: .checkCircle)
-                            .font(.caption)
-                            .foregroundStyle(Palette.textSecondary)
-                        if pr.mergeQueue == true { MergeQueuePlanNote() }
-                    }
-                    if pr.isOwnPush {
-                        OcticonLabel(displaySafe(pr.ownPushNote), icon: .gitMerge)
-                        .font(.caption)
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    } else if pr.isOwnQueueEntry {
-                        OcticonLabel("Your own PR: GitHub does not take your review, so this adds it to the merge queue now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
-                            .font(.caption)
-                            .foregroundStyle(Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if pr.isOwnMerge {
-                        OcticonLabel("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
-                            .font(.caption)
-                            .foregroundStyle(Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(!model.canCancel)
+                } else {
+                    Button("Close", action: close)
+                        .secondaryAction()
+                        .keyboardShortcut(.cancelAction)
                 }
             }
-            ChecksCard(pr: pr, evidence: evidence)
-            if let spec = evidence.spec { SpecCard(spec: spec) }
-            if !pr.lockScopeChanges.isEmpty { LockScopeGroups(changes: pr.lockScopeChanges) }
-            FileGroups(files: pr.files)
+            Text(displaySafe(pr.title))
+                .font(.system(size: 19, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Text(pr.shortSHA)
+                    .font(.mono)
+                    .textSelection(.enabled)
+                Text("\(pr.files.count) files")
+                if case .loaded(let now) = evidence.snapshot, now.head.sha == pr.sha {
+                    DiffStatsLabel(diff: .loaded(now.stats))
+                }
+                if case .loaded(let now) = evidence.snapshot {
+                    Text("\(now.base.ref) ← \(now.head.ref)")
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Palette.textSecondary)
+        }
+        .padding(.horizontal, Metrics.windowPadding)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+    }
+
+    /// The commit column: the SHA as the object of the decision, what the chain already proved, and the button.
+    private func boardDecision(_ pr: PullRequestPlan, model: ActionModel) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("You approve exactly this commit")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.textSecondary)
+                    Text(pr.shortSHA)
+                        .font(.system(size: 20, weight: .medium, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityLabel("Commit \(pr.sha)")
+                }
+
+                noticeLines(pr, model: model)
+
+                Rectangle().fill(Palette.hairline).frame(height: 1)
+
+                chainSummary(pr)
+
+                boardAction(model)
+
+                actionHint(model, alignment: .leading)
+            }
+        }
+    }
+
+    /// The one button. When the change touches files the owner must read first, the button is the diff, not the
+    /// approval, so nobody wonders why Approve does not react.
+    @ViewBuilder
+    private func boardAction(_ model: ActionModel) -> some View {
+        if mustOpenDiff(model), let pr = model.plan?.pullRequest {
+            Button {
+                openDiff(pr, model: model)
+            } label: {
+                OcticonLabel("Open changes on GitHub", icon: .linkExternal)
+            }
+            .frame(maxWidth: .infinity)
+            .primaryAction()
+            .disabled(pr.compareURL == nil)
+        } else {
+            confirmButton(model)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// What the chain already proved on this commit, in one line.
+    @ViewBuilder
+    private func chainSummary(_ pr: PullRequestPlan) -> some View {
+        let (links, _) = PullRequestChain.chain(plan: pr, evidence: evidence)
+        if let failed = links.first(where: { $0.state == .failed }) {
+            OcticonLabel("\(failed.title) \(failed.detail): fix it before approving.", icon: .alert)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if links.contains(where: { $0.id == "checks" && $0.state == .now }) {
+            OcticonLabel("Checks are still running on this commit.", icon: .clock)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if links.contains(where: { $0.id == "checks" && $0.state == .done }) {
+            OcticonLabel("Every check the kit runs passed on this commit.", icon: .checkCircle)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            OcticonLabel("No checks reported for this commit yet.", icon: .clock)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// What this approval means for this PR: a moved head, the owner's own push, a kit that already matches.
+    @ViewBuilder
+    private func noticeLines(_ pr: PullRequestPlan, model: ActionModel) -> some View {
+        if case .failed(let message) = evidence.snapshot {
+            Text("Could not read the PR from GitHub, so the diff link waits: \(message). Load again with the button under Checks.")
+                .font(.caption)
+                .foregroundStyle(Palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        if case .loaded(let now) = evidence.snapshot, now.head.sha != pr.sha {
+            OcticonLabel("The PR moved to \(now.head.sha.prefix(7)) after this check. Close this and review the new commit.", icon: .alert)
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if case .turnOn = model.plan {
+            OcticonLabel("Kit files match your installed kit", icon: .checkCircle)
+                .font(.caption)
+                .foregroundStyle(Palette.textSecondary)
+            if pr.mergeQueue == true { MergeQueuePlanNote() }
+        }
+        if pr.isOwnPush {
+            OcticonLabel(displaySafe(pr.ownPushNote), icon: .gitMerge)
+                .font(.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if pr.isOwnQueueEntry {
+            OcticonLabel("Your own PR: GitHub does not take your review, so this adds it to the merge queue now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
+                .font(.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if pr.isOwnMerge {
+            OcticonLabel("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
+                .font(.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -288,7 +430,7 @@ struct ReviewView: View {
 
     /// Why the next step is what it is, next to its button.
     @ViewBuilder
-    private func actionHint(_ model: ActionModel) -> some View {
+    private func actionHint(_ model: ActionModel, alignment: TextAlignment = .trailing) -> some View {
         if prMoved(model) {
             OcticonLabel("The PR moved on. Close this and review the new commit.", icon: .alert)
                 .font(.system(size: 12))
@@ -297,7 +439,7 @@ struct ReviewView: View {
             Text("Workflow, guardrail, human-owned or spec-locked files change. Look at them before you approve.")
                 .font(.system(size: 12))
                 .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.trailing)
+                .multilineTextAlignment(alignment)
                 .fixedSize(horizontal: false, vertical: true)
         } else if model.needsDiffReview, model.diffOpened, awaitsCommit(model) {
             OcticonLabel("Changes opened on GitHub", icon: .check)

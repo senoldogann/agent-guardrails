@@ -83,6 +83,9 @@ struct ReportsView: View {
                             .font(.system(size: 13))
                             .foregroundStyle(Palette.textSecondary)
                     }
+                    if !loaded.reports.isEmpty {
+                        ReportTiles(reports: loaded.reports)
+                    }
                     ForEach(loaded.reports) { RepoReportSection(report: $0) }
                 } else if reports.loading.contains(window) {
                     ProgressView("Reading \(window.title) from GitHub…").controlSize(.small)
@@ -128,13 +131,20 @@ struct RepoReportSection: View {
                 Divider().padding(.leading, 40)
                 ReportRow(icon: .shieldLock, title: "Admin merges", text: adminMergeSentence(report))
                 ForEach(report.adminMerges) { merge in
-                    Text("#\(merge.number) \(displaySafe(merge.title)) · merged by \(merge.mergedBy) \(dateText(merge.mergedAt))")
+                    Button {
+                        openInBrowser(merge.url)
+                    } label: {
+                        OcticonLabel(
+                            "#\(merge.number) \(displaySafe(merge.title)) · merged by \(merge.mergedBy) \(dateText(merge.mergedAt))",
+                            icon: .linkExternal
+                        )
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.textSecondary)
-                        .textSelection(.enabled)
-                        .padding(.leading, 40)
-                        .padding(.trailing, 12)
-                        .padding(.bottom, 8)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 40)
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 8)
                 }
             }
             if !report.partial.isEmpty {
@@ -213,4 +223,83 @@ struct RulesetAudit: View {
 private func dateText(_ iso: String) -> String {
     guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
     return date.formatted(date: .abbreviated, time: .shortened)
+}
+
+/// The window's numbers across every enforced repository, before the per-repository detail: the counts that can
+/// be added up, and the one number that matters most in red when it is not zero.
+struct ReportTiles: View {
+    let reports: [RepoReport]
+
+    var body: some View {
+        let merged = reports.reduce(0) { $0 + $1.merged.total }
+        let byAgent = reports.reduce(0) { $0 + $1.merged.agent }
+        let failed = reports.reduce(0) { $0 + $1.failed }
+        let guardFailed = reports.reduce(0) { $0 + $1.guardFailed }
+        let checksFailed = reports.reduce(0) { $0 + $1.checksFailed }
+        let reapproved = reports.reduce(0) { $0 + $1.reapproved }
+        let withoutApproval = reports.reduce(0) { $0 + $1.adminMerges.count }
+        HStack(alignment: .top, spacing: 10) {
+            StatTile(
+                title: "Merges",
+                value: "\(merged)",
+                note: byAgent == 1 ? "1 by the agent" : "\(byAgent) by the agent"
+            )
+            StatTile(
+                title: "Failed runs",
+                value: "\(failed)",
+                note: "\(guardFailed) guard · \(checksFailed) checks",
+                tone: failed > 0 ? .warning : .plain
+            )
+            StatTile(
+                title: "Re-approvals",
+                value: "\(reapproved)",
+                note: "a push drops the approval"
+            )
+            StatTile(
+                title: "Without an approval",
+                value: "\(withoutApproval)",
+                note: withoutApproval > 0 ? "merged by an admin bypass" : "none",
+                tone: withoutApproval > 0 ? .danger : .plain
+            )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Totals for every enforced repository")
+    }
+}
+
+/// One number with its label and the line that says what it counts.
+struct StatTile: View {
+    enum Tone { case plain, warning, danger }
+
+    let title: String
+    let value: String
+    var note: String = ""
+    var tone: Tone = .plain
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.textSecondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 26, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(tone == .danger ? Palette.danger : Palette.textPrimary)
+            if !note.isEmpty {
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundStyle(tone == .danger ? Palette.danger : Palette.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(Palette.hairline))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value). \(note)")
+    }
 }
