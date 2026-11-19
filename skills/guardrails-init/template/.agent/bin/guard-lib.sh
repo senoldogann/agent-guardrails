@@ -244,7 +244,10 @@ guard_locks() {
 # Arguments: base commit, head commit.
 guard_review_summary() {
   local base=$1 head=$2 accepted_added ignored_added workflows owned="" path
-  accepted_added=$(git diff "$base" "$head" -- 'specs/*/mutants-accepted' | awk '/^\+[^+]/ { print "  " substr($0, 2) }')
+  # Lines the PR adds to a ticket's mutants-accepted, each one accepting a surviving mutant. Like the security-ignore
+  # lines below, control characters and backticks are dropped, so a reason cannot break out of the summary's fence.
+  accepted_added=$(git diff "$base" "$head" -- 'specs/*/mutants-accepted' | awk '/^\+[^+]/ { print "  " substr($0, 2) }' |
+    LC_ALL=C tr -d '\000-\010\013-\037\140\177')
   [[ -z $accepted_added ]] || printf 'MUTANTS ACCEPTED AS EQUIVALENT (owner decision; check each reason):\n%s\n' "$accepted_added"
   # Lines the PR adds to the ignore file of the security job: each one accepts a finding. Control characters and
   # backticks are dropped, so a line cannot break out of the summary's fence.

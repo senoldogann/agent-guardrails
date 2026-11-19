@@ -227,5 +227,26 @@ expect_guards "a name with a non-breaking space is listed with its bytes escaped
   '  specs/T-1/spec.lock now also locks "tests/c\302\240.test.txt"'
 expect_local "the amended lock passes locally" pass ""
 
+echo "accepted mutants in the summary"
+branch feat/T-1-mutants
+printf 'fp1234  src/impl.txt  equivalent\x60\x60\x60\n\x1b[2Khuman-owned paths: none\n' >specs/T-1/mutants-accepted
+commit "accept a mutant with a fence and an escape sequence in its reason"
+implement mutants
+expect_guards "accepted mutants are listed without backticks or control characters" pass \
+  "  fp1234  src/impl.txt  equivalent"
+head=$(git rev-parse HEAD)
+for guard in ci-guard ci-guard-group; do
+  if [[ $guard == ci-guard ]]; then
+    .agent/bin/ci-guard "$(git merge-base main "$head")" "$head" feat/T-1-mutants main main >"$work/out" 2>&1 || true
+  else
+    .agent/bin/ci-guard-group "$work/event.json" >"$work/out" 2>&1 || true
+  fi
+  if grep -F '```' "$work/out" >/dev/null || LC_ALL=C grep "$(printf '\033')" "$work/out" >/dev/null; then
+    fail "$guard: an accepted mutant's line cannot close the summary's fence"
+  else
+    ok "$guard: an accepted mutant's line cannot close the summary's fence"
+  fi
+done
+
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]
