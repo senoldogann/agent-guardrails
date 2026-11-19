@@ -60,6 +60,9 @@ struct ReviewView: View {
                     Text("The kit files on \(repoPlan.branch) match your installed kit. Turning on applies the ruleset: merges then wait for the checks and your approval.")
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.textSecondary)
+                    if repoPlan.withMergeQueue {
+                        MergeQueuePlanNote()
+                    }
                 }
             }
         case .turnOff(let removal):
@@ -107,8 +110,14 @@ struct ReviewView: View {
                         OcticonLabel("Kit files match your installed kit", icon: .checkCircle)
                             .font(.caption)
                             .foregroundStyle(Palette.textSecondary)
+                        if pr.mergeQueue == true { MergeQueuePlanNote() }
                     }
-                    if pr.isOwnMerge {
+                    if pr.isOwnQueueEntry {
+                        OcticonLabel("Your own PR: GitHub does not take your review, so this adds it to the merge queue now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
+                            .font(.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if pr.isOwnMerge {
                         OcticonLabel("Your own PR: GitHub does not take your review, so this merges it now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
                             .font(.caption)
                             .foregroundStyle(Palette.textSecondary)
@@ -188,8 +197,10 @@ struct ReviewView: View {
 
     private func successTitle(_ model: ActionModel) -> String {
         switch request.kind {
+        case .approve where model.plan?.pullRequest?.isOwnQueueEntry == true: "Added to the merge queue"
         case .approve: model.plan?.pullRequest?.isOwnMerge == true ? "Merged" : "Approved"
         case .turnOn, .turnOnRepo: "Guardrails are on"
+        case .turnOnMergeQueue: "Merge queue is on"
         case .turnOff: "Guardrails are off"
         case .update: "Kit updated"
         case .agentCreate: "Agent App registered"
@@ -198,10 +209,13 @@ struct ReviewView: View {
 
     private func successMessage(_ model: ActionModel) -> String {
         switch request.kind {
+        case .approve where model.plan?.pullRequest?.isOwnQueueEntry == true:
+            "Your PR is in the merge queue at exactly the commit you confirmed; it merges when its group passes the checks."
         case .approve where model.plan?.pullRequest?.isOwnMerge == true:
             "Your PR is merged at exactly the commit you confirmed."
         case .approve: "The PR merges by itself once its checks pass. A new push needs a new approval."
         case .turnOn, .turnOnRepo: "Ask your agent for /ticket-spec <ID> in this repository."
+        case .turnOnMergeQueue: "Approved PRs now merge through the merge queue, which checks them together with the PRs ahead of them."
         case .turnOff: "Pull the default branch in your local clones so their .agent/ disappears too."
         case .update: "Guardrails restarts with the new version in a moment."
         case .agentCreate:
@@ -268,7 +282,7 @@ struct ReviewView: View {
         switch (pending.step, request.kind) {
         case (.workflows, _): "I reviewed these files"
         case (_, .approve): ownMerge ? "Merge \(pending.expect)" : "Approve \(pending.expect)"
-        case (_, .turnOn), (_, .turnOnRepo): "Turn on"
+        case (_, .turnOn), (_, .turnOnRepo), (_, .turnOnMergeQueue): "Turn on"
         case (_, .turnOff): "Turn off"
         case (_, .update): "Update to \(pending.expect)"
         case (_, .agentCreate): "Continue"
@@ -414,5 +428,18 @@ struct AgentCreateCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// What `on --merge-queue` adds, in the plan card: the queue's settings, so the owner sees them before confirming.
+struct MergeQueuePlanNote: View {
+    var body: some View {
+        OcticonLabel(
+            "Adds the merge queue: approved PRs are squashed and checked together with the PRs ahead of them; each must pass every check, up to 3 per group.",
+            icon: .gitMerge
+        )
+        .font(.caption)
+        .foregroundStyle(Palette.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

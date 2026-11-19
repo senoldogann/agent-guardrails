@@ -5,10 +5,10 @@ import Testing
 
 private let approvePlan = PullRequestPlan(
     repo: "acme/shop", pr: 7, url: "https://github.com/acme/shop/pull/7", title: "feat(A-1): x",
-    sha: "abc1234def5678", files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil)
+    sha: "abc1234def5678", files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil, mergeQueue: nil)
 private let workflowPlan = PullRequestPlan(
     repo: "acme/shop", pr: 8, url: "https://github.com/acme/shop/pull/8", title: "ci: y",
-    sha: "0123456789abcdef", files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil)
+    sha: "0123456789abcdef", files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil, mergeQueue: nil)
 
 @Suite("inbox")
 struct InboxTests {
@@ -160,6 +160,32 @@ struct ConfirmationTests {
         #expect(pr.isOwnMerge && !approvePlan.isOwnMerge)
         #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr))
             == "merge your own acme/shop PR #9 at commit abc1234")
+    }
+
+    @Test func namesTheMergeQueueEntryOfTheOwnersOwnPR() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/team","pr":9,"url":"u","title":"t","sha":"abc1234ffff","files":[],"merge":true,"mergeQueue":true}"#)
+        guard case .plan(.approve(let pr)) = event else {
+            Issue.record("expected an approve plan, got \(event)")
+            return
+        }
+        #expect(pr.isOwnQueueEntry && !approvePlan.isOwnQueueEntry)
+        #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr))
+            == "add your own acme/team PR #9 at commit abc1234 to the merge queue")
+    }
+
+    @Test func namesTheMergeQueueWhenTurningOn() throws {
+        let event = try parseEvent(#"{"event":"plan","action":"on-repo","repo":"acme/team","branch":"main","mergeQueue":true}"#)
+        guard case .plan(.turnOnRepo(let repoPlan)) = event else {
+            Issue.record("expected an on-repo plan, got \(event)")
+            return
+        }
+        #expect(repoPlan.withMergeQueue)
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/team"), plan: .turnOnRepo(repoPlan)) == "acme/team")
+        #expect(ownerCheckReason(for: ConfirmRequest(step: .repo, expect: "acme/team"), plan: .turnOnRepo(repoPlan))
+            == "turn the guardrails on for acme/team with the merge queue")
+        let older = try parseEvent(#"{"event":"plan","action":"on-repo","repo":"acme/shop","branch":"main"}"#)
+        #expect(older == .plan(.turnOnRepo(RepoPlan(repo: "acme/shop", branch: "main", mergeQueue: nil))))
     }
 
     @Test func knowsTheFinalStep() {

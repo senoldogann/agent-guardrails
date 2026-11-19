@@ -197,18 +197,26 @@ public func availableActions(_ pr: PullRequestDetail) -> [PullRequestAction] {
 }
 
 /// The gh arguments that perform an action. Merges name the head the owner saw (`--match-head-commit`), so
-/// a push in between makes GitHub refuse instead of merging unseen commits.
+/// a push in between makes GitHub refuse instead of merging unseen commits. They leave the branch to the
+/// repository's delete-on-merge setting, which the kit turns on: gh refuses `--delete-branch` where a merge
+/// queue is required, and there `merge` adds the PR to the queue.
 public func ghArguments(for action: PullRequestAction, of pr: PullRequestRef, head: String) -> [String] {
     let target = [String(pr.number), "-R", pr.repo]
     switch action {
-    case .merge: return ["pr", "merge"] + target + ["--squash", "--delete-branch", "--match-head-commit", head]
-    case .enableAutoMerge: return ["pr", "merge"] + target + ["--auto", "--squash", "--delete-branch", "--match-head-commit", head]
+    case .merge: return ["pr", "merge"] + target + ["--squash", "--match-head-commit", head]
+    case .enableAutoMerge: return ["pr", "merge"] + target + ["--auto", "--squash", "--match-head-commit", head]
     case .disableAutoMerge: return ["pr", "merge"] + target + ["--disable-auto"]
     case .markReady: return ["pr", "ready"] + target
     case .convertToDraft: return ["pr", "ready"] + target + ["--undo"]
     case .close: return ["pr", "close"] + target
     case .reopen: return ["pr", "reopen"] + target
     }
+}
+
+/// What a merge did, read from the PR's state after gh returned: merged at once, or (still open) taken into the
+/// repository's merge queue, which merges it when its group passes.
+public func mergeSummary(stateAfter: String) -> String {
+    stateAfter == "MERGED" ? "Merged" : "Added to the merge queue"
 }
 
 /// What the owner writes on a pull request: a comment, or a review that asks the agent for changes.

@@ -99,7 +99,7 @@ func activityEntry(for action: ActionModel, at date: Date) -> ActivityEntry? {
     switch action.phase {
     case .succeeded:
         outcome = .succeeded
-        summary = successSummary(request.kind, ownMerge: pr?.isOwnMerge == true)
+        summary = successSummary(request.kind, ownMerge: pr?.isOwnMerge == true, queued: pr?.isOwnQueueEntry == true)
         detail = pr.map { "at \($0.shortSHA)" } ?? ""
     case .failed(let message):
         outcome = .failed
@@ -114,10 +114,12 @@ func activityEntry(for action: ActionModel, at date: Date) -> ActivityEntry? {
         detail: detail, url: pr?.url ?? (request.target.hasPrefix("https://") ? request.target : ""))
 }
 
-private func successSummary(_ kind: ActionRequest.Kind, ownMerge: Bool) -> String {
+private func successSummary(_ kind: ActionRequest.Kind, ownMerge: Bool, queued: Bool) -> String {
     switch kind {
+    case .approve where queued: "Added to the merge queue"
     case .approve: ownMerge ? "Merged" : "Approved"
     case .turnOn, .turnOnRepo: "Turned on"
+    case .turnOnMergeQueue: "Turned on the merge queue"
     case .turnOff: "Turned off"
     case .update: "Updated the kit"
     case .agentCreate: "Registered the agent App"
@@ -128,6 +130,7 @@ private func actionName(_ kind: ActionRequest.Kind) -> String {
     switch kind {
     case .approve: "Approval"
     case .turnOn, .turnOnRepo: "Turning on"
+    case .turnOnMergeQueue: "Turning on the merge queue"
     case .turnOff: "Turning off"
     case .update: "Update"
     case .agentCreate: "Agent App registration"

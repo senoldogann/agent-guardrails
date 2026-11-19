@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Usage: ci-guard-group <merge_group event file>   ($GITHUB_EVENT_PATH of a merge_group run)
+# Judges a merge queue's group commit (merge_group event) so the required `guard` check reports on it. Runs from
+# the DEFAULT branch checkout, never the group's own .agent/, and only reads the group through git.
+# GitHub runs agent-guard.yml from the group's commit, so the step that calls this script is the PR's copy while
+# the script is the default branch's. The call therefore stays this one fixed form, and everything else comes
+# from GitHub's own event payload: a kit update that changed the arguments would fail every group, its own too.
+# Every PR in the group already passed ci-guard and the owner's approval at its exact head; this re-checks
+# what can break when approved PRs are combined or rebased onto a newer default branch: merge commits,
+# file names and modes, workflows that could stand in for a required check, spec locks against the files
+# they lock, and the touched tickets' specs. It leaves out what only a PR has: its branch name (a group's
+# ref is gh-readonly-queue/...) and "HEAD is a spec commit" (the queue squashes a PR's spec and
+# implementation commits into one, and the checks-<lang> workflows run the full gate on it).
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/guard-lib.sh"
+require_args 1 $# "ci-guard-group <merge_group event file>"
+event=$1
+[[ -f $event ]] || die "no event file at $event"
+read -r base head group_base_ref default_branch < <(jq -r \
+  '[.merge_group.base_sha, .merge_group.head_sha, .merge_group.base_ref, .repository.default_branch]
+   | map(. // "" | tostring | if test("^[A-Za-z0-9._/-]+$") then . else "-" end) | join(" ")' "$event") ||
+  die "cannot read the merge group from $event"
+[[ $base =~ ^[0-9a-f]{40}$ && $head =~ ^[0-9a-f]{40}$ ]] || die "the event in $event names no merge group commits"
+cd_project_root
+
+[[ $group_base_ref == "refs/heads/$default_branch" ]] ||
+  fail "merge group targets '$group_base_ref'; only the default branch 'refs/heads/$default_branch' is supported"
+
+guard_no_merges "$base" "$head"
+guard_changed_files "$base" "$head"
+guard_workflows "$head"
+# A group can hold several PRs, so several tickets are fine here; each must still be locked.
+tickets=$(guard_touched_tickets)
+while IFS= read -r ticket; do
+  [[ -z $ticket ]] || guard_ticket_spec "$ticket" "$head"
+done <<<"$tickets"
+guard_locks "$head"
+
+printf '\nmerge group head: %s\n' "$(git rev-parse "$head")"
+printf 'tickets: %s\n' "$(awk 'NF' <<<"$tickets" | tr '\n' ' ')"
+guard_review_summary "$base" "$head"
+exit "$guard_status"

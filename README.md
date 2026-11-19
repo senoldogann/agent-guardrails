@@ -137,6 +137,39 @@ github.com or GitHub Mobile (**review mode**):
    is then required, and GitHub dismisses it when a push changes the PR. **Review** on your own PR merges it
    with your admin bypass, which skips the review but never the checks.
 
+## Merge queue (teams)
+
+Each PR's checks run on that PR alone. When several people or agents merge into the same branch, two PRs that
+each pass can still break the default branch together. GitHub's merge queue squashes approved PRs onto the
+default branch in order and runs the required checks on that combined commit before anything merges.
+
+Use it for a team repository with several PRs in flight at once. It needs:
+
+- a repository an organization owns: GitHub offers merge queues for public organization repositories, and
+  for private ones only on GitHub Enterprise Cloud. Personal repositories cannot have one, and keep working
+  as before without it;
+- review mode (the agent App installed): in status mode your approval is a commit status on the PR's head,
+  which the queue's combined commit never carries.
+
+Turn it on with **Turn on merge queue** on the project's page in the app, or
+`guardrails on <owner/repo> --merge-queue`; `--merge-queue` also works with a bootstrap PR link. The ruleset
+then requires the queue for everyone: squash merges, each PR in a group must pass every check (not just the
+last one), at most 3 PRs per group and 3 groups checked at once, and a check that reports nothing in 60
+minutes counts as failed. A later plain `guardrails on` keeps the queue (and restores it if it went missing);
+`guardrails on <owner/repo> --no-merge-queue` removes it. The inbox raises an alarm when a repository you
+turned it on for loses it.
+
+With the queue, **Merge** in the app (and `gh pr merge`) adds an approved PR to the queue instead of merging
+it, and **Review** on your own PR adds it to the queue at the confirmed commit. Whether GitHub lets your admin
+bypass skip the code owner review for a queued PR is not verified yet; if it refuses, `guardrails approve` says
+why and nothing merges, and a teammate who is a code owner can approve it. On a group commit `guard` runs the
+default branch's `ci-guard-group` (never the group's own copy), the language checks run the full gate
+(`make check`; the spec and mutation gates ran on the PR), and `security` scans the group's changes.
+
+A project set up before the kit had the queue takes the update in two PRs: first every kit file except
+`.github/workflows/agent-guard.yml` (its guard on the default branch does not yet accept the new trigger), then
+`agent-guard.yml` alone.
+
 ## Team notifications (Slack, Microsoft Teams)
 
 The menu bar app tells you; a team channel can hear about the same events for every enforced repository. Each
@@ -196,7 +229,7 @@ replace the webhook if it leaks.
 
 `guardrails on` sets, for that repository: the `agent-guardrails` ruleset on the default branch (no deletion,
 no force push, linear history, squash-merged PRs with resolved threads, the required checks `guard`,
-`security` and `checks-<lang>`, and in status mode `merge-approval`); in review mode the `agent-guardrails-review` ruleset (one code owner review, dismissed
+`security` and `checks-<lang>`, in status mode `merge-approval`, and with `--merge-queue` the merge queue); in review mode the `agent-guardrails-review` ruleset (one code owner review, dismissed
 on push, last push approved by someone else, admins may bypass it through a PR); the `agent-guardrails-tags`
 ruleset (only admins create, move or delete tags); squash merge only with auto-merge and branch deletion;
 read-only workflow tokens that cannot approve PRs; SHA-pinned actions; the label `needs-decision`; and the
@@ -264,7 +297,8 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
 - Other administrators of a repository can change or remove its rulesets. The inbox raises an alarm when the
   list of enforced repositories stops matching, or when the live rulesets stop protecting what the kit set up:
   a ruleset missing or inactive, a bypass list added, a rule removed, guard, security or the language checks
-  no longer required from GitHub Actions, or no rule left that requires your approval. A project set up before
+  no longer required from GitHub Actions, no rule left that requires your approval, or a merge queue you turned
+  on gone or weakened. A project set up before
   the kit had the security check shows that alarm until a kit update PR adds `security.yml` and you run
   `guardrails on <owner/repo>` again.
 - **The security check runs the PR's own copy** (`pull_request`, like the language checks), so a PR could

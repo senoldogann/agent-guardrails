@@ -3,14 +3,18 @@
 # changed files, with community rules pinned to a commit; no Semgrep login, registry or token).
 # .agent/bin/security-tools pins every tool and verifies it by checksum; .agent/bin/security-scan runs them.
 # A finding is accepted only by a line in .github/security-ignore, which approve-head marks "!!" for the
-# owner's second confirmation. Runs on the PR head commit with read-only permissions, no secrets and no caches.
+# owner's second confirmation. Runs on the PR head commit, or on a merge queue's group commit (merge_group) against
+# the group's parent, with read-only permissions, no secrets and no caches.
 # The job name `security` is a required check of the ruleset (`guardrails on`).
 name: security
-on: pull_request
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
 permissions:
   contents: read
 concurrency:
-  group: security-${{ github.event.pull_request.number }}
+  group: security-${{ github.event.pull_request.number || github.event.merge_group.head_ref }}
   cancel-in-progress: true
 jobs:
   security:
@@ -20,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned scanners
@@ -29,8 +33,8 @@ jobs:
       # text in a fence the report cannot close (security-scan turns backticks and control characters into "?").
       - name: Scan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
           token=$(openssl rand -hex 16)

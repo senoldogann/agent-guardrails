@@ -40,6 +40,8 @@ struct ActionRequest: Codable, Hashable {
         case approve
         case turnOn
         case turnOnRepo
+        /// `on <owner/repo> --merge-queue`: an organization's repository in review mode gets the merge queue.
+        case turnOnMergeQueue
         case turnOff
         /// Fast-forward the kit install to its origin main, reinstall it and rebuild this app.
         case update
@@ -48,7 +50,7 @@ struct ActionRequest: Codable, Hashable {
     }
 
     let kind: Kind
-    /// A PR link (approve, turnOn), owner/repo (turnOnRepo, turnOff), or "" (update, agentCreate).
+    /// A PR link (approve, turnOn), owner/repo (turnOnRepo, turnOnMergeQueue, turnOff), or "" (update, agentCreate).
     let target: String
     let label: String
     /// Every request is its own run: a window group brings back an open window for an equal value, which
@@ -59,6 +61,7 @@ struct ActionRequest: Codable, Hashable {
         switch kind {
         case .approve: ["approve", target]
         case .turnOn, .turnOnRepo: ["on", target]
+        case .turnOnMergeQueue: ["on", target, "--merge-queue"]
         case .turnOff: ["off", target]
         case .update: ["update"]
         case .agentCreate: ["agent", "create"]
@@ -76,6 +79,7 @@ struct ActionRequest: Codable, Hashable {
         switch kind {
         case .approve: "Review and approve"
         case .turnOn, .turnOnRepo: "Turn guardrails on"
+        case .turnOnMergeQueue: "Turn on the merge queue"
         case .turnOff: "Turn guardrails off"
         case .update: "Update the kit"
         case .agentCreate: "Create the agent's GitHub App"

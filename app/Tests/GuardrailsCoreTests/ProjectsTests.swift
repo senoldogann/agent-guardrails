@@ -32,6 +32,18 @@ struct ProjectsTests {
         #expect(try parseProjects(output).allSatisfy { $0.mode == nil && $0.agentApp == nil })
     }
 
+    @Test func offersTheMergeQueueOnlyToOrganizationsInReviewMode() throws {
+        let projects = try parseProjects("""
+            {"repo":"acme/a","state":"on","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":"review","agentApp":"installed","mergeQueue":false,"organization":true}
+            {"repo":"acme/b","state":"on","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":"review","agentApp":"installed","mergeQueue":true,"organization":true}
+            {"repo":"acme/c","state":"on","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":"status","agentApp":"installed","mergeQueue":false,"organization":true}
+            {"repo":"me/d","state":"on","note":"","private":true,"fork":false,"branch":"main","pushed":"","openPRs":0,"setupURL":"","setupTitle":"","mode":"review","agentApp":"installed","mergeQueue":false,"organization":false}
+            """)
+        #expect(projects.map(\.canTurnOnMergeQueue) == [true, false, false, false])
+        #expect(projects.map(\.mergeQueue) == [false, true, false, false])
+        #expect(try parseProjects(output).allSatisfy { $0.mergeQueue == nil && !$0.canTurnOnMergeQueue })
+    }
+
     @Test func saysWhyARepositoryNeedsTheOwner() throws {
         let byRepo = Dictionary(uniqueKeysWithValues: try parseProjects(output).map { ($0.repo, $0) })
         let line = { (repo: String, waiting: Int) in attentionLine(for: byRepo[repo]!, waiting: waiting) }
@@ -53,6 +65,9 @@ struct ProjectsTests {
         let items = try parsePullRequests(
             #"{"number":7,"url":"u","title":"feat: x","kind":"draft","note":"n","sha":"abc","draft":true,"author":"o","updated":"t"}"#)
         #expect(items.map(\.kind) == [.draft])
+        let queued = try parsePullRequests(
+            #"{"number":8,"url":"u","title":"feat: y","kind":"queued","note":"n","sha":"abc","draft":false,"author":"o","updated":"t"}"#)
+        #expect(queued.map(\.kind) == [.queued])
         #expect(throws: JSONLinesError.self) {
             try parsePullRequests(#"{"number":7,"url":"u","title":"x","kind":"merged","note":"","sha":"","draft":false,"author":"","updated":""}"#)
         }

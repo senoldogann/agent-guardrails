@@ -64,6 +64,13 @@ own_merge=false
 if [[ $mode == review && $(jq -r .author.login <<<"$pr_json") == "$(gh api user --jq .login)" ]]; then
   own_merge=true
 fi
+# With a merge queue nobody merges directly: the branch ruleset's queue rule has no bypass, and gh refuses
+# --delete-branch there. The owner's own PR is added to the queue instead, still pinned to the confirmed commit.
+queue=false
+if [[ $own_merge == true ]]; then
+  branch_rules=$(ruleset_by_name "$repo" agent-guardrails) || exit 1
+  queue=$(ruleset_has_merge_queue <<<"$branch_rules")
+fi
 
 files=$(pr_files "$repo" "$pr")
 # Titles are written by the agent: drop control characters so they cannot redraw the lines below.
@@ -87,9 +94,12 @@ printf '\n(! human-owned, !! workflow or guardrail file: can change what CI enfo
 
 short=${sha:0:7}
 emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
-  --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" \
-  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files, merge: $merge}')"
-if [[ $own_merge == true ]]; then
+  --argjson files "$(files_json <<<"$marked")" --argjson merge "$own_merge" --argjson queue "$queue" \
+  '{event: "plan", action: "approve", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files, merge: $merge,
+    mergeQueue: $queue}')"
+if [[ $queue == true ]]; then
+  confirm commit "$short" "This is your own PR. Type $short to add exactly this commit to the merge queue (your admin bypass skips the review, not the checks): "
+elif [[ $own_merge == true ]]; then
   confirm commit "$short" "This is your own PR. Type $short to merge exactly this commit now (your admin bypass skips the review, not the checks): "
 else
   confirm commit "$short" "Type $short to approve merging exactly this commit: "
@@ -102,6 +112,17 @@ if [[ $mode == status ]]; then
   gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=merge-approval \
     -f description="Approved by owner for PR #$pr" >/dev/null
   printf 'merge-approval: success on %s (PR #%s)\n' "$sha" "$pr"
+  exit 0
+fi
+if [[ $queue == true ]]; then
+  # enqueuePullRequest adds the PR now or fails with GitHub's reason; gh pr merge would instead turn on
+  # auto-merge and wait silently when a requirement is missing. expectedHeadOid pins the confirmed commit.
+  pr_id=$(gh pr view "$pr" -R "$repo" --json id --jq .id) || die "cannot read PR #$pr of $repo; nothing queued"
+  # shellcheck disable=SC2016 # $id and $head are GraphQL variables
+  gh api graphql -f id="$pr_id" -f head="$sha" -f query='mutation($id: ID!, $head: GitObjectID!) {
+    enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $head}) { mergeQueueEntry { position } }
+  }' >/dev/null || die "GitHub did not add PR #$pr to the merge queue (see its reason above); nothing merged"
+  printf 'added your own PR #%s at %s to the merge queue; it merges when its group passes the checks\n' "$pr" "$sha"
   exit 0
 fi
 if [[ $own_merge == true ]]; then

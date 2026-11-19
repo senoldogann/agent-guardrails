@@ -5,6 +5,8 @@
 #   guardrails                         what waits for you (same as `guardrails inbox`; --json for the app)
 #   guardrails on <bootstrap PR link>  check, merge and enforce a /guardrails-init PR
 #   guardrails on <owner/repo>         enforce a repo whose default branch already carries the kit
+#   guardrails on <...> --merge-queue  also require GitHub's merge queue (organization repos in review mode);
+#                                      a later plain `on` keeps it, --no-merge-queue removes it
 #   guardrails off <owner/repo>        stop enforcing and remove the kit: the agent works there as before
 #   guardrails approve [PR link]       approve a PR's HEAD; without a link, pick from the waiting PRs
 #   guardrails revoke <PR link>        withdraw an approval
@@ -31,6 +33,9 @@ source "$kit/hooks-global/kit-project.sh"
 source "$kit/bin/agent-app-lib.sh"
 
 registry=$(guardrails_registry)
+# The enforced repos whose owner turned the merge queue on: a plain `on` keeps it, and the inbox raises an alarm
+# when the live ruleset loses it. Next to the registry, so bash-guard keeps agents out of it the same way.
+queue_registry="$(dirname "$registry")/merge-queue"
 ruleset_name=agent-guardrails
 review_ruleset_name=agent-guardrails-review
 tag_ruleset_name=agent-guardrails-tags
@@ -80,6 +85,64 @@ unregister() {
   [[ -f $registry ]] || return 0
   grep -Fxiv -- "$1" "$registry" >"$registry.tmp" || true
   mv "$registry.tmp" "$registry"
+}
+
+queue_listed() {
+  [[ -f $queue_registry ]] && grep -Fxi -- "$1" "$queue_registry" >/dev/null
+}
+
+list_queue() {
+  mkdir -p "$(dirname "$queue_registry")"
+  touch "$queue_registry"
+  queue_listed "$1" || printf '%s\n' "$1" >>"$queue_registry"
+}
+
+unlist_queue() {
+  [[ -f $queue_registry ]] || return 0
+  grep -Fxiv -- "$1" "$queue_registry" >"$queue_registry.tmp" || true
+  mv "$queue_registry.tmp" "$queue_registry"
+}
+
+# Prints "true" when `on` gives the repository the merge queue: asked for with --merge-queue (on), refused with
+# --no-merge-queue (off), and otherwise (keep) kept when this Mac's list or the live branch ruleset has it, so a
+# plain `on` restores a lost queue and never drops one silently. Arguments: owner/repo, on|off|keep.
+merge_queue_wanted() {
+  local repo=$1 choice=$2 live
+  case $choice in
+    on) printf 'true\n' ;;
+    off) printf 'false\n' ;;
+    keep)
+      if queue_listed "$repo"; then
+        printf 'true\n'
+      else
+        live=$(ruleset_by_name "$repo" "$ruleset_name") || exit 1
+        ruleset_has_merge_queue <<<"$live"
+      fi
+      ;;
+    *) die "unknown merge queue choice: $choice" ;;
+  esac
+}
+
+# Dies unless a merge queue can work on the repository (see merge_queue_refusal). Arguments: owner/repo, checkout
+# that review mode is judged by.
+require_merge_queue_ready() {
+  local repo=$1 dir=$2 owner_type mode=status refusal
+  owner_type=$(gh api "repos/$repo" --jq .owner.type) || die "cannot read the owner of $repo; nothing changed"
+  # Review mode is only asked about for an organization's repository: it dies on a half-ready agent App.
+  if [[ $owner_type == Organization ]] && review_mode_ready "$repo" "$dir"; then mode=review; fi
+  refusal=$(merge_queue_refusal "$repo" "$owner_type" "$mode")
+  [[ -z $refusal ]] || die "$refusal"
+}
+
+# Prints the numbers of the PRs in the merge queue of the repository's default branch as a JSON array ([] when it
+# has no queue). Dies when GitHub cannot be read. Argument: owner/repo.
+queued_prs() {
+  # shellcheck disable=SC2016 # $owner and $name are GraphQL variables
+  gh api graphql -f owner="${1%%/*}" -f name="${1#*/}" \
+    -f query='query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) { mergeQueue { entries(first: 100) { nodes { pullRequest { number } } } } }
+    }' --jq '[.data.repository.mergeQueue.entries.nodes[]?.pullRequest.number]' ||
+    die "cannot read the merge queue of $1"
 }
 
 # Prints the branch ruleset's enforcement (active, evaluate, disabled) or "missing"; dies when GitHub cannot be
@@ -165,19 +228,32 @@ Fix this in a PR you author (while status mode is on: guardrails approve <PR lin
 
 # Applies the rulesets and repository settings the kit relies on. Required checks: guard, security and the
 # checkout's own checks-<lang> workflows. Nobody bypasses the branch ruleset (checks, history, deletion); in
-# review mode a separate review ruleset lets admins merge their own PRs without a review.
+# review mode a separate review ruleset lets admins merge their own PRs without a review. With the merge queue
+# (third argument "true", review mode only) the branch ruleset also requires it. Arguments: owner/repo, checkout of
+# the default branch, "true" or "false".
 enforce() {
-  local repo=$1 dir=$2 jobs checks mode
+  local repo=$1 dir=$2 queue=$3 jobs checks mode
   jobs=$(check_jobs "$dir")
   [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
   # ci-guard keeps PR workflows from defining jobs with these names.
   checks=$(pinned_checks "$jobs")
   if review_mode_ready "$repo" "$dir"; then
-    put_ruleset "$repo" "$ruleset_name" "$(branch_ruleset "$ruleset_name" "$checks")"
+    if [[ $queue == true ]]; then
+      put_ruleset "$repo" "$ruleset_name" "$(queued_branch_ruleset "$ruleset_name" "$checks")" ||
+        die "GitHub refused the merge queue on $repo: it needs a public organization repository, or GitHub Enterprise Cloud for a private one. Enforce it without the queue: guardrails on $repo --no-merge-queue"
+      list_queue "$repo"
+    else
+      put_ruleset "$repo" "$ruleset_name" "$(branch_ruleset "$ruleset_name" "$checks")"
+      unlist_queue "$repo"
+    fi
     put_ruleset "$repo" "$review_ruleset_name" "$(review_ruleset "$review_ruleset_name")"
     mode="review mode: approve the agent's PRs with a GitHub review (guardrails approve, github.com or GitHub Mobile); tags: admins only"
+    [[ $queue != true ]] || mode+="; merge queue: squash, every PR green, up to 3 per group"
   else
+    # require_merge_queue_ready checked this before the confirmation; review mode changed in between.
+    [[ $queue != true ]] || die "the merge queue needs review mode, and $repo is no longer ready for it; run guardrails on $repo again"
     put_ruleset "$repo" "$ruleset_name" "$(status_mode_ruleset "$ruleset_name" "$checks")"
+    unlist_queue "$repo"
     delete_ruleset "$repo" "$review_ruleset_name"
     mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval); tags: admins, which includes the agent while it uses your login. For a team, use review mode: guardrails agent create, install the App here, then guardrails on $repo again"
   fi
@@ -194,8 +270,9 @@ enforce() {
   printf 'on: %s (%s; required checks: guard security %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
+# Arguments: PR link, merge queue choice (on, off or keep; see merge_queue_wanted).
 on_pr() {
-  local repo pr target pr_json sha base default_branch dir files file marker title url state marked="" extra_workflows=""
+  local repo pr target pr_json sha base default_branch dir files file marker title url state queue marked="" extra_workflows=""
   target=$(pr_target "$1") || exit 1
   read -r repo pr <<<"$target"
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
@@ -223,6 +300,8 @@ on_pr() {
   [[ -z $extra_workflows ]] ||
     die "the bootstrap PR changes workflows besides the kit's own; take them out of this PR:
 $extra_workflows"
+  queue=$(merge_queue_wanted "$repo" "$2") || exit 1
+  [[ $queue != true ]] || require_merge_queue_ready "$repo" "$dir"
 
   title=$(clean "$(jq -r .title <<<"$pr_json")")
   url=$(jq -r .url <<<"$pr_json")
@@ -240,9 +319,10 @@ $extra_workflows"
     marked+="${marker// /}"$'\t'"$file"$'\n'
   done <<<"$files"
   printf '\n'
+  [[ $queue != true ]] || printf 'The default branch will also require the merge queue (squash, every PR green, up to 3 per group).\n\n'
   emit_event "$(jq -n -c --arg repo "$repo" --argjson pr "$pr" --arg url "$url" --arg title "$title" --arg sha "$sha" \
-    --argjson files "$(files_json <<<"$marked")" \
-    '{event: "plan", action: "on", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files}')"
+    --argjson files "$(files_json <<<"$marked")" --argjson queue "$queue" \
+    '{event: "plan", action: "on", repo: $repo, pr: $pr, url: $url, title: $title, sha: $sha, files: $files, mergeQueue: $queue}')"
   confirm commit "${sha:0:7}" "Type ${sha:0:7} to merge exactly this commit and turn the guardrails on: "
 
   # Listed before the merge, so a failure in between still shows up as an alarm in the inbox.
@@ -251,22 +331,29 @@ $extra_workflows"
   gh pr merge "$pr" -R "$repo" --squash --delete-branch --match-head-commit "$sha" >/dev/null
   printf 'merged PR #%s\n' "$pr"
   trap 'printf "guardrails on stopped after merging, before %s was fully enforced. Finish with: guardrails on %s\n" "$repo" "$repo" >&2; cleanup' EXIT
-  enforce "$repo" "$dir"
+  enforce "$repo" "$dir" "$queue"
   trap cleanup EXIT
   printf 'Next: ask the agent for /ticket-spec <ID>. Run guardrails to see what waits for you.\n'
 }
 
+# Arguments: owner/repo, merge queue choice (on, off or keep; see merge_queue_wanted).
 on_repo() {
-  local repo=$1 default_branch dir
+  local repo=$1 default_branch dir queue with=""
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch") || exit 1
   tmp_dirs+=" $dir"
   require_no_drift "$dir"
   require_no_status_rights "$dir"
-  emit_event "$(jq -n -c --arg repo "$repo" --arg branch "$default_branch" '{event: "plan", action: "on-repo", repo: $repo, branch: $branch}')"
-  confirm repo "$repo" "Kit files on $default_branch match your installed kit. Type $repo to turn the guardrails on: "
+  queue=$(merge_queue_wanted "$repo" "$2") || exit 1
+  if [[ $queue == true ]]; then
+    require_merge_queue_ready "$repo" "$dir"
+    with=" with the merge queue (squash, every PR green, up to 3 per group)"
+  fi
+  emit_event "$(jq -n -c --arg repo "$repo" --arg branch "$default_branch" --argjson queue "$queue" \
+    '{event: "plan", action: "on-repo", repo: $repo, branch: $branch, mergeQueue: $queue}')"
+  confirm repo "$repo" "Kit files on $default_branch match your installed kit. Type $repo to turn the guardrails on$with: "
   register "$repo"
-  enforce "$repo" "$dir"
+  enforce "$repo" "$dir" "$queue"
 }
 
 off_repo() {
@@ -325,16 +412,18 @@ off_repo() {
   fi
   gh repo edit "$repo" --remove-topic "$topic" >/dev/null
   unregister "$repo"
+  unlist_queue "$repo"
   printf 'off: %s. Pull the default branch in your local clones so their .agent/ disappears too.\n' "$repo"
 }
 
 # Prints the tab-separated inbox items (see classify_prs) of one repo; dies when GitHub cannot list its PRs.
+# Arguments: owner/repo, the numbers of its queued PRs (JSON array, see queued_prs).
 repo_items() {
   local prs
   prs=$(gh pr list -R "$1" --state open --limit 100 \
     --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,autoMergeRequest) ||
     die "cannot list the open PRs of $1"
-  classify_prs <<<"$prs"
+  classify_prs "$2" <<<"$prs"
 }
 
 login() {
@@ -386,15 +475,17 @@ bootstrap_items() {
   done <<<"$prs"
 }
 
-# Prints the live rulesets of a repository as {branch, review, tag} for ruleset_problems (null when missing).
-# Dies when GitHub cannot be read.
+# Prints the live rulesets of a repository as {branch, review, tag} (null when missing) for ruleset_problems,
+# with mergeQueue: whether the owner turned the merge queue on for it (this Mac's list). Dies when GitHub cannot
+# be read.
 live_rulesets() {
-  local branch review tag
+  local branch review tag queue=false
   branch=$(ruleset_by_name "$1" "$ruleset_name") || exit 1
   review=$(ruleset_by_name "$1" "$review_ruleset_name") || exit 1
   tag=$(ruleset_by_name "$1" "$tag_ruleset_name") || exit 1
+  if queue_listed "$1"; then queue=true; fi
   jq -n -c --argjson branch "${branch:-null}" --argjson review "${review:-null}" --argjson tag "${tag:-null}" \
-    '{branch: $branch, review: $review, tag: $tag}'
+    --argjson queue "$queue" '{branch: $branch, review: $review, tag: $tag, mergeQueue: $queue}'
 }
 
 # Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
@@ -404,12 +495,17 @@ live_rulesets() {
 # sixth field, the PR's HEAD SHA, so the app notifies again when a push changes a PR that waits.
 # Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
 inbox_items() {
-  local repo state rulesets items kind url title note sha problem
+  local repo state rulesets items kind url title note sha problem queued
   kit_install_alarm
   topic_alarms || exit 1
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
     rulesets=$(live_rulesets "$repo") || exit 1
+    queued='[]'
+    # Only a repository whose branch ruleset requires the queue can have PRs in it: one more call only there.
+    if [[ $(jq -c .branch <<<"$rulesets" | ruleset_has_merge_queue) == true ]]; then
+      queued=$(queued_prs "$repo") || exit 1
+    fi
     state=$(jq -r '.branch.enforcement // "missing"' <<<"$rulesets")
     printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
     while IFS= read -r problem; do
@@ -417,7 +513,7 @@ inbox_items() {
       printf 'alarm\037%s\037\037\037%s: %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
         "$repo" "$repo" "$problem" "$repo"
     done < <(ruleset_problems <<<"$rulesets")
-    items=$(repo_items "$repo") || exit 1
+    items=$(repo_items "$repo" "$queued") || exit 1
     while IFS=$'\t' read -r kind url title note sha; do
       [[ -n $kind ]] || continue
       printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note" "$sha"
@@ -471,39 +567,59 @@ inbox() {
 # The owner's repositories (not archived, newest push first) with what the app needs to show their state.
 # 25 per page: with rulesets and PR counts a page of 100 takes GitHub 6-9 s, close to its 10 s GraphQL
 # limit, and an overrun comes back as an HTML error page instead of JSON.
+# The fields of one repository that project_states reads.
+project_fields='nameWithOwner isFork isPrivate pushedAt viewerPermission defaultBranchRef { name }
+        owner { __typename }
+        repositoryTopics(first: 20) { nodes { topic { name } } }
+        rulesets(first: 20) { nodes { name enforcement rules(first: 20) { nodes { type } } } }
+        pullRequests(states: OPEN) { totalCount }
+        bootstrap: pullRequests(states: OPEN, headRefName: "chore/agent-guardrails", first: 5) {
+          nodes { url title isCrossRepository author { login } }
+        }'
 # shellcheck disable=SC2016 # $endCursor is a GraphQL variable, filled in by gh --paginate
 projects_query='query($endCursor: String) {
   viewer {
     repositories(first: 25, after: $endCursor, ownerAffiliations: OWNER, isArchived: false,
                  orderBy: {field: PUSHED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
-      nodes {
-        nameWithOwner isFork isPrivate pushedAt viewerPermission defaultBranchRef { name }
-        repositoryTopics(first: 20) { nodes { topic { name } } }
-        rulesets(first: 20) { nodes { name enforcement } }
-        pullRequests(states: OPEN) { totalCount }
-        bootstrap: pullRequests(states: OPEN, headRefName: "chore/agent-guardrails", first: 5) {
-          nodes { url title isCrossRepository author { login } }
-        }
-      }
+      nodes { '"$project_fields"' }
     }
   }
 }'
+# shellcheck disable=SC2016 # $owner and $name are GraphQL variables
+project_query='query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { '"$project_fields"' } }'
 
 projects_json() {
-  local owner app installed
+  local owner app installed repo node
   owner=$(login)
   if agent_app_registered; then app=registered; else app=none; fi
   installed=$(agent_installed_repos) || exit 1
-  graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]' |
-    project_states "$owner" "$(registered_repos)" "$app" "$installed"
+  {
+    graphql_with_retry 3 2 "$projects_query" '.data.viewer.repositories.nodes[]'
+    # The owner's own repositories leave out enforced ones another account owns (an organization's, where a
+    # merge queue is possible): each of those is read by name.
+    # One that cannot be read (deleted, transferred, access lost) shows as an alarm instead of hiding the rest;
+    # gh's error still goes to stderr.
+    while IFS= read -r repo; do
+      [[ -n $repo && $(tr '[:upper:]' '[:lower:]' <<<"${repo%%/*}") != $(tr '[:upper:]' '[:lower:]' <<<"$owner") ]] || continue
+      if ! node=$(gh api graphql -f owner="${repo%%/*}" -f name="${repo#*/}" -f query="$project_query" --jq .data.repository) ||
+        [[ -z $node || $node == null ]]; then
+        node=$(jq -n -c --arg repo "$repo" '{nameWithOwner: $repo, unreadable: true, isFork: false, isPrivate: true,
+          pushedAt: "", viewerPermission: "READ", pullRequests: {totalCount: 0}}')
+      fi
+      printf '%s\n' "$node"
+    done < <(registered_repos)
+  } | project_states "$owner" "$(registered_repos)" "$app" "$installed"
 }
 
 prs_json() {
+  local queued prs
   [[ $1 =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "not an owner/repo name: $1"
-  gh pr list -R "$1" --state open --limit 100 \
-    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,autoMergeRequest,author,updatedAt |
-    pr_states
+  queued=$(queued_prs "$1") || exit 1
+  prs=$(gh pr list -R "$1" --state open --limit 100 \
+    --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,autoMergeRequest,author,updatedAt) ||
+    die "cannot list the open PRs of $1"
+  pr_states "$queued" <<<"$prs"
 }
 
 # The pull requests of one repository for a report, found by search (SEARCH is replaced with the search text):
@@ -632,10 +748,11 @@ report() {
 }
 
 approve_pick() {
-  local repo items choices="" count=0 kind url title note sha choice
+  local repo items choices="" count=0 kind url title note sha choice queued
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    items=$(repo_items "$repo" | awk -F'\t' '$1 == "approve"')
+    queued=$(queued_prs "$repo") || exit 1
+    items=$(repo_items "$repo" "$queued" | awk -F'\t' '$1 == "approve"')
     while IFS=$'\t' read -r kind url title note sha; do
       [[ -n $url ]] || continue
       count=$((count + 1))
@@ -816,10 +933,23 @@ case $command in
     report "$report_target" "$report_days" "$report_format"
     ;;
   on)
-    [[ $# -ge 1 ]] || usage
+    # --merge-queue or --no-merge-queue, anywhere, applies to every target; without either a queue is kept.
+    on_queue=keep on_targets=0
+    for target in "$@"; do
+      case $target in
+        --merge-queue | --no-merge-queue)
+          [[ $on_queue == keep ]] || die "give --merge-queue or --no-merge-queue once"
+          if [[ $target == --merge-queue ]]; then on_queue=on; else on_queue=off; fi
+          ;;
+        -*) usage ;;
+        *) on_targets=$((on_targets + 1)) ;;
+      esac
+    done
+    [[ $on_targets -ge 1 ]] || usage
     require_owner_terminal on
     for target in "$@"; do
-      if [[ $target == https://* ]]; then on_pr "$target"; else on_repo "$target"; fi
+      case $target in --merge-queue | --no-merge-queue) continue ;; esac
+      if [[ $target == https://* ]]; then on_pr "$target" "$on_queue"; else on_repo "$target" "$on_queue"; fi
     done
     ;;
   off)

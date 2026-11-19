@@ -418,5 +418,73 @@ else
   show_out
 fi
 
+echo "guard trigger"
+# A PR may change the guard's steps (the owner confirms them), never its triggers.
+guard_trigger_change() {
+  local branch=$1 script=$2
+  git checkout -q -b "$branch" chore/kit-checks
+  awk "$script" .github/workflows/agent-guard.yml >guard.tmp
+  mv guard.tmp .github/workflows/agent-guard.yml
+  git commit -qam "$branch"
+}
+guard_trigger_change chore/no-queue-trigger '/^  merge_group:/ {skip = 2} skip > 0 {skip--; next} {print}'
+expect_failure "removing the merge_group trigger fails" ci_guard chore/no-queue-trigger chore/no-queue-trigger main
+expect_out "the removed trigger is explained" "changes the guard trigger"
+guard_trigger_change chore/push-trigger '{print} /^  merge_group:/ {print "    types: [checks_requested]"; print "  push:"; getline}'
+expect_failure "adding a push trigger fails" ci_guard chore/push-trigger chore/push-trigger main
+guard_trigger_change chore/queue-types '{sub(/\[checks_requested\]/, "[checks_requested, destroyed]"); print}'
+expect_failure "another merge_group type fails" ci_guard chore/queue-types chore/queue-types main
+guard_trigger_change chore/queue-branches '{print} /^    types: \[checks_requested\]/ {print "    branches: [main]"}'
+expect_failure "a branch filter on merge_group fails" ci_guard chore/queue-branches chore/queue-branches main
+guard_trigger_change chore/guard-steps '{print} END {print "      - run: echo done"}'
+expect_success "changing the guard steps passes (the owner confirms them)" ci_guard chore/guard-steps chore/guard-steps main
+expect_out "the changed guard is listed for the owner" "WORKFLOW FILES CHANGED"
+guard_trigger_change chore/guard-fake-check '{print} END {print "  security:"; print "    runs-on: ubuntu-latest"; print "    steps:"; print "      - run: \"true\""}'
+expect_failure "another required check in the guard workflow fails" ci_guard chore/guard-fake-check chore/guard-fake-check main
+expect_out "the fake check in the guard workflow is named" 'defines a job or name "security"'
+guard_trigger_change chore/second-on '{print} END {print "on :"; print "  push:"}'
+expect_failure "a second trigger key spelled another way fails" ci_guard chore/second-on chore/second-on main
+
+echo "ci-guard-group"
+# A merge queue squashes each PR into one commit on top of the group's parent (base_sha). ci-guard-group reads
+# the merge_group event payload GitHub writes for the run.
+ci_guard_group() {
+  jq -n --arg base "$(git rev-parse "$1")" --arg head "$(git rev-parse "$2")" --arg ref "$3" \
+    '{merge_group: {base_sha: $base, head_sha: $head, base_ref: $ref, head_ref: "refs/heads/gh-readonly-queue/main/pr-1-x"},
+      repository: {default_branch: "main"}}' >"$work/event.json"
+  .agent/bin/ci-guard-group "$work/event.json"
+}
+squash_group() {
+  local name=$1 pr=$2
+  git checkout -q -b "$name" main
+  git merge -q --squash "$pr" >/dev/null 2>&1
+  git commit -qm "$pr (#1)"
+}
+squash_group gh-readonly-queue/main/pr-1 feat/ABC-1-relock
+expect_failure "the PR guard refuses a squashed spec and implementation (HEAD touches the lock)" \
+  ci_guard gh-readonly-queue/main/pr-1 feat/ABC-1-relock main
+expect_success "the group guard passes a squashed spec and implementation" \
+  ci_guard_group main gh-readonly-queue/main/pr-1 refs/heads/main
+expect_out "the group's ticket is named" "tickets: ABC-1"
+expect_failure "a group into another branch fails" ci_guard_group main gh-readonly-queue/main/pr-1 refs/heads/release
+# The second PR of a queue lands on the first one's group commit.
+git checkout -q -b gh-readonly-queue/main/pr-2 gh-readonly-queue/main/pr-1
+git merge -q --squash feat/ABC-2-one >/dev/null 2>&1
+git commit -qm "ABC-2 (#2)"
+expect_failure "an unlocked spec in a group fails" ci_guard_group gh-readonly-queue/main/pr-1 gh-readonly-queue/main/pr-2 refs/heads/main
+expect_out "the draft is named" "spec for ABC-2 is not locked yet"
+squash_group gh-readonly-queue/main/pr-4 chore/fake-approval
+expect_failure "a fake required check in a group fails" ci_guard_group main gh-readonly-queue/main/pr-4 refs/heads/main
+expect_out "the fake check is named" "belongs to a required check"
+git checkout -q -b gh-readonly-queue/main/pr-5 main
+git merge -q --no-ff -m merge feat/ABC-1-impl
+expect_failure "a merge commit in a group fails" ci_guard_group main gh-readonly-queue/main/pr-5 refs/heads/main
+squash_group gh-readonly-queue/main/pr-6 feat/ABC-1-weaken
+expect_failure "a group that changes a locked test without a new lock fails" \
+  ci_guard_group main gh-readonly-queue/main/pr-6 refs/heads/main
+expect_out "the lock mismatch is named" "lock mismatch"
+printf '{"merge_group": {"base_sha": "main", "head_sha": "HEAD"}, "repository": {"default_branch": "main"}}\n' >"$work/event.json"
+expect_failure "an event without commit SHAs is refused" .agent/bin/ci-guard-group "$work/event.json"
+
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]
