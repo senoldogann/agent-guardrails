@@ -99,6 +99,28 @@ is_workflow_file() {
   esac
 }
 
+# Dies when any workflow of the checkout could write check runs or commit statuses (and so fake a
+# required check or merge-approval): pull_request runs execute the PR's code with that token. find lists
+# dot-named files too, which a shell glob would skip. Argument: the checkout's directory.
+require_no_status_rights() {
+  local dir=$1 workflow problems
+  [[ -d $dir/.github/workflows ]] || return 0
+  while IFS= read -r -d '' workflow; do
+    [[ -f $workflow ]] || continue
+    is_workflow_file "$workflow" || continue
+    problems=$(workflow_token_problems <"$workflow")
+    [[ -z $problems ]] ||
+      die "${workflow#"$dir"/} could let its token write checks or statuses (could fake an approval); fix that first:
+$problems"
+  done < <(find "$dir/.github/workflows" -mindepth 1 -maxdepth 1 ! -type d -print0)
+}
+
+# Prints a repository path for a contents API URL: each segment percent-encoded, so a file name holding ?, &
+# or # cannot change the request (such as its ref). Argument: the path.
+contents_api_path() {
+  jq -rn --arg path "$1" '$path | split("/") | map(@uri) | join("/")'
+}
+
 # Succeeds for a changed file that can change what CI enforces: workflows and other GitHub config (including
 # .github/security-ignore, which accepts findings of the security check), the guardrails themselves (.agent/,
 # and the agents' hook settings in .claude/, .cursor/ and .codex/), the Makefiles CI runs, and code owners.

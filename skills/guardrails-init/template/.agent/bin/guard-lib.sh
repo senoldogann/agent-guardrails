@@ -72,14 +72,16 @@ is_workflow_path() {
 # Fails each problem check.py reports for one workflow of head, or the workflow when check.py cannot run.
 # Arguments: head commit, path, check.py arguments.
 guard_workflow_check() {
-  local head=$1 path=$2 problems problem
+  local head=$1 path=$2 shown problems problem
   shift 2
+  # Unchanged files never passed guard_changed_files' name check, so drop control characters before printing.
+  shown=$(LC_ALL=C tr -d '\000-\037\177' <<<"$path")
   if ! problems=$(git show "$head:$path" | python3 -I -S -B "$workflow_checker" "$@"); then
-    fail "workflow $path could not be checked: $workflow_checker needs python3 3.8 or newer"
+    fail "workflow $shown could not be checked: $workflow_checker needs python3 3.8 or newer"
     return 0
   fi
   while IFS= read -r problem; do
-    [[ -z $problem ]] || fail "workflow $path $problem"
+    [[ -z $problem ]] || fail "workflow $shown $problem"
   done <<<"$problems"
 }
 
@@ -91,10 +93,12 @@ guard_workflows() {
     git cat-file -e "$head:$path" 2>/dev/null || continue
     guard_workflow_check "$head" "$path" changed-problems "$path"
   done <<<"$changed"
-  while IFS= read -r path; do
+  # NUL-separated: without -z git quotes names with non-ASCII or special characters, which would then not
+  # look like workflow paths and escape the check.
+  while IFS= read -r -d '' path; do
     is_workflow_path "$path" || continue
     guard_workflow_check "$head" "$path" token-problems
-  done < <(git ls-tree -r --name-only "$head" -- .github/workflows)
+  done < <(git ls-tree -r -z --name-only "$head" -- .github/workflows)
 }
 
 # Prints the tickets whose specs/<TICKET>/ the changes touch, one per line.

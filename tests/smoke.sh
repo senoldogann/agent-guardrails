@@ -413,6 +413,15 @@ expect_failure "a YAML anchor fails" ci_guard chore/anchor chore/anchor main
 expect_out "the anchor is explained" "uses a YAML anchor"
 workflow_pr chore/upper-extension lint.YML "on: pull_request\npermissions:\n  checks: write\n$lint_job"
 expect_failure "a workflow with an upper-case extension is checked" ci_guard chore/upper-extension chore/upper-extension main
+# Every workflow of head is checked, also one the PR does not change whose name git would quote (non-ASCII).
+workflow_pr chore/accented-base "é.yml" "on: pull_request\npermissions: write-all\n$lint_job"
+git checkout -q -b chore/accented-pr
+printf 'x\n' >notes.md
+git add -A
+git commit -qm accented
+expect_failure "an unchanged workflow with a non-ASCII name is checked" \
+  .agent/bin/ci-guard "$(git rev-parse chore/accented-base)" chore/accented-pr chore/accented-pr main main
+expect_out "the non-ASCII workflow is named" "workflow .github/workflows/é.yml grants write-all"
 git checkout -q -b chore/fenced-name main
 printf 'x\n' >'notes```.md'
 git add -A

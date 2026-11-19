@@ -174,20 +174,6 @@ $drift
 Update the installed kit (git -C $kit pull --ff-only) or ask the agent to redo the kit files, then try again."
 }
 
-# Dies when any workflow of the checkout could write check runs or commit statuses (and so fake a
-# required check or merge-approval): pull_request runs execute the PR's code with that token.
-require_no_status_rights() {
-  local workflow problems
-  for workflow in "$1"/.github/workflows/*; do
-    [[ -f $workflow ]] || continue
-    is_workflow_file "$workflow" || continue
-    problems=$(workflow_token_problems <"$workflow")
-    [[ -z $problems ]] ||
-      die "${workflow#"$1"/} could let its token write checks or statuses (could fake an approval); fix that first:
-$problems"
-  done
-}
-
 # Creates or replaces the ruleset with the given name. Arguments: owner/repo, name, ruleset JSON.
 put_ruleset() {
   local repo=$1 name=$2 ruleset=$3 live

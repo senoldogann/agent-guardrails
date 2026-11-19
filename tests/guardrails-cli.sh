@@ -197,6 +197,17 @@ EOF
 for workflow in "$template"/.github/workflows/*.yml "$template"/ci/*.yml; do
   expect_eq "the kit's ${workflow##*/} passes" "$(workflow_token_problems <"$workflow")" ""
 done
+# A bootstrap checkout's workflows are all checked, dot-named ones included.
+checkout="$work/status-rights"
+mkdir -p "$checkout/.github/workflows"
+cp "$template"/.github/workflows/*.yml "$template"/ci/checks-node.yml "$checkout/.github/workflows/"
+if (require_no_status_rights "$checkout") >/dev/null 2>&1; then ok; else fail "the kit's workflows refused"; fi
+printf 'on: pull_request\npermissions: write-all\njobs: {}\n' >"$checkout/.github/workflows/.hidden.yml"
+if (require_no_status_rights "$checkout") >/dev/null 2>&1; then fail "a dot-named workflow was skipped"; else ok; fi
+# File names cannot change the contents API request.
+expect_eq "contents path is encoded per segment" "$(contents_api_path '.github/workflows/x?ref=other&z#.yml')" \
+  ".github/workflows/x%3Fref%3Dother%26z%23.yml"
+expect_eq "a plain contents path is unchanged" "$(contents_api_path .github/workflows/ci.yml)" ".github/workflows/ci.yml"
 
 echo "classify_prs"
 fixture='[
