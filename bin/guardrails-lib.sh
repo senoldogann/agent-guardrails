@@ -207,18 +207,90 @@ compared_files() {
   jq -r '[.files[] | .filename, (.previous_filename // empty)] | unique[]' <<<"$comparison"
 }
 
-# Prints the files a PR changes between exactly the base and head commits read from one `GET pulls/{n}`, so a
-# push while the owner reviews cannot swap the list for another diff's (a listing by PR number shows whatever the
-# head is at that moment). Dies when GitHub cannot compare them or the list may be incomplete or unsafe
-# (compared_files). Arguments: owner/repo, PR number, base commit, head commit, the PR's changed_files.
-pr_snapshot_files() {
-  local comparison files
+# Prints GitHub's comparison of exactly the base and head commits read from one `GET pulls/{n}`, so a push while
+# the owner reviews cannot swap it for another diff (a listing by PR number shows whatever the head is at that
+# moment). Dies when GitHub cannot compare them or the file list may be incomplete or unsafe (compared_files).
+# Arguments: owner/repo, PR number, base commit, head commit, the PR's changed_files.
+pr_snapshot_comparison() {
+  local comparison problem
   # per_page applies to the commits; the file list comes on the first page, complete up to GitHub's limit.
   comparison=$(gh api "repos/$1/compare/$3...$4?per_page=1") ||
     die "could not compare ${3:0:7}...${4:0:7} of PR #$2 in $1 (see GitHub's answer above); nothing changed"
-  files=$(compared_files "$5" <<<"$comparison") ||
-    die "cannot show the complete list of files PR #$2 in $1 changes between ${3:0:7} and ${4:0:7}: $files. Refusing to show or approve a partial list; split the PR if it is that large, otherwise run the command again."
-  printf '%s\n' "$files"
+  problem=$(compared_files "$5" <<<"$comparison") ||
+    die "cannot show the complete list of files PR #$2 in $1 changes between ${3:0:7} and ${4:0:7}: $problem. Refusing to show or approve a partial list; split the PR if it is that large, otherwise run the command again."
+  printf '%s\n' "$comparison"
+}
+
+# Prints the files a PR changes between exactly the base and head commits of one read (pr_snapshot_comparison).
+# Arguments: as pr_snapshot_comparison.
+pr_snapshot_files() {
+  local comparison
+  comparison=$(pr_snapshot_comparison "$@") || exit 1
+  compared_files "$5" <<<"$comparison"
+}
+
+# Reads a comparison that compared_files accepted on stdin and prints "<status>\t<path>" for every ticket spec lock
+# (specs/<TICKET>/spec.lock, the locks the guard's ticket_locks judges) it touches, with GitHub's status of the file
+# (added, removed, modified, renamed, copied, changed, unchanged). A lock renamed away is listed as "removed" under
+# its old path: the base has it and the head does not.
+changed_spec_locks() {
+  jq -r 'def lock: type == "string" and test("^specs/[^/]+/spec\\.lock$");
+    .files[]
+    | (if .status == "renamed" and (.previous_filename | lock) then "removed\t\(.previous_filename)" else empty end),
+      (if .filename | lock then "\(.status)\t\(.filename)" else empty end)'
+}
+
+# Prints how a re-lock changes which files a spec lock covers, as JSON lines {lock, path, change}: "dropped" for a
+# file the base version locks and the head version does not (the agent could then change it without a new spec
+# lock), "added" for the reverse. The guard passes such an amendment and lists it under "SPEC LOCK SCOPE CHANGED";
+# approve-head shows the same to the owner. Arguments: the lock's path, its base version, its head version.
+lock_scope_change() {
+  local base_paths head_paths
+  base_paths=$(manifest_paths <<<"$2")
+  head_paths=$(manifest_paths <<<"$3")
+  jq -n -c --arg lock "$1" --arg base "$base_paths" --arg head "$head_paths" '
+    ($base | split("\n") | map(select(length > 0)) | unique) as $b
+    | ($head | split("\n") | map(select(length > 0)) | unique) as $h
+    | ($b - $h | .[] | {lock: $lock, path: ., change: "dropped"}), ($h - $b | .[] | {lock: $lock, path: ., change: "added"})'
+}
+
+# Prints a file of a repository at a commit, read by SHA through the contents API, as data. Dies when GitHub cannot
+# return it: not a file, larger than the contents API returns (1 MB), or not readable. Arguments: owner/repo, path,
+# commit.
+repo_file_at() {
+  local answer content
+  answer=$(gh api "repos/$1/contents/$(contents_api_path "$2")?ref=$3") ||
+    die "cannot read $2 at ${3:0:7} of $1 (see GitHub's answer above); nothing changed"
+  content=$(jq -er 'select(.type == "file" and .encoding == "base64") | .content' <<<"$answer") ||
+    die "GitHub returned $2 at ${3:0:7} of $1 without its content (not a file, or larger than 1 MB); nothing changed"
+  base64 --decode <<<"$content" || die "cannot decode $2 at ${3:0:7} of $1; nothing changed"
+}
+
+# Reads `GET repos/{r}/activity?ref=refs/heads/<branch>&per_page=1` (GitHub's push log of a PR's branch, newest
+# first) on stdin and prints "ok\t<login>" with the account that pushed head commit $1: the actor of the newest
+# activity, when that is a push, force push or branch creation that left the branch at $1. This is the push GitHub's
+# "require approval of the most recent reviewable push" judges, by who pushed it, not by the commit's author or
+# committer (an agent's commits can carry the owner's git identity). Prints "no\t<reason>" otherwise: the branch
+# moved on, GitHub has not logged the push yet, or it names no account. Argument: the head commit.
+last_pusher() {
+  jq -r --arg sha "$1" '
+    (if type == "array" then .[0] else null end) as $a
+    | if $a == null then "no\tGitHub lists no push to the branch"
+      elif ($a.activity_type == "push" or $a.activity_type == "force_push" or $a.activity_type == "branch_creation") | not
+      then "no\tthe newest activity on the branch is \($a.activity_type | tostring | gsub("[^a-z_]"; "?")), not a push"
+      elif $a.after != $sha then "no\tthe newest push left the branch at \($a.after | tostring | .[0:7] | gsub("[^0-9a-f]"; "?"))"
+      elif ($a.actor.login | type) != "string" or ($a.actor.login | test("^[A-Za-z0-9-]+(\\[bot\\])?$") | not)
+      then "no\tGitHub does not name the account that pushed it"
+      else "ok\t\($a.actor.login)" end'
+}
+
+# Reads {branch, review}: the live rulesets agent-guardrails and agent-guardrails-review (each null when missing), and
+# prints "true" when they put the repository in review mode, even a damaged one: the review ruleset exists, or the
+# branch ruleset exists without requiring merge-approval (only status mode requires it). `guardrails on` must not
+# turn such a repository to status mode unless the owner asks for it.
+review_mode_rulesets() {
+  jq -r '.review != null or (.branch != null and (any(.branch.rules[]?; .type == "required_status_checks"
+    and any(.parameters.required_status_checks[]?; .context == "merge-approval")) | not))'
 }
 
 # Writes one JSON event line for the Guardrails app when it asked for them (GUARDRAILS_EVENTS_FD names an

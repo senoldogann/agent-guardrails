@@ -6,11 +6,12 @@ import Testing
 private let base = "1111111111111111111111111111111111111111"
 private let approvePlan = PullRequestPlan(
     repo: "acme/shop", pr: 7, url: "https://github.com/acme/shop/pull/7", title: "feat(A-1): x",
-    sha: "abc1234def5678", base: base, files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil, mergeQueue: nil)
+    sha: "abc1234def5678", base: base, files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil, mergeQueue: nil,
+    ownPush: nil, lockScope: nil, leavesReviewMode: nil)
 private let workflowPlan = PullRequestPlan(
     repo: "acme/shop", pr: 8, url: "https://github.com/acme/shop/pull/8", title: "ci: y",
     sha: "0123456789abcdef", base: base, files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil,
-    mergeQueue: nil)
+    mergeQueue: nil, ownPush: nil, lockScope: nil, leavesReviewMode: nil)
 
 @Suite("inbox")
 struct InboxTests {
@@ -176,7 +177,7 @@ struct ConfirmationTests {
         for badBase in ["main", "1111111", "ABCDEF1111111111111111111111111111111111", ""] {
             let plan = PullRequestPlan(
                 repo: "acme/shop", pr: 7, url: "u", title: "t", sha: "abc1234def", base: badBase, files: [], merge: nil,
-                mergeQueue: nil)
+                mergeQueue: nil, ownPush: nil, lockScope: nil, leavesReviewMode: nil)
             #expect(throws: ConfirmationError.unpinnedBase) {
                 try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .turnOn(plan))
             }
@@ -218,7 +219,68 @@ struct ConfirmationTests {
         #expect(ownerCheckReason(for: ConfirmRequest(step: .repo, expect: "acme/team"), plan: .turnOnRepo(repoPlan))
             == "turn the guardrails on for acme/team with the merge queue")
         let older = try parseEvent(#"{"event":"plan","action":"on-repo","repo":"acme/shop","branch":"main"}"#)
-        #expect(older == .plan(.turnOnRepo(RepoPlan(repo: "acme/shop", branch: "main", mergeQueue: nil))))
+        #expect(older == .plan(.turnOnRepo(RepoPlan(repo: "acme/shop", branch: "main", mergeQueue: nil, mode: nil, leavesReviewMode: nil))))
+    }
+
+    @Test func asksToUnlockOnlyWhenThePlanDropsALockedFile() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234def","base":"1111111111111111111111111111111111111111","files":[{"marker":"!","path":"specs/A-1/spec.lock"}],"merge":false,"mergeQueue":false,"ownPush":false,"lockScope":[{"lock":"specs/A-1/spec.lock","path":"tests/a.test.ts","change":"dropped"},{"lock":"specs/A-1/spec.lock","path":"tests/b.test.ts","change":"added"}]}"#)
+        guard case .plan(.approve(let pr)) = event else {
+            Issue.record("not an approve plan: \(event)")
+            return
+        }
+        #expect(pr.droppedLockedFiles.map(\.path) == ["tests/a.test.ts"])
+        #expect(pr.needsDiffReview)
+        let unlock = ConfirmRequest(step: .unlock, expect: "unlock")
+        #expect(try confirmationAnswer(for: unlock, plan: .approve(pr)) == "unlock")
+        #expect(throws: ConfirmationError.self) {
+            try confirmationAnswer(for: ConfirmRequest(step: .unlock, expect: "workflows"), plan: .approve(pr))
+        }
+        // A plan that announced no dropped file never gets the unlock confirmation typed.
+        #expect(throws: ConfirmationError.self) { try confirmationAnswer(for: unlock, plan: .approve(approvePlan)) }
+        let addedOnly = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234def","base":"1111111111111111111111111111111111111111","files":[],"lockScope":[{"lock":"specs/A-1/spec.lock","path":"tests/b.test.ts","change":"added"}]}"#)
+        guard case .plan(.approve(let added)) = addedOnly else {
+            Issue.record("not an approve plan: \(addedOnly)")
+            return
+        }
+        #expect(throws: ConfirmationError.self) { try confirmationAnswer(for: unlock, plan: .approve(added)) }
+        #expect(isFinalConfirmation(ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(added)))
+        #expect(!isFinalConfirmation(ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr)))
+        #expect(isFinalConfirmation(unlock, plan: .approve(pr)))
+        #expect(ownerCheckReason(for: unlock, plan: .approve(pr)) == "confirm acme/shop PR #7 stops locking 1 spec-locked file(s)")
+    }
+
+    @Test func namesTheMergeOfAPRTheOwnerPushedLast() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234ffff","files":[],"merge":true,"mergeQueue":false,"ownPush":true,"lockScope":[]}"#)
+        guard case .plan(.approve(let pr)) = event else {
+            Issue.record("expected an approve plan, got \(event)")
+            return
+        }
+        #expect(pr.isOwnPush && pr.isOwnMerge && !approvePlan.isOwnPush)
+        #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr))
+            == "merge acme/shop PR #7 at commit abc1234, which you pushed last")
+    }
+
+    @Test func neverConfirmsLeavingReviewMode() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"on-repo","repo":"acme/shop","branch":"main","mergeQueue":false,"mode":"status","leavesReviewMode":true}"#)
+        guard case .plan(let plan) = event else {
+            Issue.record("expected a plan, got \(event)")
+            return
+        }
+        #expect(plan.leavesReviewMode)
+        #expect(throws: ConfirmationError.leavesReviewMode(repo: "acme/shop")) {
+            try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/shop"), plan: plan)
+        }
+        let stays = try parseEvent(
+            #"{"event":"plan","action":"on-repo","repo":"acme/shop","branch":"main","mergeQueue":false,"mode":"status","leavesReviewMode":false}"#)
+        guard case .plan(let staysPlan) = stays else {
+            Issue.record("expected a plan, got \(stays)")
+            return
+        }
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .repo, expect: "acme/shop"), plan: staysPlan) == "acme/shop")
     }
 
     @Test func knowsTheFinalStep() {

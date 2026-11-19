@@ -111,7 +111,17 @@ struct ReviewView: View {
                             .foregroundStyle(Palette.textSecondary)
                         if pr.mergeQueue == true { MergeQueuePlanNote() }
                     }
-                    if pr.isOwnQueueEntry {
+                    if pr.isOwnPush {
+                        OcticonLabel(
+                            pr.isOwnQueueEntry
+                                ? "You pushed the latest commit: GitHub takes no review from the account that pushed last, so this adds the PR to the merge queue now. Your admin bypass skips the review, not the checks."
+                                : "You pushed the latest commit: GitHub takes no review from the account that pushed last, so this merges the PR now. Your admin bypass skips the review, not the checks.",
+                            icon: .gitMerge
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else if pr.isOwnQueueEntry {
                         OcticonLabel("Your own PR: GitHub does not take your review, so this adds it to the merge queue now. Your admin bypass skips the review, not the checks.", icon: .gitMerge)
                             .font(.caption)
                             .foregroundStyle(Palette.textSecondary)
@@ -126,6 +136,7 @@ struct ReviewView: View {
             }
             ChecksCard(pr: pr, evidence: evidence)
             if let spec = evidence.spec { SpecCard(spec: spec) }
+            if !pr.lockScopeChanges.isEmpty { LockScopeGroups(changes: pr.lockScopeChanges) }
             FileGroups(files: pr.files)
         }
     }
@@ -156,6 +167,8 @@ struct ReviewView: View {
         switch model.phase {
         case .awaitingConfirmation(let pending) where pending.step == .workflows:
             WorkflowWarning(files: model.plan?.pullRequest?.files.filter(\.isWorkflow) ?? [])
+        case .awaitingConfirmation(let pending) where pending.step == .unlock:
+            UnlockWarning(changes: model.plan?.pullRequest?.droppedLockedFiles ?? [])
         case .working:
             Card {
                 HStack(spacing: 10) {
@@ -209,9 +222,9 @@ struct ReviewView: View {
     private func successMessage(_ model: ActionModel) -> String {
         switch request.kind {
         case .approve where model.plan?.pullRequest?.isOwnQueueEntry == true:
-            "Your PR is in the merge queue at exactly the commit you confirmed; it merges when its group passes the checks."
+            "The PR is in the merge queue at exactly the commit you confirmed; it merges when its group passes the checks."
         case .approve where model.plan?.pullRequest?.isOwnMerge == true:
-            "Your PR is merged at exactly the commit you confirmed."
+            "The PR is merged at exactly the commit you confirmed."
         case .approve: "The PR merges by itself once its checks pass. A new push needs a new approval."
         case .turnOn, .turnOnRepo: "Ask your agent for /ticket-spec <ID> in this repository."
         case .turnOnMergeQueue: "Approved PRs now merge through the merge queue, which checks them together with the PRs ahead of them."
@@ -243,7 +256,7 @@ struct ReviewView: View {
                 if model.needsDiffReview, !model.diffOpened, case .awaitingConfirmation(let pending) = model.phase,
                     pending.step == .commit
                 {
-                    Text("Open the changes first: human-owned, workflow or guardrail files change.")
+                    Text("Open the changes first: human-owned, workflow, guardrail or spec-locked files change.")
                         .font(.caption)
                         .foregroundStyle(Palette.textSecondary)
                 }
@@ -279,7 +292,7 @@ struct ReviewView: View {
 
     private func confirmTitle(_ pending: ConfirmRequest, ownMerge: Bool) -> String {
         switch (pending.step, request.kind) {
-        case (.workflows, _): "I reviewed these files"
+        case (.workflows, _), (.unlock, _): "I reviewed these files"
         case (_, .approve): ownMerge ? "Merge \(pending.expect)" : "Approve \(pending.expect)"
         case (_, .turnOn), (_, .turnOnRepo), (_, .turnOnMergeQueue): "Turn on"
         case (_, .turnOff): "Turn off"
@@ -340,6 +353,73 @@ struct WorkflowWarning: View {
             Text("These files decide what CI checks. Approve only if you read these changes on GitHub:")
                 .font(.system(size: 12))
             ForEach(files, id: \.path) { Text(displaySafe($0.path)).font(.mono) }
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Palette.dangerFill))
+    }
+}
+
+/// The files a re-lock stops or starts locking, in the plan card's file style: no longer locked (red, a separate
+/// confirmation follows) and newly locked.
+struct LockScopeGroups: View {
+    let changes: [LockScopeChange]
+
+    var body: some View {
+        let dropped = changes.filter(\.isDropped)
+        let added = changes.filter { !$0.isDropped }
+        VStack(alignment: .leading, spacing: 12) {
+            if !dropped.isEmpty {
+                group(title: "No longer spec-locked · the agent could change these without a new lock", color: Palette.danger, changes: dropped)
+            }
+            if !added.isEmpty {
+                group(title: "Newly spec-locked", color: Palette.textSecondary, changes: added)
+            }
+        }
+    }
+
+    private func group(title: String, color: Color, changes: [LockScopeChange]) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(color)
+                    Spacer()
+                    Text("\(changes.count)").font(.caption).foregroundStyle(Palette.textSecondary)
+                }
+                ForEach(changes, id: \.self) { change in
+                    LockScopeRow(change: change)
+                }
+            }
+        }
+    }
+}
+
+private struct LockScopeRow: View {
+    let change: LockScopeChange
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(displaySafe(change.path))
+                .font(.mono)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            Text(displaySafe(change.lock)).font(.caption).foregroundStyle(Palette.textSecondary)
+        }
+    }
+}
+
+struct UnlockWarning: View {
+    let changes: [LockScopeChange]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            OcticonLabel("This PR stops spec-locking files", icon: .alert)
+                .font(.system(size: 13, weight: .semibold))
+            Text("After the merge the agent could change these without a new spec lock. Confirm only if you meant to drop them from the lock:")
+                .font(.system(size: 12))
+            ForEach(changes, id: \.self) { Text(displaySafe($0.path)).font(.mono) }
         }
         .foregroundStyle(.white)
         .padding(14)

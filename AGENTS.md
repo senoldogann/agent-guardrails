@@ -42,7 +42,10 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   - `on` checks a bootstrap PR's kit files against this install, merges it and applies the rulesets; it picks
     review mode when the agent App is installed on the repo (a code owner's GitHub review pinned to the
     commit, CODEOWNERS required, in its own ruleset that admins may bypass through a PR) and status mode
-    otherwise (the commit status `merge-approval`). Nobody bypasses the branch ruleset with the checks; only
+    otherwise (the commit status `merge-approval`). A repository whose live rulesets are in review mode
+    (`review_mode_rulesets`) is not switched to status mode without `--status-mode` (`on_mode`, which the plan event
+    and the confirmation name); `tests/turn-on.sh` drives `on <owner/repo>` with a fake gh and a local clone.
+    Nobody bypasses the branch ruleset with the checks; only
     admins create, move or delete tags. `off` deletes the rulesets and merges a PR that removes the kit.
   - `on --merge-queue` (organization repositories in review mode only; `merge_queue_refusal` says why not) adds
     a `merge_queue` rule to the branch ruleset (`queued_branch_ruleset`) and lists the repo in
@@ -56,8 +59,13 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   - `approve`/`revoke` wrap `bin/approve-head` and `bin/revoke-head` (approval of a PR's exact HEAD). `approve-head`
     and `on <PR>` read the PR once and show GitHub's comparison of exactly that base and head (`pr_snapshot_files`,
     which refuses a list that may be incomplete: GitHub compares at most 300 files); `approve-head` reads the PR
-    again before writing, and every write names the approved head. `tests/approval.sh` drives `approve-head` with a
-    fake gh in a pseudo-terminal (`tests/pty-run.py`).
+    again before writing, and every write names the approved head. It reads both versions of every changed ticket
+    spec lock by SHA (`changed_spec_locks`, `repo_file_at`, `lock_scope_change`), shows the files a re-lock drops or
+    adds, and asks the `unlock` confirmation for a dropped one. In review mode it reads who pushed the head from
+    GitHub's push log of the branch (`GET repos/{r}/activity`, `last_pusher`; never the committer, which may be the
+    owner's git identity on the agent's commits): GitHub takes no review from the last pusher, so an agent PR whose
+    head the owner pushed takes the pinned own-merge path (`ownPush` in the plan). `tests/approval.sh` drives
+    `approve-head` with a fake gh in a pseudo-terminal (`tests/pty-run.py`).
   - `update` fast-forwards this install to its origin's main, reinstalls it and rebuilds the app.
   - `agent create` registers the agent's own GitHub App through the manifest flow
     (`scripts/app-manifest-flow.py`, standard library only) and keeps its ID and private key in
