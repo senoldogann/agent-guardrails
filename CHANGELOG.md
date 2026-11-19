@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-19
+
 ### Added
 
 - Opt-in GitHub merge queue for organization repositories in review mode: `guardrails on <owner/repo>
@@ -262,7 +264,8 @@ First versioned release of the kit as it is used today.
 - The Projects list no longer fails with "invalid character '<'" when GitHub takes long to answer the repository query:
   smaller pages and retries with backoff.
 
-[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.1.0...v0.2.0
