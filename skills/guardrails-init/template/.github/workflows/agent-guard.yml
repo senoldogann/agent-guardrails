@@ -1,5 +1,5 @@
 # Judges every PR with the guard from the DEFAULT branch (pull_request_target), so a PR cannot weaken
-# it. PR code is fetched as a git ref and only read, never executed; no caches, no secrets.
+# it. PR code is fetched as a git ref and only read, never executed; no caches or repository secrets.
 # Every PR merges only after the owner approves its exact HEAD: the owner runs the kit's
 # `guardrails approve` (or `approve-head <pr>`) in their own terminal, which posts the commit status
 # `merge-approval`; the agent's bash-guard blocks both. Repository setup (`guardrails on`): a ruleset
@@ -39,11 +39,22 @@ jobs:
           ref: refs/heads/${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Fetch the PR head commit this run judges (as data)
-        if: github.event_name == 'pull_request_target'
+      # Checkout does not leave credentials behind. Use the read-only token only for missing objects.
+      - name: Fetch missing commits (as data)
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: git fetch --no-tags origin "$HEAD_SHA"
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$auth"
+          export GUARDRAILS_FETCH_AUTH="Authorization: Basic $auth"
+          unset GH_TOKEN
+          for sha in "$BASE_SHA" "$HEAD_SHA"; do
+            [[ -n "$sha" ]] || continue
+            git cat-file -e "$sha^{commit}" 2>/dev/null ||
+              git --config-env="http.${GITHUB_SERVER_URL}/.extraheader=GUARDRAILS_FETCH_AUTH" fetch --no-tags origin "$sha"
+          done
       - name: Guard
         if: github.event_name == 'pull_request_target'
         env:
@@ -69,16 +80,6 @@ jobs:
             echo "Owner approval for exactly this head, in your own terminal: \`approve-head ${PR_URL}\`"
           } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
-      # The full checkout already holds the group's gh-readonly-queue branch; fetch only what is missing.
-      - name: Fetch the merge group commits this run judges (as data)
-        if: github.event_name == 'merge_group'
-        env:
-          BASE_SHA: ${{ github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
-        run: |
-          for sha in "$BASE_SHA" "$HEAD_SHA"; do
-            git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch --no-tags origin "$sha"
-          done
       # ci-guard-group reads the group from the event payload itself, so this call never has to change.
       - name: Guard the merge group
         if: github.event_name == 'merge_group'
