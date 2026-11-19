@@ -1,5 +1,5 @@
 # Lints and tests the kit itself: shellcheck, global hook table tests, template smoke tests.
-# The slow per-language adapter suite (make test-lang) runs locally. app-check builds the macOS app and runs
+# The slow per-language adapter suite (make test-lang) runs in language-adapters.yml. app-check builds the macOS app and runs
 # its core tests (parsing, confirmation checks, the pseudo-terminal driver). security runs the template's
 # security check on the kit's own PRs, with the same scripts a project's security.yml runs.
 name: ci

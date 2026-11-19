@@ -1,13 +1,25 @@
-# Real adapter fixtures, separate from the offline kit smoke tests.
+# The real language-adapter suite (tests/lang, `make test-lang`): one job per supported configuration, each
+# against a throwaway project built from the template with real toolchains. It is kept out of ci.yml so the
+# offline kit checks stay fast.
+# Every job names its language explicitly, so tests/lang/run.sh fails the job when a tool is missing instead
+# of skipping that language. Toolchains follow the channels the template's checks-<lang>.yml gives projects
+# (Node LTS, stable Rust, the newest Xcode on the runner), so this suite sees what projects see; the tools
+# the suite downloads itself are pinned and checksum-verified.
+# The suite only reads the template (.agent/ and makefiles/ under skills/guardrails-init/template) and
+# tests/lang, so a change anywhere else cannot change its result. Release runs call it too (release.yml).
 name: language-adapters
 on:
   pull_request:
     paths:
       - 'skills/guardrails-init/**'
       - 'tests/lang/**'
-      - 'Makefile'
       - '.github/workflows/language-adapters.yml'
-      - '.github/workflows/release.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/guardrails-init/**'
+      - 'tests/lang/**'
+      - '.github/workflows/language-adapters.yml'
   workflow_dispatch:
   workflow_call:
 permissions:
@@ -17,6 +29,9 @@ jobs:
     name: adapter-${{ matrix.language }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    concurrency:
+      group: language-adapters-${{ matrix.language }}-${{ github.event.pull_request.number || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -25,8 +40,8 @@ jobs:
           - {language: javascript, runner: ubuntu-24.04, toolchain: node}
           - {language: python, runner: ubuntu-24.04, toolchain: python}
           - {language: rust, runner: ubuntu-24.04, toolchain: rust}
-          - {language: swift, runner: macos-26, toolchain: swift}
-          - {language: swift-xcode, runner: macos-26, toolchain: swift}
+          - {language: swift, runner: macos-26, toolchain: xcode}
+          - {language: swift-xcode, runner: macos-26, toolchain: xcode}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,11 +54,13 @@ jobs:
       - if: matrix.toolchain == 'node'
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: '10'
+          version: 10.34.9
           run_install: false
       - if: matrix.toolchain == 'python'
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
+          version: 0.13.4
+          python-version: '3.13'
           enable-cache: false
       - if: matrix.toolchain == 'rust'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -51,9 +68,34 @@ jobs:
           components: clippy, rustfmt
       - if: matrix.toolchain == 'rust'
         run: cargo install --locked cargo-mutants@27.1.0
+      - if: matrix.toolchain == 'xcode'
+        name: Select the newest Xcode
+        run: |
+          xcode=$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -n 1)
+          [[ -n $xcode ]] && sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+      - if: matrix.language == 'swift'
+        name: Install SwiftLint 0.65.1 (checksum verified)
+        run: |
+          dir="$RUNNER_TEMP/swiftlint"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/swiftlint.zip" \
+            https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip
+          echo "c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0  $dir/swiftlint.zip" | shasum -a 256 -c -
+          unzip -q "$dir/swiftlint.zip" -d "$dir"
+          echo "$dir" >>"$GITHUB_PATH"
       - if: matrix.language == 'swift-xcode'
-        run: brew install xcodegen
-      - name: Run the selected integration fixture
+        name: Install XcodeGen 2.46.0 (checksum verified)
+        run: |
+          dir="$RUNNER_TEMP/xcodegen"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $dir/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$dir/xcodegen.zip" -d "$dir"
+          echo "$dir/xcodegen/bin" >>"$GITHUB_PATH"
+      - name: Run the ${{ matrix.language }} adapter suite
         env:
           LANGUAGE_ADAPTER: ${{ matrix.language }}
         run: tests/lang/run.sh "$LANGUAGE_ADAPTER"

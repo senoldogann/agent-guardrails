@@ -109,9 +109,7 @@ write_other_test ""
 write_exit
 expect_success "exit(0) in implementation: make test passes (exit code alone would accept it)" make --no-print-directory test
 expect_failure "exit(0) in implementation: verify-green fails" .agent/bin/verify-green "$ticket"
-if command -v swiftlint >/dev/null; then
-  expect_failure "exit(0) in implementation: swiftlint rejects it" swiftlint lint --strict --quiet --config .agent/lint/swiftlint.yml Sources Tests
-fi
+expect_failure "exit(0) in implementation: swiftlint rejects it" swiftlint lint --strict --quiet --config .agent/lint/swiftlint.yml Sources Tests
 
 expect_success "make test-mutation: no mutation gate for Swift" make --no-print-directory test-mutation
 expect_output "make test-mutation says so" "no mutation gate for Swift"
