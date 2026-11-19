@@ -3,12 +3,14 @@ import Testing
 
 @testable import GuardrailsCore
 
+private let base = "1111111111111111111111111111111111111111"
 private let approvePlan = PullRequestPlan(
     repo: "acme/shop", pr: 7, url: "https://github.com/acme/shop/pull/7", title: "feat(A-1): x",
-    sha: "abc1234def5678", files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil, mergeQueue: nil)
+    sha: "abc1234def5678", base: base, files: [PlannedFile(path: "src/a.ts", marker: "")], merge: nil, mergeQueue: nil)
 private let workflowPlan = PullRequestPlan(
     repo: "acme/shop", pr: 8, url: "https://github.com/acme/shop/pull/8", title: "ci: y",
-    sha: "0123456789abcdef", files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil, mergeQueue: nil)
+    sha: "0123456789abcdef", base: base, files: [PlannedFile(path: ".github/workflows/x.yml", marker: "!!")], merge: nil,
+    mergeQueue: nil)
 
 @Suite("inbox")
 struct InboxTests {
@@ -148,6 +150,37 @@ struct ConfirmationTests {
         }
         #expect(ownerCheckReason(for: ConfirmRequest(step: .commit, expect: "2222222"), plan: .update(update))
             == "update the kit install to commit 2222222 (version 0.2.0)")
+    }
+
+    @Test func confirmsOnlyAFileListPinnedToABase() throws {
+        let event = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234def","base":"1111111111111111111111111111111111111111","files":[{"marker":"","path":"src/a.ts"}]}"#)
+        guard case .plan(.approve(let pr)) = event else {
+            Issue.record("not an approve plan: \(event)")
+            return
+        }
+        #expect(pr.base == base)
+        #expect(pr.compareURL == "https://github.com/acme/shop/compare/\(base)...abc1234def")
+        #expect(try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(pr)) == "abc1234")
+
+        let unpinned = try parseEvent(
+            #"{"event":"plan","action":"approve","repo":"acme/shop","pr":7,"url":"u","title":"t","sha":"abc1234def","files":[]}"#)
+        guard case .plan(.approve(let older)) = unpinned else {
+            Issue.record("not an approve plan: \(unpinned)")
+            return
+        }
+        #expect(older.compareURL == nil)
+        #expect(throws: ConfirmationError.unpinnedBase) {
+            try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .approve(older))
+        }
+        for badBase in ["main", "1111111", "ABCDEF1111111111111111111111111111111111", ""] {
+            let plan = PullRequestPlan(
+                repo: "acme/shop", pr: 7, url: "u", title: "t", sha: "abc1234def", base: badBase, files: [], merge: nil,
+                mergeQueue: nil)
+            #expect(throws: ConfirmationError.unpinnedBase) {
+                try confirmationAnswer(for: ConfirmRequest(step: .commit, expect: "abc1234"), plan: .turnOn(plan))
+            }
+        }
     }
 
     @Test func namesTheMergeOfTheOwnersOwnPR() throws {

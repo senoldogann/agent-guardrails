@@ -286,7 +286,7 @@ expect_eq "only descriptors 3-9 are used" "$(GUARDRAILS_EVENTS_FD=1 emit_event '
 expect_eq "files as JSON" "$(printf '!!\t.github/workflows/x.yml\n\tsrc/a b.ts\n' | files_json)" \
   '[{"marker":"!!","path":".github/workflows/x.yml"},{"marker":"","path":"src/a b.ts"}]'
 
-# A fake gh on PATH answers the calls of bin/guardrails and pr_files from fixtures.
+# A fake gh on PATH answers the calls of bin/guardrails and pr_snapshot_files from fixtures.
 fake_bin="$work/fake-bin"
 mkdir -p "$fake_bin"
 cat >"$fake_bin/gh" <<'FAKE'
@@ -305,12 +305,12 @@ case $args in
   "pr list -R acme/shop "*) cat "$FAKE_PRS" ;;
   "pr list -R acme/off "*) echo '[]' ;;
   "search prs "*) printf 'acme/new\thttps://github.com/acme/new/pull/1\tchore: install the kit\n' ;;
-  "api --paginate repos/acme/shop/pulls/1/files"*) printf 'src/a.ts\n' ;;
-  "api --paginate repos/acme/shop/pulls/2/files"*) printf 'src/a.ts\ncontrol-character src/??fake\n' ;;
-  "api --paginate repos/acme/shop/pulls/3/files"*) printf 'src/a.ts\n' ;;
-  "api --paginate repos/acme/shop/pulls/4/files"*) printf 'src/a.ts\n'; echo "HTTP 502" >&2; exit 1 ;;
-  "api repos/acme/shop/pulls/1 --jq .changed_files" | "api repos/acme/shop/pulls/4 --jq .changed_files") echo 1 ;;
-  "api repos/acme/shop/pulls/3 --jq .changed_files") echo 3001 ;;
+  "api repos/acme/shop/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222?per_page=1")
+    echo '{"files":[{"filename":"src/a.ts","status":"modified"}]}' ;;
+  "api repos/acme/shop/compare/1111111111111111111111111111111111111111...3333333333333333333333333333333333333333?per_page=1")
+    echo "HTTP 502" >&2
+    exit 1
+    ;;
   *) echo "fake gh: unexpected call: $args" >&2; exit 1 ;;
 esac
 FAKE
@@ -384,16 +384,40 @@ else
   expect_eq "the queue flag alone is no target" "$(grep -c -- '--merge-queue' <<<"$usage_text")" "1"
 fi
 
-echo "pr_files"
-expect_eq "plain file names pass" "$(PATH="$fake_bin:$PATH" pr_files acme/shop 1)" "src/a.ts"
-if (PATH="$fake_bin:$PATH" pr_files acme/shop 2 >/dev/null 2>&1); then
-  fail "a file name with control characters must be refused"
-else ok; fi
-if (PATH="$fake_bin:$PATH" pr_files acme/shop 3 >/dev/null 2>&1); then
-  fail "a list shorter than the PR's count of changed files must be refused"
-else ok; fi
-if (PATH="$fake_bin:$PATH" pr_files acme/shop 4 >/dev/null 2>&1); then
-  fail "a listing that failed on a later page must be refused"
+echo "compared_files and pr_snapshot_files"
+expect_eq "plain file names pass" "$(compared_files 1 <<<'{"files":[{"filename":"src/a.ts","status":"modified"}]}')" "src/a.ts"
+expect_eq "a rename lists its old path too" "$(compared_files 2 <<<'{"files":[
+  {"filename":"src/moved.yml","previous_filename":".github/workflows/checks-node.yml","status":"renamed"},
+  {"filename":"src/a.ts","status":"modified"}]}')" ".github/workflows/checks-node.yml
+src/a.ts
+src/moved.yml"
+expect_refused() {
+  local name=$1 expected=$2 comparison=$3 needle=$4 out
+  if out=$(compared_files "$expected" <<<"$comparison"); then
+    fail "$name: must be refused, got: $out"
+  elif [[ $out == *"$needle"* ]]; then ok; else fail "$name: the reason lacks '$needle': $out"; fi
+}
+expect_refused "a file name with control characters" 1 '{"files":[{"filename":"src/\u001b[2Kfake","status":"added"}]}' \
+  "control characters: src/?[2Kfake"
+expect_refused "an empty old name of a rename" 1 '{"files":[{"filename":"src/a.ts","previous_filename":"","status":"renamed"}]}' \
+  "empty file names"
+expect_refused "a comparison without its file list" 1 '{"status":"ahead"}' "without its list of files"
+expect_refused "a comparison at GitHub's limit of 300 files" 300 \
+  "$(jq -n -c '{files: [range(300) | {filename: "src/f\(.).ts", status: "added"}]}')" "at most 300 files"
+expect_refused "a list shorter than the PR's count of changed files" 3001 '{"files":[{"filename":"src/a.ts","status":"added"}]}' \
+  "lists 1 files, but the PR reports 3001"
+expect_refused "an answer that is not JSON" 1 'HTTP 502' "other than JSON"
+expect_eq "the snapshot names both commits" \
+  "$(PATH="$fake_bin:$PATH" pr_snapshot_files acme/shop 1 1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 1)" \
+  "src/a.ts"
+if snapshot=$(PATH="$fake_bin:$PATH" pr_snapshot_files acme/shop 1 1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 2 2>&1); then
+  fail "a comparison that disagrees with the PR's count must be refused: $snapshot"
+else
+  expect_eq "the refusal says why and what to do" "$(tail -1 <<<"$snapshot")" \
+    "error: cannot show the complete list of files PR #1 in acme/shop changes between 1111111 and 2222222: the comparison lists 1 files, but the PR reports 2 changed files for the same head. Refusing to show or approve a partial list; split the PR if it is that large, otherwise run the command again."
+fi
+if (PATH="$fake_bin:$PATH" pr_snapshot_files acme/shop 1 1111111111111111111111111111111111111111 3333333333333333333333333333333333333333 1 >/dev/null 2>&1); then
+  fail "a failed comparison must be refused"
 else ok; fi
 
 echo "changes_enforcement"

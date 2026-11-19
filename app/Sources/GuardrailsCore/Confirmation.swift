@@ -4,6 +4,7 @@ public enum ConfirmationError: Error, Equatable, CustomStringConvertible {
     case noPlan(step: ConfirmStep)
     case doesNotMatchPlan(step: ConfirmStep, expected: String, planned: String)
     case notExpected(step: ConfirmStep)
+    case unpinnedBase
 
     public var description: String {
         switch self {
@@ -13,6 +14,8 @@ public enum ConfirmationError: Error, Equatable, CustomStringConvertible {
             "guardrails asked to confirm \(expected) for the \(step.rawValue) step, but its plan says \(planned)"
         case .notExpected(let step):
             "guardrails asked for a \(step.rawValue) confirmation this action does not have"
+        case .unpinnedBase:
+            "guardrails did not name the base commit its file list compares against, so the list may describe another push; update the kit and the app"
         }
     }
 }
@@ -27,6 +30,8 @@ public func confirmationAnswer(for request: ConfirmRequest, plan: Plan?) throws 
         guard isShortSHA, request.expect == pr.shortSHA else {
             throw ConfirmationError.doesNotMatchPlan(step: .commit, expected: request.expect, planned: pr.shortSHA)
         }
+        // The files the owner reviews must be the diff of one base and head; a plan without the base cannot show that.
+        guard pr.pinnedBase != nil else { throw ConfirmationError.unpinnedBase }
         return request.expect
     case (.commit, .update(let update)):
         let isShortSHA = request.expect.count == 7 && request.expect.allSatisfy(\.isHexDigit)

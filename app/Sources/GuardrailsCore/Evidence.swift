@@ -267,7 +267,7 @@ public struct DiffStats: Codable, Sendable, Equatable {
 }
 
 /// What `GET repos/{repo}/pulls/{number}` says about a PR now: the size of its change, its head and base. The
-/// size is the current head's; it describes the planned commit only while `headSHA` is that commit.
+/// size is the current head's; it describes the planned commit only while `head.sha` is that commit.
 public struct PullRequestSnapshot: Decodable, Sendable, Equatable {
     public struct Ref: Decodable, Sendable, Equatable {
         public let ref: String
@@ -289,11 +289,6 @@ public struct PullRequestSnapshot: Decodable, Sendable, Equatable {
         base = try container.decode(Ref.self, forKey: .base)
     }
 
-    /// GitHub's diff of exactly `sha` against the base branch, as the PR shows it for that head: what the owner
-    /// approves, even after a later push.
-    public func compareURL(repo: String, sha: String) -> String {
-        "https://github.com/\(repo)/compare/\(base.ref)...\(sha)"
-    }
 }
 
 public func parsePullRequestSnapshot(_ json: String) throws -> PullRequestSnapshot {
