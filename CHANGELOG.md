@@ -8,6 +8,15 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Added
 
+- Opt-in GitHub merge queue for organization repositories in review mode: `guardrails on <owner/repo>
+  --merge-queue`, or **Turn on merge queue** in the app.
+  - The queue is squash-only, every PR must pass every check, and groups are small.
+  - A plain `on` keeps the queue, `--no-merge-queue` removes it, and the inbox alarms when it goes missing.
+  - The kit's workflows report `guard`, `security` and the language checks on merge groups. The guard uses
+    the default branch's new `ci-guard-group`.
+  - Queued PRs no longer show as waiting for approval.
+  - Existing projects take the update in two PRs: first everything except `agent-guard.yml`, then
+    `agent-guard.yml`.
 - Team notifications: the kit workflow `agent-notify.yml` posts to a Slack incoming webhook and/or a Microsoft
   Teams Workflows webhook when a PR waits for approval, is blocked, asks a question, is approved or merged. It
   stays off until the owner adds the secret `GUARDRAILS_SLACK_WEBHOOK` or `GUARDRAILS_TEAMS_WEBHOOK`.
