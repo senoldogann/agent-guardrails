@@ -97,6 +97,20 @@ struct RepositoryChainTests {
         #expect(chain.missing == nil)
     }
 
+    @Test func anEnforcedRepositoryIsNotConfirmedBeforeTheInboxIsRead() {
+        // Until the inbox reads every kit ruleset, a disabled review ruleset has raised no alarm yet.
+        let chain = repositoryChainBeforeInbox(project(.on, mode: .review, queue: true))
+        #expect(chain.link(.ruleset)?.state == .unknown)
+        #expect(chain.link(.approval)?.state == .unknown)
+        #expect(!chain.links.contains { $0.kind != .kit && $0.state == .done })
+        #expect(!chain.links.contains { $0.detail.contains("active") || $0.detail.contains("per commit") })
+        // The inbox only ever turns an enforced repository into an alarm: every other state is drawn as before.
+        for state in [ProjectState.alarm, .elsewhere, .ready, .off, .noAdmin] {
+            let other = project(state, mode: nil, queue: false)
+            #expect(repositoryChainBeforeInbox(other) == repositoryChain(other), "\(state)")
+        }
+    }
+
     @Test func anUnreportedModeIsUnknown() {
         let chain = repositoryChain(project(.on, mode: nil, queue: false))
         #expect(chain.link(.approval)?.state == .unknown)

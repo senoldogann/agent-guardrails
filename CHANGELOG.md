@@ -53,6 +53,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   repository, so the chain now marks the ruleset broken ("alarm: not confirmed") and the kit and approval
   unknown, with a dashed ring, until the alarm is fixed. A repository a teammate enforces from another Mac no
   longer reads as off ("not installed", "stays open"): its links are unknown here.
+- Until the app first read the inbox, a repository page drew an enforced repository as fully protected,
+  although only the inbox reads every kit ruleset and would show a disabled review ruleset as an alarm. Its
+  ruleset and approval now read "reading alarms" until then. The waiting count on a repository, and its
+  activity, missed items whose repository name came in another case than the projects list's; names are now
+  compared without case, as GitHub compares them.
 - The review board said "Every check the kit runs passed" when some runs were skipped or neutral, and "No
   checks reported" while checks were still running, still loading or could not be read. It now says passed
   only when every run passed, names skipped and neutral runs (also in the Checks list), and keeps running,

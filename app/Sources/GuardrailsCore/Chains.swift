@@ -139,6 +139,21 @@ public func repositoryChain(_ project: Project) -> Chain {
     }
 }
 
+/// What the repository page draws until the inbox is first read. The inbox is what reads every kit ruleset and
+/// turns a problem into an alarm (`shownProject`), so before it an enforced repository's ruleset and approval are
+/// not confirmed: a disabled review ruleset would still look protected. Every other state is drawn as
+/// `repositoryChain` draws it, since the inbox only ever turns an enforced repository into an alarm.
+public func repositoryChainBeforeInbox(_ project: Project) -> Chain {
+    guard project.state == .on else { return repositoryChain(project) }
+    return Chain(
+        links: [
+            ChainLink(kind: .kit, title: "Kit", detail: "installed", state: .done),
+            ChainLink(kind: .ruleset, title: "Ruleset", detail: "\(project.branch) · reading alarms", state: .unknown),
+            ChainLink(kind: .approval, title: "Approval", detail: "reading alarms", state: .unknown),
+        ],
+        missing: nil)
+}
+
 // MARK: pull request
 
 /// The check runs on the commit under review, as far as the app could read them.

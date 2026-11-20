@@ -14,7 +14,7 @@ struct ProjectDetail: View {
                 ProjectHeader(
                     project: project, actionsLocked: model.snapshot.hasKitInstallAlarm, open: open,
                     startSetup: { showsSetup = true })
-                RepositoryRail(project: project)
+                RepositoryRail(chain: model.inboxRead ? repositoryChain(project) : repositoryChainBeforeInbox(project))
                 if model.snapshot.hasKitInstallAlarm {
                     StatusPanel(
                         symbol: .lock, title: "Actions are locked",

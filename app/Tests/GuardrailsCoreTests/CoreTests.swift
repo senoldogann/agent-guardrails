@@ -54,6 +54,9 @@ struct InboxTests {
         #expect(waitingCount(after) == 3)
         #expect(waitingCount(after, repo: "a/b") == 3)
         #expect(waitingCount(after, repo: "a/c") == 0)
+        // GitHub compares repository names without case; the projects list and the inbox can spell one differently.
+        #expect(waitingCount(after, repo: "A/B") == 3)
+        #expect(sameRepository("Acme/Shop", "acme/shop") && !sameRepository("acme/shop", "acme/shop2"))
     }
 
     @Test func notifiesAgainWhenAPushChangesAWaitingPR() throws {

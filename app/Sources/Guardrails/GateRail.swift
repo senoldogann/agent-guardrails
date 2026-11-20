@@ -138,11 +138,12 @@ private struct Connector: View {
     }
 }
 
-/// The repository page's chain, for the project as the app shows it (`shownProject`).
+/// The repository page's chain: `repositoryChain` of the project as the app shows it (`shownProject`), or, until the
+/// inbox is first read, `repositoryChainBeforeInbox`.
 struct RepositoryRail: View {
-    let project: Project
+    let chain: Chain
 
     var body: some View {
-        GateRail(chain: repositoryChain(project))
+        GateRail(chain: chain)
     }
 }

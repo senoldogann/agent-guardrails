@@ -36,7 +36,7 @@ final class ProjectsModel {
     }
 
     func project(named repo: String) -> Project? {
-        projects.first { $0.repo == repo }
+        projects.first { sameRepository($0.repo, repo) }
     }
 
     func loadProjects() async {

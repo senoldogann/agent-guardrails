@@ -24,6 +24,8 @@ final class AppModel {
     private(set) var loadState = LoadState.idle
     private(set) var lastError: String?
     private(set) var lastUpdated: Date?
+    /// Whether the inbox has been read once: until then no alarm is known, so nothing enforced is confirmed yet.
+    var inboxRead: Bool { lastUpdated != nil }
     /// Set when the owner clicks a notification; the menu bar label opens it and clears it.
     var pendingRoute: InboxRoute?
     /// False when macOS shows none of the app's notifications (denied, or alert style None); nil until known.

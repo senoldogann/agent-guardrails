@@ -89,7 +89,7 @@ public func latestActivity(_ entries: [ActivityEntry], limit: Int) -> [ActivityE
 
 /// The newest entries of one repository first.
 public func activity(of repo: String, in entries: [ActivityEntry], limit: Int) -> [ActivityEntry] {
-    latestActivity(entries.filter { $0.repo == repo }, limit: limit)
+    latestActivity(entries.filter { sameRepository($0.repo, repo) }, limit: limit)
 }
 
 /// The newest `keeping` entries, oldest first, for rewriting a log that grew past its limit.
