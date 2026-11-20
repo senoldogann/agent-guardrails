@@ -64,6 +64,6 @@ if [[ $spec_count -gt 1 ]]; then
   done < <(git show "$last:specs/${ticket:-}/locked-files" | awk 'NF && $0 !~ /^#/')
   git diff --stat "$first" "$last" -- "${amended_paths[@]}"
 fi
-[[ -z ${ticket:-} ]] || guard_write_scope "$ticket" "$head"
+[[ -z ${ticket:-} ]] || guard_write_scope "$ticket" "$base" "$head"
 guard_review_summary "$base" "$head"
 exit "$guard_status"

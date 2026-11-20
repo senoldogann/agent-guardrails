@@ -68,8 +68,16 @@ check_test() {
 }
 echo "is_test_path"
 check_test yes tests/test_rates.py
-check_test yes tests/conftest.py
+check_test yes tests/__init__.py
+check_test yes tests/property/strategies.py
 check_test yes src/domain/discount.test.ts
+# Configuration inside a test directory configures the tests below it: not a test source.
+check_test no tests/conftest.py
+check_test no tests/pytest.ini
+check_test no tests/.env
+check_test no tests/property/pyproject.toml
+check_test no tests/setup.cfg
+check_test no src/__tests__/package.json
 check_test yes Packages/Core/Tests/CoreTests/PasswordTests.swift
 check_test no conftest.py
 check_test no pyproject.toml

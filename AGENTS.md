@@ -139,9 +139,13 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   (`test-support/pytest_integrity.py`) runs on the project's Python and must parse as 3.9; `tests/smoke.sh` parses
   both files with their oldest grammar, since CI's Python is newer. `mutants-mutmut-run` checks the mutmut
   configuration on the project's interpreter with the parser mutmut uses there (`tomllib` from 3.11, the `toml`
-  package before); the language adapter suite also runs Python 3.10 for it. On macOS, mutmut 3.3.1, the last
-  release for Python 3.9, crashes in every mutant's process, also without the kit's plugin. Running the plugin
-  locally writes a `__pycache__` next to it: delete it before committing.
+  package before) and that the installed mutmut reads every kit key; the language adapter suite also runs
+  Python 3.10 for it. The mutation gate needs mutmut 3.8+, so Python 3.10+: mutmut 3.3.1, the last release for
+  Python 3.9, reads none of the keys (and on macOS crashes in every mutant's process), and the gate says so.
+  Running the plugin locally writes a `__pycache__` next to it: delete it before committing.
+- Hooks fail closed through an explicit `allow`: on Bash 3.2 (macOS's `/bin/bash`, which `#!/usr/bin/env bash`
+  finds on a stock Mac) the EXIT trap sees status 0 after a fatal error such as a failed `source`, so a trap that
+  only maps non-zero statuses would let the call through. Never end an allowed path with a bare `exit 0`.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority. The same holds for the Cursor and Codex hooks.
 - A new kit file in projects (like `.cursor/hooks.json`) goes into `kit_drift`, `remove_kit_files`, the kit-file

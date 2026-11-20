@@ -42,25 +42,34 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   gone. An own merge or a turn-on now shows that GitHub recorded no review. The approval's success text no
   longer promises a merge that only auto-merge makes, and the Reports row is now called "Without an approval".
 - write-guard, the template's Claude Code hook for file edits during a ticket, let some writes past it:
-  - it judged a path as written, so a link inside or outside the project could stand in for `.agent/` or a
-    locked file, and on macOS a name in another case (`.AGENT/`, `.Claude/`, `Percent.contract.ts`) reached
-    the guarded file;
+  - it judged a path as written, so a link inside or outside the project, a hard link, or on macOS another
+    spelling of the name (`.AGENT/`, `Percent.contract.ts`, `ſpec.lock`, whose `ſ` macOS reads as `s`) could
+    stand in for `.agent/`, a lock file or a locked file;
   - in the spec phase, a path the agent added to its own `locked-files` became editable, and new configuration
-    files (`GNUmakefile`, `uv.toml`, a test setup file) could be created;
-  - an error inside the hook, such as input it could not read, let the write through.
-  It now follows every link, compares guarded names without case, lets the spec phase edit only what the
-  ticket's `spec.lock` locks and create no configuration, manifests or build files, and blocks on any internal
-  error.
+    files (`GNUmakefile`, `uv.toml`, a test setup file, a `pytest.ini` inside `tests/`) could be created;
+  - a lock it could not read counted as locking nothing;
+  - an error inside the hook let the write through, also a fatal one (a missing library), after which macOS's
+    Bash 3.2 ends with status 0.
+
+  It now follows every link, judges an existing file by the name its directory stores, refuses a file with
+  several hard links and a new name that is not plain ASCII, compares guarded names without case, lets the
+  spec phase edit only what the ticket's `spec.lock` locks and create no configuration, manifests, build files
+  or dotfiles in any directory, refuses a write when a lock cannot be read, and allows a write only through
+  an explicit allow, so every other end blocks. The project's bash-guard shim blocks on its own errors the
+  same way.
 - `is_human_owned` matches names without case, except Swift's `Tests.swift` suffixes, and covers more
   configuration, manifests and lock files: `uv.toml`, Poetry, Pipenv, PDM, Hatch and Pixi files, `noxfile.py`,
   Jest, Playwright, Cypress, Karma, AVA, ESLint, Prettier, Stylelint, Babel, webpack, Rollup and tsup configs,
   Bun and Deno files, `turbo.json`, `nx.json`, `deny.toml`, `Package@swift-*.swift`, CocoaPods, Carthage and
   Bundler files, `justfile`, Taskfile, lefthook, Nix flakes, `Containerfile` and Compose `.yaml` files.
 - `ci-guard` lists the paths a ticket's PR changes outside the ticket's `write-allow` under "PATHS OUTSIDE
-  specs/<TICKET>/write-allow". write-guard cannot see a write made through the shell; the owner now does.
-- The Python mutation gate failed on Python 3.9 and 3.10: `mutants-mutmut-run` checked the scratch copy's
-  mutmut configuration with `tomllib`, which those versions lack. It now reads it with the parser mutmut
-  itself uses on each version (the `toml` package, a mutmut dependency below 3.11).
+  specs/<TICKET>/write-allow", a locked file the base already had included. write-guard cannot see a write
+  made through the shell; the owner now does.
+- The Python mutation gate failed on Python 3.10: `mutants-mutmut-run` checked the scratch copy's mutmut
+  configuration with `tomllib`, which 3.10 lacks. It now reads it with the parser mutmut itself uses on each
+  version (the `toml` package, a mutmut dependency below 3.11), and checks that the installed mutmut reads
+  every key of the kit's configuration. On Python 3.9, whose newest mutmut (3.3.1) reads none of them, the
+  gate stops with that reason instead of letting mutmut run every test without the integrity guard.
 - In a Python project on Python 3.9 to 3.11, every `make test` failed before any test ran: the kit's pytest
   plugin used Python 3.12's `type` statement, and the language adapter tests only ran 3.12. It now loads on
   3.9 and newer. The smoke test parses the kit's Python files with their oldest supported grammar.

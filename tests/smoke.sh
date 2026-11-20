@@ -224,6 +224,20 @@ expect_exit "a file added to locked-files is not editable until spec-lock locks 
 cp "$work/locked-files.bak" specs/ABC-1/locked-files
 expect_exit "input that is not JSON blocks (fails closed)" 2 guard_input 'not json'
 expect_out "an internal error says so" "internal error"
+# A guard that cannot load its library blocks too: Bash 3.2 runs the EXIT trap with status 0 after a failed source.
+mkdir -p "$work/broken/.agent/hooks"
+cp "$repo/.agent/hooks/write-guard.sh" "$work/broken/.agent/hooks/write-guard.sh"
+# shellcheck disable=SC2016 # the inner script expands its own arguments
+expect_exit "a guard that cannot load its library blocks" 2 bash -c \
+  'printf "{\"tool_input\":{\"file_path\":\"%s/src/x.ts\"}}" "$1" | HOME="$2" CLAUDE_PROJECT_DIR="$1" "$3"' \
+  _ "$repo" "$fake_home" "$work/broken/.agent/hooks/write-guard.sh"
+# Another name for a guarded file: on macOS ſ opens s (the ticket's own lock); elsewhere the new name is not ASCII.
+expect_exit "a lock file spelled with a Unicode look-alike denied" 2 guard "$repo/specs/ABC-1/ſpec.lock"
+expect_exit "a new file with a non-ASCII name denied" 2 guard "$repo/src/domain/ﬁle.ts"
+# Configuration inside a test directory configures the tests below it.
+expect_exit "new pytest.ini in a test directory denied" 2 guard "$repo/tests/pytest.ini"
+expect_exit "new dotfile in a test directory denied" 2 guard "$repo/tests/.env"
+expect_exit "new test helper in a test directory allowed" 0 guard "$repo/tests/property/strategies.py"
 implement
 expect_failure "finish refuses while the spec gate fails" .agent/bin/finish
 unimplement
@@ -243,6 +257,18 @@ expect_exit "locked contract in another case denied" 2 guard "$repo/src/domain/P
 expect_out "the case variant is denied as locked" "locked by ABC-1/spec.lock"
 expect_exit "conftest in another case denied" 2 guard "$repo/src/domain/CONFTEST.py"
 expect_exit "uv.toml denied" 2 guard "$repo/uv.toml"
+expect_exit "locked contract spelled with a Unicode look-alike denied" 2 guard "$repo/src/domain/percent.contract.tſ"
+# A write-allowed file that is a hard link of a locked one.
+cp src/domain/percent.ts "$work/percent.ts.bak"
+ln -f src/domain/percent.contract.ts src/domain/percent.ts
+expect_exit "a write-allowed file hard-linked to a locked one denied" 2 guard "$repo/src/domain/percent.ts"
+rm src/domain/percent.ts
+cp "$work/percent.ts.bak" src/domain/percent.ts
+# A lock the guard cannot read could lock anything.
+chmod 000 specs/ABC-1/spec.lock
+expect_exit "an unreadable lock denies" 2 guard "$repo/src/domain/percent.ts"
+chmod 644 specs/ABC-1/spec.lock
+expect_exit "write-allowed file allowed again" 0 guard "$repo/src/domain/percent.ts"
 
 echo "stop-check / block / report"
 expect_exit "red checks block stop" 2 stop_hook
@@ -340,6 +366,24 @@ git commit -qm "feat(ABC-1): touch another module"
 expect_success "a path outside write-allow passes the guard" ci_guard feat/ABC-1-scope feat/ABC-1-scope main
 expect_out "the owner sees the path outside write-allow" 'PATHS OUTSIDE specs/ABC-1/write-allow'
 expect_out "the path is named" '"src/other.ts"'
+# Locking a file the base already had does not explain why the PR changed it. The base is a commit of its own, so
+# main stays as the later checks expect it.
+git checkout -q -b feat/ABC-1-lock-base feat/ABC-1-relock
+printf 'export const other = 2;\n' >src/other.ts
+git add src/other.ts
+git commit -qm "chore: add another module"
+lock_base=$(git rev-parse HEAD)
+git checkout -q -b feat/ABC-1-lock-existing
+printf 'export const other = 3;\n' >src/other.ts
+printf 'src/other.ts\n' >>specs/ABC-1/locked-files
+.agent/bin/spec-lock ABC-1 >/dev/null
+git add -A
+git commit -qm "spec(ABC-1): lock another module"
+printf '// IMPLEMENTED\nexport const z = 3;\n' >src/domain/percent.ts
+git commit -qam "feat(ABC-1): implement again"
+expect_success "a PR that locks a file the base had passes the guard" \
+  .agent/bin/ci-guard "$lock_base" feat/ABC-1-lock-existing feat/ABC-1-lock-existing main main
+expect_out "the owner sees the locked file the PR changed outside write-allow" 'PATHS OUTSIDE specs/ABC-1/write-allow'
 git checkout -q feat/ABC-1-relock
 
 echo "ci-run"

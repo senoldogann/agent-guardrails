@@ -4,9 +4,10 @@
 # project (.agent/reports/mutation/mutmut), so mutmut's `mutants/` tree never lands in the repository.
 # The configuration is the kit's: the copy's pyproject.toml gets the kit's [tool.mutmut] table in place
 # of the project's (mutmut reads no other source once that table exists), checked before the run with the
-# parser mutmut itself reads pyproject.toml with (tomllib from Python 3.11, the toml package before).
-# Only the locked test files run (a kill must come from a locked test), with the integrity guard and a
-# fixed Hypothesis seed.
+# parser mutmut itself reads pyproject.toml with (tomllib from Python 3.11, the toml package before), and
+# the installed mutmut must read every key of it: mutmut 3.3.1, the newest for Python 3.9, reads none and
+# would run every test without the integrity guard. Only the locked test files run (a kill must come from a
+# locked test), with the integrity guard and a fixed Hypothesis seed.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/mutants-lib.sh"
@@ -53,14 +54,24 @@ rm "$work/pyproject.toml.tmp"
 
 cd "$work"
 uv run -q --project "$root" python -c '
-import json, sys
+import json, pathlib, sys
+from importlib.util import find_spec
 if sys.version_info >= (3, 11):
     from tomllib import loads
 else:
     from toml import loads
+expected = json.loads(sys.argv[1])
 with open("pyproject.toml", encoding="utf-8") as handle:
     actual = loads(handle.read()).get("tool", {}).get("mutmut")
-if actual != json.loads(sys.argv[1]):
+if actual != expected:
     raise SystemExit(f"mutmut configuration of the scratch copy is not the kit configuration: {actual!r}")
+spec = find_spec("mutmut")
+if spec is None or spec.origin is None:
+    raise SystemExit("mutmut is not installed in the project (uv add --dev mutmut)")
+source = "".join(path.read_text(encoding="utf-8") for path in pathlib.Path(spec.origin).parent.rglob("*.py"))
+unread = [key for key in expected if json.dumps(key) not in source and repr(key) not in source]
+if unread:
+    raise SystemExit(f"the installed mutmut does not read {unread} from [tool.mutmut], so it would mutate and test "
+                     "without the kit settings; the mutation gate needs mutmut 3.8 or newer, which needs Python 3.10")
 ' "$config"
 PYTHONPATH="$root/.agent/test-support" uv run -q --project "$root" mutmut run --max-children 4

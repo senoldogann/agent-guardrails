@@ -161,13 +161,14 @@ is_human_owned() {
   without_case human_owned_match "$1"
 }
 
-# Succeeds for a test file or a file in a test directory: the human-owned paths the spec phase writes. Matched like
-# is_human_owned. Argument: repository-relative path.
+# Succeeds for a test source file: a test file name, or a file in a test directory that is no configuration,
+# manifest, build file or dotfile (tests/pytest.ini configures every test below it). These are the human-owned
+# paths the spec phase writes. Matched like is_human_owned. Argument: repository-relative path.
 is_test_path() {
   case ${1##*/} in
     *Tests.swift | *Test.swift) return 0 ;;
   esac
-  without_case test_path_match "$1"
+  without_case test_source_match "$1"
 }
 
 # Runs a path matcher with matching that ignores case: macOS's default file system resolves names without case, so
@@ -181,7 +182,7 @@ without_case() {
   return "$status"
 }
 
-# The patterns of is_test_path. Argument: repository-relative path.
+# Test directories and test file names. Argument: repository-relative path.
 test_path_match() {
   case $1 in
     tests/* | */tests/* | test/* | */test/* | */__tests__/* | __tests__/*) return 0 ;;
@@ -192,11 +193,21 @@ test_path_match() {
   return 1
 }
 
+# The patterns of is_test_path. Argument: repository-relative path.
+test_source_match() {
+  test_path_match "$1" && ! config_path_match "$1"
+}
+
 # The patterns of is_human_owned. Argument: repository-relative path.
 human_owned_match() {
+  test_path_match "$1" || config_path_match "$1"
+}
+
+# Guardrails, agent context, CI, specs, configuration, manifests, lockfiles and dotfiles, in any directory.
+# Argument: repository-relative path.
+config_path_match() {
   local path=$1 base
   base=${path##*/}
-  test_path_match "$path" && return 0
   case "/$path" in
     */.*) return 0 ;; # any dot directory or dotfile (.cargo/config.toml, .stryker-tmp/, .github/)
   esac
