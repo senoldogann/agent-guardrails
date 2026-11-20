@@ -75,6 +75,22 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - `docs/pilot.md` no longer says that the checks prove the code meets the locked spec. A green run records
   that the evaluated commit passed the locked tests and configured checks; it does not prove complete coverage.
 
+### Security
+
+- bash-guard let several plain commands past its checks in kit repositories, and Claude Code's file tools past
+  it entirely. Now refused:
+  - a gh call nested in another's arguments (`$(gh pr review --approve)`, backticks, `<(…)`);
+  - a variable or command substitution in a gh merge, edit, auth or api call;
+  - checked flags in other spellings (`--base=x`, `-Bx`, `--admin=true`, `-fbody=x`, `-ht`);
+  - commands that drop the session's identity so gh and git fall back to the owner's login (`env -i`, `env -`, `exec -c`, tmux, screen, cron and launchd jobs, a new Terminal, osascript's `do shell script`, ssh to this machine);
+  - git settings passed with `git -c` or through `GIT_CONFIG_*` and `GIT_SSH*`;
+  - printing the environment (`export`, `declare -x`, `env` without a command, `ps e`, interpreters reading it).
+- In Claude Code, bash-guard now also checks the file tools (Read, Grep, Glob, Edit, Write, MultiEdit,
+  NotebookEdit) by the path with every link resolved. None may read or write `~/.config/agent-guardrails` (the
+  enforced repositories and the agent App's private key), no Grep may search it or a parent directory, and no
+  write may go into the kit install or drop the kit's hooks from `~/.claude/settings.json` or the Cursor and
+  Codex hook files. Run `./install.sh` (Update does) to register these hooks.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added

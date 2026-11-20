@@ -49,6 +49,8 @@ check "unrelated hook kept" 'grep -Fx "rtk hook claude" <<<"$commands" >/dev/nul
 check "old kit hook removed" '! grep -F "$old" <<<"$commands" >/dev/null'
 check "new kit hook registered" 'grep -Fx "$kit/hooks-global/bash-guard.sh" <<<"$commands" >/dev/null'
 check "identity hook renews tokens before Bash" 'grep -Fx "$kit/hooks-global/agent-identity.sh" <<<"$commands" >/dev/null'
+check "bash-guard checks file reads and writes too" \
+  '[[ $(jq -c --arg g "$kit/hooks-global/bash-guard.sh" "[.hooks.PreToolUse[] | select(any(.hooks[]; .command == \$g)) | .matcher]" "$home/.claude/settings.json") == "[\"Bash\",\"Read|Grep|Glob\",\"Edit|Write|MultiEdit|NotebookEdit\"]" ]]'
 check "identity hook starts sessions" '[[ $(jq -r ".hooks.SessionStart[].hooks[].command" "$home/.claude/settings.json") == "$kit/hooks-global/agent-identity.sh" ]]'
 cursor_file="$home/.cursor/hooks.json"
 check "cursor: the kit hook guards shell commands, moved in place before the user's hook" \

@@ -319,6 +319,157 @@ if [[ $cursor_answer == '{"permission":"allow"}' ]]; then passed=$((passed + 1))
   printf '  FAIL an allowed read answers only the permission, got: %s\n' "$cursor_answer"
 fi
 
+echo "bash-guard: nested calls, environment and flag spellings"
+cwd=$kit_repo
+# A gh call inside another's arguments is a call of its own.
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr view 1 $(gh pr review 1 --approve)'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr comment 1 --body "$(gh pr merge 1 --admin --squash)"'
+block 'gh issue list < <(gh pr review 1 --approve)'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr view 1 `gh pr review 1 --approve`'
+allow 'gh pr create --title "fix: rates (x)" --body-file /tmp/b.md'
+# shellcheck disable=SC2016 # literal input under test
+allow 'gh pr comment 1 --body "$(cat /tmp/note.md)"'
+# Protected calls take their flags only literally.
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr merge 1 --squash $(printf -- --admin)'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr edit 1 $FLAGS'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh api repos/o/r/pulls $EXTRA'
+allow 'cd /tmp && gh pr merge 12 --auto --squash'
+# shellcheck disable=SC2016 # literal input under test
+allow 'gh pr view $N --json state'
+# shellcheck disable=SC2016 # literal input under test
+allow 'gh pr checks "$(git branch --show-current)"'
+# Every spelling of a checked flag.
+block 'gh pr edit 1 --base=release'
+block 'gh pr edit 1 -Brelease'
+block 'gh pr merge 1 --admin=true --squash'
+block 'gh api repos/o/r/issues/1/comments -fbody=x'
+block 'gh api repos/o/r/issues/1/comments --raw-field=body=x'
+block 'gh api -XPOST repos/o/r/issues/1/comments'
+block 'gh auth status --show-token'
+block 'gh auth status -ht'
+allow 'gh pr edit 1 --title "x" --body-file /tmp/b.md'
+allow 'gh api repos/o/r/pulls/12/files --jq ".[].filename"'
+# Dropping the session's environment hands gh and git the owner's login.
+block 'env -i HOME=/Users/x PATH=/usr/bin:/opt/homebrew/bin gh pr merge 1 --auto --squash'
+block 'env -i PATH=/opt/homebrew/bin git push origin feat/ABC-1-x'
+block 'env - gh pr list'
+block 'env -u FOO -i gh pr list'
+block 'env --ignore-environment gh pr list'
+block 'exec -c gh pr list'
+block 'tmux new-session -d "make test"'
+block 'screen -dm make test'
+block 'crontab /tmp/jobs'
+block 'launchctl submit -l x -- /bin/sh -c make'
+block 'open -a Terminal /tmp/run.command'
+block 'open /tmp/run.command'
+block 'osascript -e "do shell script \"make test\""'
+block 'ssh localhost gh pr list'
+allow 'env FOO=1 grep -i pattern src/a.ts'
+allow 'git commit -m "fix: screen reader labels in tmux docs"'
+allow 'open https://github.com/o/r/pull/1'
+allow 'osascript -e "display notification \"done\""'
+# Git settings by git -c or the environment.
+block 'git -c url.git@github.com:.insteadOf=https://github.com/ push origin feat/x'
+block 'git -c core.hooksPath=/dev/null commit -m x'
+block 'git -c credential.helper=store push origin feat/x'
+block 'git -c core.sshCommand="ssh -i /tmp/k" push origin feat/x'
+block 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= git push origin feat/x'
+block 'GIT_SSH_COMMAND="ssh -i /tmp/k" git push origin feat/x'
+block 'git config core.sshCommand "ssh -i /tmp/k"'
+allow 'git -c user.name=t -c user.email=t@example.invalid commit -m x'
+allow 'git log -c --stat -1'
+# Printing the environment.
+block 'export'
+block 'declare -x'
+block 'typeset -p'
+block 'env -0'
+block 'env -u FOO'
+block 'env FOO=1'
+block 'python3 -c "import os; print(os.environ)"'
+block 'node -e "console.log(process.env)"'
+block 'ps eww 123'
+block 'ps -E -p 123'
+allow 'export FOO=bar; make test'
+allow 'declare -p FOO'
+allow 'ps aux'
+allow 'ps -ef'
+allow 'ps -o user,pid -p 1'
+allow 'git commit -m "docs: the ps entries table"'
+
+echo "bash-guard: file tools"
+# Runs the guard on a file tool's input; checks its exit status. Arguments: want, tool, tool_input JSON.
+tool_check() {
+  local want=$1 got
+  set +e
+  jq -n --arg t "$2" --argjson i "$3" --arg d "$cwd" '{cwd: $d, tool_name: $t, tool_input: $i}' | "$guard" >/dev/null 2>&1
+  got=$?
+  set -e
+  if [[ $got -eq $want ]]; then passed=$((passed + 1)); else
+    failed=$((failed + 1))
+    printf '  FAIL %s want %d got %d: %s\n' "$2" "$want" "$got" "$3"
+  fi
+}
+write_input() { jq -n -c --arg f "$1" --arg c "$2" '{file_path: $f, content: $c}'; }
+edit_input() { jq -n -c --arg f "$1" --arg o "$2" --arg n "$3" '{file_path: $f, old_string: $o, new_string: $n}'; }
+kit_root=$(cd "$hooks/.." && pwd -P)
+cwd=$kit_repo
+# The kit install this guard runs from, also through a link and for a file that does not exist yet.
+tool_check 2 Write "$(write_input "$kit_root/hooks-global/bash-guard.sh" "exit 0")"
+tool_check 2 Edit "$(edit_input "$kit_root/hooks-global/bash-guard.sh" "deny" "true")"
+tool_check 2 Write "$(write_input "$kit_root/hooks-global/new-hook.sh" "x")"
+ln -s "$kit_root/hooks-global" "$work/hooks-link"
+tool_check 2 Write "$(write_input "$work/hooks-link/bash-guard.sh" "exit 0")"
+ln -s "$kit_root/hooks-global/created.sh" "$work/dangling-link"
+tool_check 2 Write "$(write_input "$work/dangling-link" "exit 0")"
+tool_check 0 Write "$(write_input "$kit_repo/src/a.ts" "export const a = 1;")"
+# The owner's kit settings, also through a link.
+mkdir -p "$HOME/.config/agent-guardrails"
+tool_check 2 Write "$(write_input "$HOME/.config/agent-guardrails/repos" "")"
+ln -s "$HOME/.config/agent-guardrails" "$work/settings-link"
+tool_check 2 Write "$(write_input "$work/settings-link/repos" "")"
+# The kit's hooks in the agents' hook registrations may be kept or moved, not dropped.
+mkdir -p "$HOME/.claude" "$HOME/.codex"
+hooked='{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/k/hooks-global/bash-guard.sh"}]}]}}'
+printf '%s\n' "$hooked" >"$HOME/.claude/settings.json"
+printf '%s\n' "$hooked" >"$HOME/.codex/hooks.json"
+tool_check 0 Write "$(write_input "$HOME/.claude/settings.json" '{"theme": "dark", "x": "/k/hooks-global/bash-guard.sh"}')"
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" '{"theme": "dark"}')"
+tool_check 2 Write "$(write_input "$HOME/.codex/hooks.json" '{}')"
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" '"command": "/k/hooks-global/bash-guard.sh"' '"command": "true"')"
+tool_check 0 Edit "$(edit_input "$HOME/.claude/settings.json" '"matcher": "Bash"' '"matcher": "Bash|Task"')"
+tool_check 2 MultiEdit "$(jq -n -c --arg f "$HOME/.claude/settings.json" \
+  '{file_path: $f, edits: [{old_string: "/k/hooks-global/bash-guard.sh", new_string: "/bin/true"}]}')"
+tool_check 0 Write "$(write_input "$HOME/.cursor/hooks.json" '{"version": 1}')"
+# Reads: the owner's settings everywhere, credential files in kit repositories; Grep and Glob by their path.
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/agent-guardrails/agent/private-key.pem" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME/.config/agent-guardrails" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+tool_check 0 Read "$(jq -n -c --arg f "$kit_root/hooks-global/bash-guard.sh" '{file_path: $f}')"
+tool_check 0 Glob '{"pattern": "**/*.ts"}'
+# The owner's settings through a link, and a search over the directory that holds them or a parent of it.
+tool_check 2 Read "$(jq -n -c --arg f "$work/settings-link/agent/private-key.pem" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME/.config" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME/" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Grep '{"pattern": "BEGIN", "path": "/"}'
+ln -s "$HOME" "$work/home-link"
+tool_check 2 Grep "$(jq -n -c --arg p "$work/home-link" '{pattern: "BEGIN", path: $p}')"
+tool_check 0 Grep "$(jq -n -c --arg p "$kit_repo" '{pattern: "BEGIN", path: $p}')"
+tool_check 0 Grep '{"pattern": "BEGIN"}'
+tool_check 0 Glob "$(jq -n -c --arg p "$HOME" '{pattern: "*.md", path: $p}')"
+cwd=$HOME
+tool_check 2 Grep '{"pattern": "BEGIN"}'
+cwd=$plain_repo
+tool_check 0 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/agent-guardrails/agent/private-key.pem" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Write "$(write_input "$kit_root/hooks-global/bash-guard.sh" "exit 0")"
+
 # Codex sends Claude Code's PreToolUse shape (openai/codex codex-rs/hooks/schema/generated/
 # pre-tool-use.command.input.schema.json), so bash-guard.sh runs unchanged.
 codex_check() {

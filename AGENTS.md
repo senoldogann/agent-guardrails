@@ -95,6 +95,11 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`
   adds a one-line reminder per prompt. Everywhere they block the owner's commands and the enforced-repo list.
+  bash-guard is also Claude Code's hook for the file tools, by the physical path (`physical_path`, links
+  resolved): no read or write of `~/.config/agent-guardrails` and no Grep of it or a parent; writes (Edit,
+  Write, MultiEdit, NotebookEdit) also never into the kit install it runs from and never dropping a
+  `hooks-global/*.sh` hook from the agents' hook registrations (`dropped_hook_refs`). Reads of the kit install
+  go by the path's text, so a skill linked into it stays readable.
   `agent-identity.sh` (SessionStart, and PreToolUse Bash to renew) points a kit repository's session at a
   one-hour token of the agent App through `CLAUDE_ENV_FILE` (`GH_CONFIG_DIR`, git helper and SSH-to-HTTPS
   rewrite), so gh and git push run as the App's bot; it fails closed when the App is installed but no token
