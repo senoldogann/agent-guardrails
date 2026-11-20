@@ -199,12 +199,23 @@ outside_files() { (cd "$outside" && find . -type f -exec shasum {} + | sort); }
 before=$(outside_files)
 notes=$(remove_kit_files "$project")
 expect_eq "nothing outside the checkout changes" "$(outside_files)" "$before"
-expect_eq "a linked AGENTS.md is noted, not followed" "$notes" "edited (kit include removed; targets that called .agent/ scripts need a look): Makefile
+expect_eq "linked files are noted, not followed" "$notes" "kept (a symbolic link or other non-directory, not followed; remove the kit hooks by hand): .claude
+edited (kit include removed; targets that called .agent/ scripts need a look): Makefile
 kept (a symbolic link or other non-file, not followed; remove the kit section by hand): AGENTS.md
 kept (decided requirements stay as documentation): specs/"
 expect_eq "the links stay links" "$(git -C "$project" ls-files -s -- .claude AGENTS.md AGENTS.md.tmp Makefile.tmp | cut -d' ' -f1 | sort -u)" \
   "120000"
 expect_eq "the kit files still go" "$(git -C "$project" ls-files -- .agent .github/workflows/agent-guard.yml)" ""
+
+# Pathspec settings in the environment would make the removal's pathspecs literal or case-blind and leave the kit in
+# place without an error.
+project=$(new_project pathspecs)
+committed "$project"
+notes=$(GIT_LITERAL_PATHSPECS=1 GIT_ICASE_PATHSPECS=1 remove_kit_files "$project")
+expect_eq "pathspec settings in the environment change nothing" "$(git -C "$project" ls-files)" ".github/workflows/release.yml
+AGENTS.md
+specs/ABC-1/acceptance-criteria.md
+src/index.ts"
 
 echo "workflow_token_problems"
 # The owner's side runs the same check.py as ci-guard. Every spelling YAML gives a grant is refused, and so is

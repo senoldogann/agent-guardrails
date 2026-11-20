@@ -4,7 +4,7 @@
 # owner's answer in a pseudo-terminal. The removal plan is prepared before the confirmation, from a clone of a
 # repository the agent writes to: preparing it must not read or change anything outside that clone, whatever symbolic
 # links the repository holds, so a cancelled `off` changes nothing. A confirmed `off` pushes exactly the planned
-# removal and merges that commit.
+# removal and merges that commit, and no git hook runs in the clone, whatever the owner's git settings install.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 work=$(cd "$(mktemp -d)" && pwd -P)
@@ -85,6 +85,24 @@ ln -s "$outside/sentinel" "$work/links/Makefile.tmp"
 printf 'deploy:\n\t./deploy.sh\n' >>"$work/links/Makefile"
 publish "$work/links" links
 
+# acme/tools has its own Makefile targets, so off edits its Makefile and AGENTS.md instead of removing them: the case
+# a hook that stages the working tree again (git add -u) would undo.
+kit_project "$work/tools"
+printf 'deploy:\n\t./deploy.sh\n' >>"$work/tools/Makefile"
+publish "$work/tools" tools
+
+# Git settings an owner may have: a global hooks path and a template directory, each with hooks that would undo the
+# planned edits (pre-commit) or run code from the clone before the confirmation (post-checkout) or at the push.
+for hooks in "$work/global-hooks" "$work/template/hooks"; do
+  mkdir -p "$hooks"
+  printf '#!/bin/sh\ngit add -u\n' >"$hooks/pre-commit"
+  printf '#!/bin/sh\necho "%s" >>"%s"\n' "$hooks" "$work/hooks-ran" >"$hooks/post-checkout"
+  cp "$hooks/post-checkout" "$hooks/pre-push"
+  chmod +x "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/pre-push"
+done
+printf '[core]\n\thooksPath = %s\n[init]\n\ttemplateDir = %s\n' "$work/global-hooks" "$work/template" >"$work/gitconfig-hooks"
+printf '' >"$work/gitconfig-plain"
+
 fake="$work/fake"
 mkdir -p "$fake/bin"
 cat >"$fake/bin/gh" <<FAKE
@@ -94,15 +112,15 @@ fake="$fake"
 FAKE
 cat >>"$fake/bin/gh" <<'FAKE'
 case $args in
-  "repo view acme/shop --json defaultBranchRef --jq .defaultBranchRef.name" | \
-    "repo view acme/links --json defaultBranchRef --jq .defaultBranchRef.name") echo main ;;
-  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
-  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-review")'*) echo 8 ;;
-  "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-tags")'*) echo 9 ;;
-  "api repos/acme/shop/rulesets/"[789]) printf '{"id": %s}\n' "${args##*/}" ;;
-  "pr create --base main --head chore/remove-agent-guardrails "*)
+  "repo view acme/"*" --json defaultBranchRef --jq .defaultBranchRef.name") echo main ;;
+  "api --paginate repos/acme/"*"/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
+  "api --paginate repos/acme/"*"/rulesets?includes_parents=false --jq "*'"agent-guardrails-review")'*) echo 8 ;;
+  "api --paginate repos/acme/"*"/rulesets?includes_parents=false --jq "*'"agent-guardrails-tags")'*) echo 9 ;;
+  "api repos/acme/"*"/rulesets/"[789]) printf '{"id": %s}\n' "${args##*/}" ;;
+  "pr create -R acme/"*" --base main --head chore/remove-agent-guardrails "*)
     printf '%s\n' "$args" >>"$fake/writes.log"
-    echo https://github.com/acme/shop/pull/12
+    repo=${args#pr create -R }
+    echo "https://github.com/${repo%% *}/pull/12"
     ;;
   "api -X DELETE "* | "pr merge "* | "repo edit "*) printf '%s\n' "$args" >>"$fake/writes.log" ;;
   *)
@@ -115,15 +133,17 @@ chmod +x "$fake/bin/gh"
 fake_home="$work/home"
 mkdir -p "$fake_home/.config/agent-guardrails"
 
-# Runs `guardrails off` on a repository, typing an answer at its prompt; prints its exit status. Output in $work/out,
-# plan and confirmation events in $work/events, writes in $fake/writes.log. Arguments: owner/repo, answer.
+# Runs `guardrails off` on a repository, typing an answer at its prompt, with a global git config; prints its exit
+# status. Output in $work/out, plan and confirmation events in $work/events, writes in $fake/writes.log.
+# Arguments: owner/repo, answer, global git config file.
 turn_off() {
   local status=0
   rm -f "$fake/writes.log" "$work/events"
   touch "$fake/writes.log" "$work/events"
   # The removal commit needs a git identity, which a CI runner does not have.
   env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR HOME="$fake_home" PATH="$fake/bin:$PATH" GUARDRAILS_EVENTS_FD=3 \
-    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$work/remote/.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/ \
+    GIT_CONFIG_GLOBAL="$3" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$work/remote/.insteadOf" \
+    GIT_CONFIG_VALUE_0=https://github.com/ \
     GIT_AUTHOR_NAME=owner GIT_AUTHOR_EMAIL=owner@example.invalid \
     GIT_COMMITTER_NAME=owner GIT_COMMITTER_EMAIL=owner@example.invalid \
     python3 -I "$here/tests/pty-run.py" "$2" -- "$work/install/bin/guardrails" off "$1" \
@@ -132,19 +152,20 @@ turn_off() {
 }
 outside_files() { (cd "$outside" && find . -type f -exec shasum {} + | sort); }
 removal_branch() { git -C "$work/remote/acme/$1.git" rev-parse --verify --quiet refs/heads/chore/remove-agent-guardrails || true; }
+plan_removed() { jq -r -s '.[] | select(.event == "plan") | .removed[]' "$work/events"; }
 
 before=$(outside_files)
-expect_eq "a cancelled off stops at the confirmation" "$(turn_off acme/links no)" 1
+expect_eq "a cancelled off stops at the confirmation" "$(turn_off acme/links no "$work/gitconfig-plain")" 1
 expect_out "after showing the plan" "kept (a symbolic link or other non-file, not followed; remove the kit section by hand): AGENTS.md"
+expect_out "with the linked .claude named" "kept (a symbolic link or other non-directory, not followed; remove the kit hooks by hand): .claude"
 expect_out "and says nothing changed" "confirmation did not match; nothing changed"
 expect_eq "nothing outside its checkout changed" "$(outside_files)" "$before"
 expect_eq "nothing was written to GitHub" "$(cat "$fake/writes.log")" ""
 expect_eq "nothing was pushed" "$(removal_branch links)" ""
 
-expect_eq "a confirmed off turns the guardrails off" "$(turn_off acme/shop acme/shop)" 0
+expect_eq "a confirmed off turns the guardrails off" "$(turn_off acme/shop acme/shop "$work/gitconfig-plain")" 0
 expect_eq "the plan lists the edited and removed files" \
-  "$(jq -r -s '.[] | select(.event == "plan") | .removed[] | select(test("AGENTS.md|Makefile|release.yml|\\.agent/bin/ci-guard$"))' "$work/events")" \
-  "D	.agent/bin/ci-guard
+  "$(plan_removed | grep -E 'AGENTS.md|Makefile|release.yml|\.agent/bin/ci-guard$')" "D	.agent/bin/ci-guard
 M	AGENTS.md
 D	Makefile"
 head=$(removal_branch shop)
@@ -158,6 +179,19 @@ expect_eq "its AGENTS.md keeps the project part" "$(git -C "$work/remote/acme/sh
 Setup: pnpm install"
 expect_eq "the merge is pinned to that commit" "$(grep -c "^pr merge https://github.com/acme/shop/pull/12 --squash --delete-branch --match-head-commit $head\$" "$fake/writes.log")" 1
 expect_eq "the three rulesets are deleted" "$(grep -c '^api -X DELETE repos/acme/shop/rulesets/[789]$' "$fake/writes.log")" 3
+
+expect_eq "with hooks in the owner's git settings, off still finishes" "$(turn_off acme/tools acme/tools "$work/gitconfig-hooks")" 0
+expect_eq "no hook ran in its clone" "$(cat "$work/hooks-ran" 2>/dev/null || true)" ""
+head=$(removal_branch tools)
+expect_eq "the pushed commit is the plan: the Makefile and AGENTS.md edited, the kit gone" \
+  "$(git -C "$work/remote/acme/tools.git" diff --name-status main "$head" -- AGENTS.md Makefile .agent/common.mk)" \
+  "D	.agent/common.mk
+M	AGENTS.md
+M	Makefile"
+expect_eq "its Makefile keeps its own targets without the kit include" \
+  "$(git -C "$work/remote/acme/tools.git" show "$head:Makefile" | grep -c -e 'include .agent/common.mk' -e '^deploy:')" 1
+expect_eq "its AGENTS.md lost the kit section" \
+  "$(git -C "$work/remote/acme/tools.git" show "$head:AGENTS.md" | grep -c 'agent-guardrails:start' || true)" 0
 
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

@@ -331,6 +331,9 @@ check_jobs() {
 # `notes=$(remove_kit_files ...) || exit 1`. Argument: a git checkout whose index is its HEAD.
 remove_kit_files() {
   local dir=$1 entries entry line path name mode object content lang removed=0
+  # These would change what the pathspecs below match (taken literally, or ignoring case) and could leave the kit in
+  # place without an error. This runs in $(...), so only this subshell loses them.
+  unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
   unstage_paths "$dir" .agent .github/workflows/agent-guard.yml .github/workflows/security.yml \
     .github/security-ignore .github/workflows/agent-notify.yml
   # The checks-<lang> workflows: removed when they are the kit's, kept and noted otherwise. A name git has to quote
@@ -349,7 +352,13 @@ remove_kit_files() {
   done <<<"$entries"
   for path in .claude/settings.json .cursor/hooks.json; do
     entry=$(index_entry "$dir" "$path") || exit 1
-    [[ -n $entry ]] || continue
+    if [[ -z $entry ]]; then
+      # A linked .claude or .cursor is an entry of its own, and what it points to is never read.
+      entry=$(index_entry "$dir" "${path%%/*}") || exit 1
+      [[ -z $entry ]] ||
+        printf 'kept (a symbolic link or other non-directory, not followed; remove the kit hooks by hand): %s\n' "${path%%/*}"
+      continue
+    fi
     read -r mode object <<<"$entry"
     if is_kit_blob "$dir" "$mode" "$object" "$template/$path"; then
       unstage_paths "$dir" "$path"

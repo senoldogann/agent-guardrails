@@ -79,8 +79,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   repository held. A link to a file outside the clone let that preparation rewrite or delete the file, even
   when the owner then cancelled. The removal is now staged in the clone's index only: blobs are read by object
   id, edits are written as new blobs, links are removed or kept as links and never followed, and no temporary
-  file is made. A linked `AGENTS.md` or `Makefile` is kept and named in the plan. Errors while preparing the
-  plan now stop `off` before anything is pushed; before, they were ignored.
+  file is made. A linked `AGENTS.md`, `Makefile`, `.claude` or `.cursor` is kept and named in the plan. Errors
+  while preparing the plan now stop `off` before anything is pushed; before, they were ignored. The clones
+  `on` and `off` make run no git hooks, whatever the owner's git settings install, and `off` commits exactly the
+  planned tree, so a hook can neither run the repository's code before the confirmation nor change the pushed
+  removal.
 
 ## [0.6.0] - 2026-11-19
 
