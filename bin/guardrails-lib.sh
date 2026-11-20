@@ -613,20 +613,23 @@ report_since() {
 #   guardFailed, checksFailed, failed, failedThenMerged
 #                     PRs with a failed guard run, a failed checks-<lang> run, either, and of those the ones
 #                     merged with guard and every checks-<lang> job green on the final commit
-#   adminMerges       merged PRs with no approval on their final commit (no standing approving review, no
-#                     merge-approval success): an admin bypassed the review rule, or the PR merged before the
-#                     guardrails were on. {number, title, url, mergedBy, mergedAt}
+#   adminMerges       merged PRs with no approval on their final commit: no review still approving that commit
+#                     and no merge-approval success on it. An admin bypassed the review rule, the PR merged before
+#                     the guardrails were on, or the only approval was of an earlier commit (in status mode, or
+#                     wherever a push did not dismiss it). {number, title, url, mergedBy, mergedAt}
 #   partial           PRs with more commits or timeline events than the query reads; their numbers can be short
-# An approval is an approving review (also one a later push dismissed) or a merge-approval success. Titles are
-# written by the agent, so control characters are replaced. Arguments: window start (timestamp), agent App slug
-# ("" when none is registered).
+# The final commit is the PR's head (headRefOid; for a merged PR, the commit it merged), wherever the commit list
+# puts it. An approval in the times and re-approvals is an approving review (also one a later push dismissed) or a
+# merge-approval success, on any commit. Both modes count both kinds, since the report does not know which mode a
+# merge happened in. Titles are written by the agent, so control characters are replaced. Arguments: window start
+# (timestamp), agent App slug ("" when none is registered).
 pr_report() {
   jq -c --arg since "$1" --arg agent "$2" "$report_jq_defs"'
     def clean: gsub("[[:cntrl:]]"; "?");
     def failed: .__typename == "CheckRun" and .status == "COMPLETED"
       and (.conclusion | IN("SUCCESS", "CANCELLED", "SKIPPED", "NEUTRAL") | not);
     def runs: [.commits.nodes[]? | .commit as $c | $c.statusCheckRollup.contexts.nodes[]? | . + {oid: $c.oid}];
-    def head_runs: [.commits.nodes[-1]?.commit.statusCheckRollup.contexts.nodes[]?];
+    def final_runs: .headRefOid as $head | [runs[] | select(.oid == $head)];
     def approvals:
       [.timelineItems.nodes[]? | select(.__typename == "ReviewDismissedEvent" and .previousReviewState == "APPROVED")
         | .review.id] as $dismissed
@@ -638,12 +641,14 @@ pr_report() {
       | sort_by(.at);
     def ready_at($until): ([.timelineItems.nodes[]? | select(.__typename == "ReadyForReviewEvent") | .createdAt | epoch
       | select(. <= $until)] | max) // (.createdAt | epoch);
-    def green_head: head_runs as $runs
+    def green_head: final_runs as $runs
       | ([$runs[] | select(.__typename == "CheckRun" and (.name == "guard" or (.name | startswith("checks-"))))]
          | group_by(.name) | map(sort_by(.completedAt // "") | last)) as $latest
       | any($latest[]; .name == "guard") and all($latest[]; .conclusion == "SUCCESS");
-    def standing_approval: any(.timelineItems.nodes[]?; .__typename == "PullRequestReview" and .state == "APPROVED")
-      or any(head_runs[]; .__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS");
+    # A review approves the commit it was submitted on: one on an earlier commit says nothing about the final one.
+    def standing_approval: .headRefOid as $head
+      | any(.timelineItems.nodes[]?; .__typename == "PullRequestReview" and .state == "APPROVED" and .commit.oid == $head)
+        or any(final_runs[]; .__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS");
     def author_kind: (.author.login // "" | ascii_downcase | sub("\\[bot\\]$"; "")) as $login
       | if .author.__typename == "Bot" and $agent != "" and $login == ($agent | ascii_downcase) then "agent"
         elif .author.__typename == "Bot" then "otherBots" else "people" end;

@@ -47,6 +47,40 @@ expect_eq "PRs read only in part are named" "$(jq -c .partial <<<"$report")" '[1
 expect_eq "nothing in the window" "$(pr_report 2026-11-01T00:00:00Z x <<<'[]' | jq -c '[.prs, .approve, .merge.median, .adminMerges]')" \
   '[0,{"count":0,"median":null,"p90":null},null,[]]'
 
+echo "approval on the final commit"
+# One merged PR whose head is "h2": its commits as the query lists them, each with the states of its merge-approval
+# statuses, and its reviews. Prints the numbers adminMerges lists for it. Arguments: commits, reviews (JSON).
+admin_merges_of() {
+  jq -n -c --argjson commits "$1" --argjson reviews "$2" '[{
+    number: 30, title: "t", url: "u30", headRefOid: "h2",
+    createdAt: "2026-11-02T08:00:00Z", closedAt: "2026-11-02T12:00:00Z", mergedAt: "2026-11-02T12:00:00Z",
+    author: {__typename: "Bot", login: "agent"}, mergedBy: {login: "owner"},
+    timelineItems: {pageInfo: {hasNextPage: false}, nodes: [$reviews | to_entries[] | {__typename: "PullRequestReview",
+      id: "R\(.key)", state: .value.state, submittedAt: "2026-11-02T10:00:00Z", commit: {oid: .value.oid}}]},
+    commits: {pageInfo: {hasPreviousPage: false}, nodes: [$commits[] | {commit: {oid: .oid,
+      statusCheckRollup: {contexts: {nodes: [.approvals[]? | {__typename: "StatusContext", context: "merge-approval",
+        state: ., createdAt: "2026-11-02T11:00:00Z"}]}}}}]}}]' |
+    pr_report 2026-11-01T00:00:00Z agent | jq -c '[.adminMerges[].number]'
+}
+two_commits='[{"oid": "h1"}, {"oid": "h2"}]'
+expect_eq "a review approving the final commit" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2"}]')" '[]'
+expect_eq "a review that still approves only an earlier commit is no approval of the final one" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h1"}]')" '[30]'
+expect_eq "nor is a dismissed review of the final commit" \
+  "$(admin_merges_of "$two_commits" '[{"state": "DISMISSED", "oid": "h2"}]')" '[30]'
+expect_eq "an earlier approval followed by one of the final commit" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h1"}, {"state": "APPROVED", "oid": "h2"}]')" '[]'
+expect_eq "merge-approval on the final commit" \
+  "$(admin_merges_of '[{"oid": "h1"}, {"oid": "h2", "approvals": ["SUCCESS"]}]' '[]')" '[]'
+expect_eq "merge-approval only on an earlier commit" \
+  "$(admin_merges_of '[{"oid": "h1", "approvals": ["SUCCESS"]}, {"oid": "h2"}]' '[]')" '[30]'
+expect_eq "a failed merge-approval on the final commit" \
+  "$(admin_merges_of '[{"oid": "h1"}, {"oid": "h2", "approvals": ["FAILURE"]}]' '[]')" '[30]'
+# The commit list is in GitHub's order, not the branch's: the head need not come last.
+expect_eq "the final commit is the head, wherever the list puts it" \
+  "$(admin_merges_of '[{"oid": "h2"}, {"oid": "h1"}]' '[{"state": "APPROVED", "oid": "h2"}]')" '[]'
+
 echo "ruleset history"
 history=$(jq -c 'map(del(.state, .login))' "$fixtures/report-ruleset-versions.json")
 expect_eq "every version in the window and the one before it" "$(ruleset_versions_needed 2026-11-01T00:00:00Z <<<"$history" | tr '\n' ' ')" "1 2 3 "
