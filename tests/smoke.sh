@@ -150,7 +150,7 @@ expect_failure "pattern covering a locked file rejected" .agent/bin/spec-lock AB
 printf 'src/*.ts\n' >specs/ABC-1/write-allow
 expect_failure "pattern covering a test file rejected" .agent/bin/spec-lock ABC-1
 printf 'src/domain/percent.ts\n' >specs/ABC-1/write-allow
-expect_success "spec-lock succeeds" .agent/bin/spec-lock ABC-1
+expect_success "spec-lock succeeds (run from a subdirectory)" bash -c 'cd src/domain && ../../.agent/bin/spec-lock ABC-1'
 expect_out "tests.lock has the 2 locked tests" "and 2 tests"
 expect_success "lock-verify passes" .agent/bin/lock-verify ABC-1
 expect_success "tests-lock-check passes" .agent/bin/tests-lock-check
@@ -207,7 +207,9 @@ unimplement
 expect_success "finish passes the spec gate" .agent/bin/finish
 
 echo "write-guard (implement phase)"
-expect_success "start-implement verifies and activates" .agent/bin/start-implement ABC-1
+# Run from a subdirectory by a relative path, as an agent whose shell sits in src/ would: the script finds its siblings.
+expect_success "start-implement verifies and activates (run from a subdirectory)" \
+  bash -c 'cd src/domain && ../../.agent/bin/start-implement ABC-1'
 expect_exit "write-allowed file allowed" 0 guard "$repo/src/domain/percent.ts"
 expect_exit "locked test denied" 2 guard "$repo/src/domain/percent.prop.test.ts"
 expect_exit "locked contract denied" 2 guard "$repo/src/domain/percent.contract.ts"
@@ -242,7 +244,9 @@ cp "$work/checks.log.bak" "$checks_log"
 printf '// IMPLEMENTED\nexport const x = 1;\n' >src/domain/percent.ts
 expect_failure "report-checks refuses a stale log" .agent/bin/report-checks ABC-1
 implement
-expect_success "finish passes the implement gate" .agent/bin/finish
+# An exported CDPATH makes `cd` print the directory it found, or go to another project's .agent/bin: the script
+# must still find lock-verify next to itself.
+expect_success "finish passes the implement gate (with CDPATH exported)" env CDPATH=.:/nonexistent .agent/bin/finish
 unimplement
 .agent/bin/start-spec ABC-1 >/dev/null
 expect_success "abort leaves without a gate" .agent/bin/abort "ticket dropped"
@@ -256,6 +260,13 @@ expect_success "clean ts passes" .agent/bin/escape-check ts .
 # The kit's own files are tracked in every project, so they must pass the check in each language.
 for lang in ts py rs swift; do
   expect_success "the kit's own files pass escape-check $lang" .agent/bin/escape-check "$lang" .
+done
+# The kit's Python runs on the project's interpreter (the pytest plugin, 3.9 and newer) or the owner's (the workflow
+# check, 3.8 and newer). CI's newer Python would accept newer syntax, so each file is parsed with its oldest grammar.
+for check in "test-support/pytest_integrity.py 9" "workflow/check.py 8"; do
+  read -r file minor <<<"$check"
+  expect_success "the kit's $file parses as Python 3.$minor" python3 -I -c \
+    'import ast, sys; ast.parse(open(sys.argv[1]).read(), feature_version=(3, int(sys.argv[2])))' ".agent/$file" "$minor"
 done
 printf '// @ts-ignore\nexport {};\n' >src/domain/percent.ts
 git add -A

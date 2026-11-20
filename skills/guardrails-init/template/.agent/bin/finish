@@ -5,6 +5,9 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require_args 0 $# "finish"
+# The directory of this script, resolved before cd_project_root: a relative $0 names it from where it was called.
+# CDPATH is cleared for this cd, which would otherwise print the directory into $bin.
+bin=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 cd_project_root
 
 [[ -f .agent/active ]] || die "no active phase"
@@ -12,7 +15,7 @@ read -r mode ticket <.agent/active
 case $mode in
   spec) make --no-print-directory check-spec ;;
   implement)
-    "$(dirname "$0")/lock-verify" "$ticket"
+    "$bin/lock-verify" "$ticket"
     make --no-print-directory check
     ;;
   *) die "unknown phase '$mode' in .agent/active" ;;
