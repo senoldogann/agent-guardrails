@@ -81,9 +81,10 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   id, edits are written as new blobs, links are removed or kept as links and never followed, and no temporary
   file is made. A linked `AGENTS.md`, `Makefile`, `.claude` or `.cursor` is kept and named in the plan. Errors
   while preparing the plan now stop `off` before anything is pushed; before, they were ignored. The clones
-  `on` and `off` make run no git hooks, whatever the owner's git settings install, and `off` commits exactly the
-  planned tree, so a hook can neither run the repository's code before the confirmation nor change the pushed
-  removal.
+  `on` and `off` make run no git hooks, whatever the owner's git settings install (a hooks path, a template
+  directory or hooks defined in git config), and `off` commits exactly the planned tree, signed when the owner's
+  git signs commits, so a hook can neither run the repository's code before the confirmation nor change the
+  pushed removal.
 
 ## [0.6.0] - 2026-11-19
 

@@ -101,6 +101,14 @@ for hooks in "$work/global-hooks" "$work/template/hooks"; do
   chmod +x "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/pre-push"
 done
 printf '[core]\n\thooksPath = %s\n[init]\n\ttemplateDir = %s\n' "$work/global-hooks" "$work/template" >"$work/gitconfig-hooks"
+# A hook git config defines by name (git 2.46 and later), which core.hooksPath does not reach.
+printf '[hook "spy two"]\n\tcommand = echo config-hook >>%s\n\tevent = post-checkout\n\tevent = pre-commit\n\tevent = pre-push\n' \
+  "$work/hooks-ran" >>"$work/gitconfig-hooks"
+# The owner signs commits: a fake gpg that signs anything, as git expects gpg to answer.
+printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s\\n" "-----BEGIN PGP SIGNATURE-----" fake "-----END PGP SIGNATURE-----"\nprintf "\\n[GNUPG:] SIG_CREATED D 1 8 00 1700000000 FAKE\\n" >&2\n' \
+  >"$work/fake-gpg"
+chmod +x "$work/fake-gpg"
+printf '[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = %s\n' "$work/fake-gpg" >>"$work/gitconfig-hooks"
 printf '' >"$work/gitconfig-plain"
 
 fake="$work/fake"
@@ -190,6 +198,8 @@ M	AGENTS.md
 M	Makefile"
 expect_eq "its Makefile keeps its own targets without the kit include" \
   "$(git -C "$work/remote/acme/tools.git" show "$head:Makefile" | grep -c -e 'include .agent/common.mk' -e '^deploy:')" 1
+expect_eq "it is signed, as the owner's commits are" \
+  "$(git -C "$work/remote/acme/tools.git" cat-file commit "$head" | grep -c '^gpgsig' || true)" 1
 expect_eq "its AGENTS.md lost the kit section" \
   "$(git -C "$work/remote/acme/tools.git" show "$head:AGENTS.md" | grep -c 'agent-guardrails:start' || true)" 0
 

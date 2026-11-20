@@ -26,6 +26,8 @@
 # The global hooks treat a listed repo as a kit repo even if its local .agent/ is deleted, and from any
 # directory when a command names it; the inbox raises an alarm when the list and the topics disagree.
 set -euo pipefail
+# Pathspec settings from the environment would make this command's pathspecs literal or case-blind.
+unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
 kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
 source "$kit/bin/pr-target.sh"
@@ -201,18 +203,36 @@ ruleset_state() {
 # contents come from whoever writes to it, and `off` commits from an index that hooks must not change. Runs inside
 # $(...), where `set -e` does not apply, so every step dies on its own failure.
 clone_at() {
-  local repo=$1 ref=$2 dir
+  local repo=$1 ref=$2 dir hooks name
+  local -a off=()
+  hooks=$(config_hooks) || exit 1
+  while IFS= read -r name; do
+    [[ -z $name ]] || off+=(-c "hook.$name.enabled=false")
+  done <<<"$hooks"
   dir=$(mktemp -d) || die "cannot create a temporary directory"
-  git -c core.hooksPath=/dev/null -c credential.https://github.com.helper= \
+  git ${off[@]+"${off[@]}"} -c core.hooksPath=/dev/null -c credential.https://github.com.helper= \
     -c "credential.https://github.com.helper=!gh auth git-credential" \
     clone --quiet --no-checkout --template= "https://github.com/$repo.git" "$dir" || die "cannot clone $repo over HTTPS"
   git -C "$dir" config core.hooksPath /dev/null
   git -C "$dir" config core.fsmonitor false
+  while IFS= read -r name; do
+    [[ -z $name ]] || git -C "$dir" config "hook.$name.enabled" false || die "cannot turn off the git hook $name in the clone"
+  done <<<"$hooks"
   git -C "$dir" config credential.https://github.com.helper ''
   git -C "$dir" config --add credential.https://github.com.helper '!gh auth git-credential'
   git -C "$dir" fetch --quiet origin "$ref" || die "cannot fetch $ref from $repo"
   git -C "$dir" checkout --quiet --detach FETCH_HEAD || die "cannot check out $ref of $repo"
   printf '%s\n' "$dir"
+}
+
+# Prints the names of the hooks the owner's git config defines (hook.<name>.command or hook.<name>.event), one per
+# line. core.hooksPath does not reach these, so clone_at turns each off by name (hook.<name>.enabled). Dies when git
+# cannot read the config; no such hook prints nothing.
+config_hooks() {
+  local keys status=0
+  keys=$(git config --name-only --get-regexp '^hook\..*\.(command|event)$') || status=$?
+  [[ $status -le 1 ]] || die "cannot read the hooks in your git config (git config exit $status)"
+  [[ -z $keys ]] || sed -E 's/^hook\.(.*)\.(command|event)$/\1/' <<<"$keys" | sort -u
 }
 
 require_no_drift() {
@@ -467,6 +487,7 @@ on_repo() {
 
 off_repo() {
   local repo=$1 default_branch dir notes name branch=chore/remove-agent-guardrails url head file tree base_tree
+  local -a sign
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch") || exit 1
   tmp_dirs+=" $dir"
@@ -506,8 +527,11 @@ off_repo() {
   confirm repo "$repo" "Type $repo to turn the guardrails off: "
 
   if [[ $tree != "$base_tree" ]]; then
-    # commit-tree runs no hooks and commits the planned tree itself, not whatever the index holds by now.
-    head=$(git -C "$dir" commit-tree "$tree" -p HEAD -m "chore: remove agent guardrails kit" \
+    # commit-tree runs no hooks and commits the planned tree itself, not whatever the index holds by now. It does not
+    # read commit.gpgSign, so an owner who signs commits (and may push only signed ones) gets -S as with git commit.
+    sign=()
+    [[ $(git -C "$dir" config --type=bool --get commit.gpgsign || true) != true ]] || sign=(-S)
+    head=$(git -C "$dir" commit-tree ${sign[@]+"${sign[@]}"} "$tree" -p HEAD -m "chore: remove agent guardrails kit" \
       -m "The owner turned the agent guardrails off for this repository with 'guardrails off'.") ||
       die "cannot commit the removal; nothing changed on $repo"
     git -C "$dir" push --quiet origin "$head:refs/heads/$branch" || die "cannot push $branch to $repo; nothing else changed"
