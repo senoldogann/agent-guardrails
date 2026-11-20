@@ -48,7 +48,11 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
     (`review_mode_rulesets`) is not switched to status mode without `--status-mode` (`on_mode`, which the plan event
     and the confirmation name); `tests/turn-on.sh` drives `on <owner/repo>` with a fake gh and a local clone.
     Nobody bypasses the branch ruleset with the checks; only
-    admins create, move or delete tags. `off` deletes the rulesets and merges a PR that removes the kit.
+    admins create, move or delete tags. `off` deletes the rulesets and merges a PR that removes the kit. It prepares
+    that PR before the confirmation, in a temporary clone, by staging the removal in the clone's index only
+    (`remove_kit_files`: blobs read by object id, edits written as new blobs, links removed or kept as links, never
+    followed), so a cancelled `off` changes nothing outside that clone; `tests/turn-off.sh` drives `off` with a fake gh
+    and local bare repositories.
   - `on --merge-queue` (organization repositories in review mode only; `merge_queue_refusal` says why not) adds
     a `merge_queue` rule to the branch ruleset (`queued_branch_ruleset`) and lists the repo in
     `~/.config/agent-guardrails/merge-queue`; a plain `on` keeps the queue when that list or the live ruleset has

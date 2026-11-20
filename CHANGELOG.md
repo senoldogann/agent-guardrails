@@ -74,6 +74,13 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   ignored SIGTERM and let go of its output kept running after the timeout.
 - `docs/pilot.md` no longer says that the checks prove the code meets the locked spec. A green run records
   that the evaluated commit passed the locked tests and configured checks; it does not prove complete coverage.
+- `guardrails off` prepared its removal plan, before the owner's confirmation, by editing files in a fresh
+  clone of the repository with `AGENTS.md.tmp` and `Makefile.tmp` beside them, following any symbolic link the
+  repository held. A link to a file outside the clone let that preparation rewrite or delete the file, even
+  when the owner then cancelled. The removal is now staged in the clone's index only: blobs are read by object
+  id, edits are written as new blobs, links are removed or kept as links and never followed, and no temporary
+  file is made. A linked `AGENTS.md` or `Makefile` is kept and named in the plan. Errors while preparing the
+  plan now stop `off` before anything is pushed; before, they were ignored.
 
 ## [0.6.0] - 2026-11-19
 

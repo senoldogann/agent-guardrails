@@ -467,8 +467,8 @@ off_repo() {
   [[ -z $(git -C "$dir" ls-remote origin "refs/heads/$branch") ]] ||
     die "branch $branch already exists on $repo; nobody but this command should create it. Inspect and delete it, then try again."
   git -C "$dir" switch --quiet -c "$branch"
-  notes=$(remove_kit_files "$dir")
-  git -C "$dir" add -A
+  # Only the index changes (remove_kit_files): the commit below takes it as it is, so nothing re-adds the working tree.
+  notes=$(remove_kit_files "$dir") || exit 1
 
   printf '\nTurning off %s:\n  - delete the %s ruleset (merges no longer wait for checks or your approval)\n' "$repo" "$ruleset_name"
   printf '  - delete the %s and %s rulesets (no review required, anyone with write access can create tags)\n' \
@@ -483,7 +483,8 @@ off_repo() {
     git -C "$dir" diff --cached --name-status | sed 's/^/      /'
     for file in AGENTS.md Makefile; do
       if git -C "$dir" diff --cached --quiet -- "$file" 2>/dev/null; then continue; fi
-      [[ -e "$dir/$file" ]] || continue
+      # Edited rather than removed: the index still has it (the working tree is never changed).
+      [[ -n $(git -C "$dir" ls-files -- ":(literal)$file") ]] || continue
       printf '\n    changes to %s:\n' "$file"
       git -C "$dir" --no-pager diff --cached --no-color -- "$file" | sed 's/^/      /'
     done

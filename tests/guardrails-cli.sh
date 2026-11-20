@@ -124,17 +124,27 @@ expect_eq "linked Cursor rules are the project's own" "$(kit_drift "$project")" 
 expect_eq "check jobs come from the checks workflows only (notify is never required)" "$(check_jobs "$(new_project jobs)")" "checks-node"
 
 echo "remove_kit_files"
+# Commits a project as a clone of it has it: remove_kit_files stages the removal in the index and leaves the working
+# tree alone.
+committed() {
+  git -C "$1" init -q -b main
+  git -C "$1" add -A
+  git -C "$1" -c user.name=t -c user.email=t@example.invalid commit -q -m project
+}
 project=$(new_project remove)
 printf 'semgrep rule src/a.ts # accepted by the owner\n' >"$project/.github/security-ignore"
+committed "$project"
 notes=$(remove_kit_files "$project")
 expect_eq "only specs is noted" "$notes" "kept (decided requirements stay as documentation): specs/"
-expect_eq "files left" "$(cd "$project" && find . -type f | sort)" "./.github/workflows/release.yml
-./AGENTS.md
-./specs/ABC-1/acceptance-criteria.md
-./src/index.ts"
-expect_eq "AGENTS.md keeps the project part" "$(cat "$project/AGENTS.md")" "# shop
+expect_eq "files left" "$(git -C "$project" ls-files)" ".github/workflows/release.yml
+AGENTS.md
+specs/ABC-1/acceptance-criteria.md
+src/index.ts"
+expect_eq "AGENTS.md keeps the project part" "$(git -C "$project" show :AGENTS.md)" "# shop
 
 Setup: pnpm install"
+expect_eq "the working tree is left alone" "$(cd "$project" && find .agent/bin/ci-guard Makefile -type f)" ".agent/bin/ci-guard
+Makefile"
 
 project=$(new_project legacy)
 {
@@ -145,8 +155,9 @@ project=$(new_project legacy)
 printf 'deploy:\n\t./deploy.sh\n' >>"$project/Makefile"
 printf '{"hooks": {}}\n' >"$project/.claude/settings.json"
 printf '{"version": 1, "hooks": {}}\n' >"$project/.cursor/hooks.json"
+committed "$project"
 notes=$(remove_kit_files "$project")
-expect_eq "legacy section removed up to the next heading" "$(cat "$project/AGENTS.md")" "# shop
+expect_eq "legacy section removed up to the next heading" "$(git -C "$project" show :AGENTS.md)" "# shop
 
 ## Deploy
 
@@ -155,7 +166,45 @@ expect_eq "customised files are kept and noted" "$notes" "kept (differs from the
 kept (differs from the kit, remove the kit hooks by hand): .cursor/hooks.json
 edited (kit include removed; targets that called .agent/ scripts need a look): Makefile
 kept (decided requirements stay as documentation): specs/"
-if grep -F 'include .agent/common.mk' "$project/Makefile" >/dev/null; then fail "kit include left in Makefile"; else ok; fi
+expect_eq "the Makefile keeps its own targets" "$(git -C "$project" show :Makefile | tail -2)" "deploy:
+	./deploy.sh"
+if git -C "$project" show :Makefile | grep -F 'include .agent/common.mk' >/dev/null; then
+  fail "kit include left in Makefile"
+else
+  ok
+fi
+
+# The removal plan is prepared before the owner confirms it, from a clone of a repository the agent writes to:
+# symbolic links where it reads and writes, into a directory outside the checkout, must not be followed. The old code
+# read and rewrote AGENTS.md through its link, wrote AGENTS.md.tmp and Makefile.tmp through theirs, and deleted a
+# kit-identical settings.json behind a linked .claude.
+outside="$work/outside"
+mkdir -p "$outside/claude"
+{
+  printf '# outside\n\n'
+  cat "$template/AGENTS.section.md"
+} >"$outside/agents.md"
+cp "$template/.claude/settings.json" "$outside/claude/settings.json"
+printf 'sentinel\n' >"$outside/sentinel"
+project=$(new_project links)
+rm "$project/AGENTS.md"
+rm -r "$project/.claude"
+ln -s "$outside/agents.md" "$project/AGENTS.md"
+ln -s "$outside/claude" "$project/.claude"
+ln -s "$outside/sentinel" "$project/AGENTS.md.tmp"
+ln -s "$outside/sentinel" "$project/Makefile.tmp"
+printf 'deploy:\n\t./deploy.sh\n' >>"$project/Makefile"
+committed "$project"
+outside_files() { (cd "$outside" && find . -type f -exec shasum {} + | sort); }
+before=$(outside_files)
+notes=$(remove_kit_files "$project")
+expect_eq "nothing outside the checkout changes" "$(outside_files)" "$before"
+expect_eq "a linked AGENTS.md is noted, not followed" "$notes" "edited (kit include removed; targets that called .agent/ scripts need a look): Makefile
+kept (a symbolic link or other non-file, not followed; remove the kit section by hand): AGENTS.md
+kept (decided requirements stay as documentation): specs/"
+expect_eq "the links stay links" "$(git -C "$project" ls-files -s -- .claude AGENTS.md AGENTS.md.tmp Makefile.tmp | cut -d' ' -f1 | sort -u)" \
+  "120000"
+expect_eq "the kit files still go" "$(git -C "$project" ls-files -- .agent .github/workflows/agent-guard.yml)" ""
 
 echo "workflow_token_problems"
 # The owner's side runs the same check.py as ci-guard. Every spelling YAML gives a grant is refused, and so is
