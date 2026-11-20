@@ -30,6 +30,13 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- `guardrails on` switching a repository from status mode to review mode replaced the branch ruleset, dropping
+  merge-approval, before it created the review ruleset. If GitHub refused that second write, or the command
+  was stopped in between, the repository was left with no rule that required the owner's approval. The review
+  ruleset now goes in first, as merge-approval already did when a repository leaves review mode, so an
+  approval rule holds after every step. A stop now prints which rules are on and the command that finishes the
+  change. After a failed bootstrap merge, the retry line now repeats the flags the owner gave; before, it
+  named only the link.
 - The review board showed "Guard failed" for a guard run that a newer run had cancelled, while the CLI and the
   approval go by the newer run. It now reads the guard as the CLI does (the run named exactly "guard", a real
   failure first, else the newest run), counts a rerun check by its newest run, and lists a replaced run as
