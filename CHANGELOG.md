@@ -30,9 +30,6 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
-- The Python mutation gate failed on Python 3.9 and 3.10: `mutants-mutmut-run` checked the scratch copy's
-  mutmut configuration with `tomllib`, which those versions lack. It now reads it with the parser mutmut
-  itself uses on each version (the `toml` package, a mutmut dependency below 3.11).
 - The review board showed "Guard failed" for a guard run that a newer run had cancelled, while the CLI and the
   approval go by the newer run. It now reads the guard as the CLI does (the run named exactly "guard", a real
   failure first, else the newest run), counts a rerun check by its newest run, and lists a replaced run as
@@ -44,6 +41,26 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   sidebar and the overview. After a run, only the merge can still be listed as missing, and the checks line is
   gone. An own merge or a turn-on now shows that GitHub recorded no review. The approval's success text no
   longer promises a merge that only auto-merge makes, and the Reports row is now called "Without an approval".
+- write-guard, the template's Claude Code hook for file edits during a ticket, let some writes past it:
+  - it judged a path as written, so a link inside or outside the project could stand in for `.agent/` or a
+    locked file, and on macOS a name in another case (`.AGENT/`, `.Claude/`, `Percent.contract.ts`) reached
+    the guarded file;
+  - in the spec phase, a path the agent added to its own `locked-files` became editable, and new configuration
+    files (`GNUmakefile`, `uv.toml`, a test setup file) could be created;
+  - an error inside the hook, such as input it could not read, let the write through.
+  It now follows every link, compares guarded names without case, lets the spec phase edit only what the
+  ticket's `spec.lock` locks and create no configuration, manifests or build files, and blocks on any internal
+  error.
+- `is_human_owned` matches names without case, except Swift's `Tests.swift` suffixes, and covers more
+  configuration, manifests and lock files: `uv.toml`, Poetry, Pipenv, PDM, Hatch and Pixi files, `noxfile.py`,
+  Jest, Playwright, Cypress, Karma, AVA, ESLint, Prettier, Stylelint, Babel, webpack, Rollup and tsup configs,
+  Bun and Deno files, `turbo.json`, `nx.json`, `deny.toml`, `Package@swift-*.swift`, CocoaPods, Carthage and
+  Bundler files, `justfile`, Taskfile, lefthook, Nix flakes, `Containerfile` and Compose `.yaml` files.
+- `ci-guard` lists the paths a ticket's PR changes outside the ticket's `write-allow` under "PATHS OUTSIDE
+  specs/<TICKET>/write-allow". write-guard cannot see a write made through the shell; the owner now does.
+- The Python mutation gate failed on Python 3.9 and 3.10: `mutants-mutmut-run` checked the scratch copy's
+  mutmut configuration with `tomllib`, which those versions lack. It now reads it with the parser mutmut
+  itself uses on each version (the `toml` package, a mutmut dependency below 3.11).
 - In a Python project on Python 3.9 to 3.11, every `make test` failed before any test ran: the kit's pytest
   plugin used Python 3.12's `type` statement, and the language adapter tests only ran 3.12. It now loads on
   3.9 and newer. The smoke test parses the kit's Python files with their oldest supported grammar.
@@ -76,21 +93,6 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   ignored SIGTERM and let go of its output kept running after the timeout.
 - `docs/pilot.md` no longer says that the checks prove the code meets the locked spec. A green run records
   that the evaluated commit passed the locked tests and configured checks; it does not prove complete coverage.
-
-### Security
-
-- write-guard, the template's Claude Code hook for file edits during a ticket, let some writes past it:
-  - it judged a path as written, so a link inside or outside the project could stand in for `.agent/` or a locked file, and on macOS a name in another case (`.AGENT/`, `.Claude/`, `Percent.contract.ts`) reached the guarded file;
-  - in the spec phase, a path the agent added to its own `locked-files` became editable, and new configuration files (`GNUmakefile`, `uv.toml`, a test setup file) could be created;
-  - an error inside the hook, such as input it could not read, let the write through.
-  It now follows every link, compares guarded names without case, lets the spec phase edit only what the ticket's `spec.lock` locks and create no configuration, manifests or build files, and blocks on any internal error.
-- `is_human_owned` matches names without case, except Swift's `Tests.swift` suffixes, and covers more
-  configuration, manifests and lock files: `uv.toml`, Poetry, Pipenv, PDM, Hatch and Pixi files, `noxfile.py`,
-  Jest, Playwright, Cypress, Karma, AVA, ESLint, Prettier, Stylelint, Babel, webpack, Rollup and tsup configs,
-  Bun and Deno files, `turbo.json`, `nx.json`, `deny.toml`, `Package@swift-*.swift`, CocoaPods, Carthage and
-  Bundler files, `justfile`, Taskfile, lefthook, Nix flakes, `Containerfile` and Compose `.yaml` files.
-- `ci-guard` lists the paths a ticket's PR changes outside the ticket's `write-allow` under "PATHS OUTSIDE
-  specs/<TICKET>/write-allow". write-guard cannot see a write made through the shell; the owner now does.
 
 ## [0.6.0] - 2026-11-19
 
