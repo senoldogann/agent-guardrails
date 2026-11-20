@@ -134,15 +134,15 @@ changes_enforcement() {
 
 # Reads `GET repos/{repo}/actions/runs?head_sha=…&event=pull_request_target` on stdin and prints the
 # conclusion of the newest agent-guard.yml run of PR $1 into branch $2, or "missing". Newest is by creation time,
-# then by run ID: GitHub lists the newest run first, so of two runs created in the same second the older one would
-# otherwise come last. A pull_request_target run uses the workflow of its base branch, so only a run into the
-# default branch counts. GitHub lists the PR of a run only for PRs from the same repository; PRs from forks are
-# not supported.
+# then by run number (which counts the workflow's runs) and run ID: GitHub lists the newest run first, so of two
+# runs created in the same second the older one would otherwise come last. A pull_request_target run uses the
+# workflow of its base branch, so only a run into the default branch counts. GitHub lists the PR of a run only for
+# PRs from the same repository; PRs from forks are not supported.
 guard_conclusion() {
   jq -r --argjson pr "$1" --arg base "$2" '
     [.workflow_runs[] | select(.path == ".github/workflows/agent-guard.yml"
       and any(.pull_requests[]?; .number == $pr and .base.ref == $base))]
-    | sort_by(.created_at, .id) | last | .conclusion // "missing"'
+    | sort_by(.created_at, (.run_number // 0), .id) | last | .conclusion // "missing"'
 }
 
 # Dies in the agent's environment: the agent's sessions set a GitHub token or point gh at the agent App's
@@ -396,15 +396,16 @@ remove_agents_section() {
 # work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
 # review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
 # HEAD not approved yet; the note sums up the newest security and checks-<lang> run of each name, as GitHub counts a
-# required check after a rerun). The newest run is the one started last; runs started in the same second are told
-# apart by their job ID (the end of detailsUrl), which grows with every run. Any failed run named guard wins
+# required check after a rerun). The newest run is the one with the highest job ID (the end of detailsUrl, which
+# grows with every run and exists before the run starts; gh gives a queued run a start time in year 1), else the one
+# started last, as the app reads it. Any failed run named guard wins
 # over a later success, because a workflow added by the PR could report a run of that name (approve-head checks
 # the real guard run). Titles are written by the agent, so control characters are replaced before they reach a
 # terminal or the app.
 pr_states() {
   jq -c --argjson queued "$1" '
-    def newest: [(.startedAt // .createdAt // ""),
-      ((.detailsUrl // "") | (capture("/job/(?<id>[0-9]+)") // {id: "0"}).id | tonumber)];
+    def newest: [((.detailsUrl // "") | (capture("/actions/runs/[0-9]+/job/(?<id>[0-9]+)") // {id: "0"}).id | tonumber),
+      (.startedAt // .createdAt // "")];
     def latest(f): [.statusCheckRollup[]? | select(f)] | sort_by(newest) | last;
     def clean: gsub("[[:cntrl:]]"; "?");
     .[]
@@ -629,11 +630,12 @@ report_since() {
 # The final commit is the PR's head (headRefOid; for a merged PR, the commit it merged), wherever the commit list
 # puts it. An approval in the times and re-approvals is an approving review (also one a later push dismissed) or a
 # merge-approval success, on any commit. Both modes count both kinds, since the report does not know which mode a
-# merge happened in. A review counts only from someone GitHub lets approve: the repository's owner, a member of its
-# organization or a collaborator (authorAssociation). A reviewer's latest approving, change-requesting or dismissed
-# review is their standing word, as on GitHub, where comments change nothing. Of runs completed in the same second,
-# the one with the higher ID is the newer. Titles are written by the agent, so control characters are replaced.
-# Arguments: window start (timestamp), agent App slug ("" when none is registered).
+# merge happened in. A review counts only from a reviewer with write access (latestOpinionatedReviews with
+# writersOnly, as GitHub answers when the report runs) and, for a merged PR, only when submitted before the merge:
+# GitHub keeps taking reviews afterwards. A reviewer's latest approving, change-requesting or dismissed review is
+# their standing word, as on GitHub, where comments change nothing. A rule that also asks for a code owner is not
+# checked here. Of two runs of a check, the one with the higher ID is the newer. Titles are written by the agent, so
+# control characters are replaced. Arguments: window start (timestamp), agent App slug ("" when none is registered).
 pr_report() {
   jq -c --arg since "$1" --arg agent "$2" "$report_jq_defs"'
     def clean: gsub("[[:cntrl:]]"; "?");
@@ -641,31 +643,38 @@ pr_report() {
       and (.conclusion | IN("SUCCESS", "CANCELLED", "SKIPPED", "NEUTRAL") | not);
     def runs: [.commits.nodes[]? | .commit as $c | $c.statusCheckRollup.contexts.nodes[]? | . + {oid: $c.oid}];
     def final_runs: .headRefOid as $head | [runs[] | select(.oid == $head)];
-    def can_approve: .authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR");
+    # Before the merge, for a merged PR. Argument: a timestamp.
+    def before_merge($at): .mergedAt == null or ($at | epoch) <= (.mergedAt | epoch);
+    # The reviews that count: from a reviewer with write access, submitted before the merge.
+    def counted_reviews: [.latestOpinionatedReviews.nodes[]? | .author.login // empty] as $writers
+      | . as $pr
+      | [.timelineItems.nodes[]? | select(.__typename == "PullRequestReview")
+        | select((.author.login // "") as $login | any($writers[]; . == $login))
+        | select(.submittedAt as $at | $pr | before_merge($at))];
+    def approval_statuses: . as $pr
+      | [runs[] | select(.__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS")
+        | select(.createdAt as $at | $pr | before_merge($at))];
     def approvals:
       [.timelineItems.nodes[]? | select(.__typename == "ReviewDismissedEvent" and .previousReviewState == "APPROVED")
         | .review.id] as $dismissed
-      | [(.timelineItems.nodes[]? | select(.__typename == "PullRequestReview" and can_approve
-            and (.state == "APPROVED" or (.state == "DISMISSED" and (.id as $id | $dismissed | index($id) != null))))
+      | [(counted_reviews[] | select(.state == "APPROVED" or (.state == "DISMISSED" and (.id as $id | $dismissed | index($id) != null)))
           | {at: (.submittedAt | epoch), oid: .commit.oid}),
-         (runs[] | select(.__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS")
-          | {at: (.createdAt | epoch), oid})]
+         (approval_statuses[] | {at: (.createdAt | epoch), oid})]
       | sort_by(.at);
     def ready_at($until): ([.timelineItems.nodes[]? | select(.__typename == "ReadyForReviewEvent") | .createdAt | epoch
       | select(. <= $until)] | max) // (.createdAt | epoch);
     def green_head: final_runs as $runs
       | ([$runs[] | select(.__typename == "CheckRun" and (.name == "guard" or (.name | startswith("checks-"))))]
-         | group_by(.name) | map(sort_by(.completedAt // "", .databaseId // 0) | last)) as $latest
+         | group_by(.name) | map(sort_by(.databaseId // 0, .completedAt // "") | last)) as $latest
       | any($latest[]; .name == "guard") and all($latest[]; .conclusion == "SUCCESS");
-    # The standing word of each reviewer: their latest approving, change-requesting or dismissed review.
-    def latest_reviews: [.timelineItems.nodes[]? | select(.__typename == "PullRequestReview" and can_approve
-        and (.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED")))]
+    # The standing word of each reviewer at the merge: their latest approving, change-requesting or dismissed review.
+    def latest_reviews: [counted_reviews[] | select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))]
       | group_by(.author.login // "") | map(sort_by(.submittedAt) | last);
     # A review approves the commit it was submitted on: one on an earlier commit says nothing about the final one. A
     # change request stands until its reviewer approves or it is dismissed, and the review rule waits for it.
     def standing_approval: .headRefOid as $head
       | (latest_reviews | any(.[]; .state == "APPROVED" and .commit.oid == $head) and all(.[]; .state != "CHANGES_REQUESTED"))
-        or any(final_runs[]; .__typename == "StatusContext" and .context == "merge-approval" and .state == "SUCCESS");
+        or any(approval_statuses[]; .oid == $head);
     def author_kind: (.author.login // "" | ascii_downcase | sub("\\[bot\\]$"; "")) as $login
       | if .author.__typename == "Bot" and $agent != "" and $login == ($agent | ascii_downcase) then "agent"
         elif .author.__typename == "Bot" then "otherBots" else "people" end;

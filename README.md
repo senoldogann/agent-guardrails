@@ -140,8 +140,8 @@ merged by the agent App and by people, the median and 90th percentile time from 
 to merge, PRs that needed a new approval after a push, PRs with a failing guard or checks run and how many merged
 after a later green run, merges without an approval on their final commit (an admin bypass, a merge before the
 guardrails were on, an approval of an earlier commit only, or a change request still standing), and every ruleset
-change with its time, author and what changed. A review counts only from the repository's owner, members and
-collaborators, by each reviewer's latest word. It only reads GitHub.
+change with its time, author and what changed. A review counts only from a reviewer with write access, by their
+latest word before the merge; a rule that also asks for a code owner is not checked. It only reads GitHub.
 
 ### Updating a project's kit files
 

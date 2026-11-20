@@ -793,12 +793,13 @@ report_query='query($endCursor: String) {
         number title url createdAt closedAt mergedAt headRefOid
         author { __typename login }
         mergedBy { login }
+        latestOpinionatedReviews(first: 100, writersOnly: true) { nodes { author { login } } }
         timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, REVIEW_DISMISSED_EVENT]) {
           pageInfo { hasNextPage }
           nodes {
             __typename
             ... on ReadyForReviewEvent { createdAt }
-            ... on PullRequestReview { id state submittedAt commit { oid } author { login } authorAssociation }
+            ... on PullRequestReview { id state submittedAt commit { oid } author { login } }
             ... on ReviewDismissedEvent { previousReviewState review { id } }
           }
         }
