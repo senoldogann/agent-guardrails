@@ -70,8 +70,9 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   and whatever they said afterwards. It now counts only reviews from reviewers with write access, submitted
   before the merge, takes each reviewer's latest approving, change-requesting or dismissed review as their word,
   and lists a merge as without an approval while a change request still stood; a merge-approval posted after
-  the merge no longer counts either. The times to approve and the re-approvals count the same reviews. A rule
-  that also asks for a code owner is not checked.
+  the merge no longer counts either. The times to approve and the re-approvals count the same reviews. The
+  review ruleset's code-owner and last-pusher rules are not checked: a listed merge certainly lacked an
+  approval, an unlisted one may still have needed a bypass.
 - `guardrails report` counted any review still in the approved state as an approval of a merged PR, whatever
   commit it approved. A PR whose only approval was of an earlier commit (in status mode, where pushes dismiss
   no review, or after a push that did not dismiss it) did not appear under merges without an approval on the

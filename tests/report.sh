@@ -62,7 +62,8 @@ admin_merges_of() {
       | map({author: {login: .}})},
     timelineItems: {pageInfo: {hasNextPage: false}, nodes: [$reviews | to_entries[] | {__typename: "PullRequestReview",
       id: "R\(.key)", state: .value.state,
-      submittedAt: (.value.at // "2026-11-02T10:\(.key | tostring | if length == 1 then "0" + . else . end):00Z"),
+      submittedAt: (if .value.pending then null
+        else .value.at // "2026-11-02T10:\(.key | tostring | if length == 1 then "0" + . else . end):00Z" end),
       commit: {oid: .value.oid}, author: {login: (.value.author // "owner")}}]},
     commits: {pageInfo: {hasPreviousPage: false}, nodes: [$commits[] | {commit: {oid: .oid,
       statusCheckRollup: {contexts: {nodes: [.approvals[]? | (if type == "string" then {state: .} else . end)
@@ -102,6 +103,8 @@ expect_eq "a change request standing at the merge counts, though its reviewer ap
     {"state": "APPROVED", "oid": "h2"}, {"state": "APPROVED", "oid": "h2", "author": "teammate", "at": "2026-11-02T13:00:00Z"}]')" '[30]'
 expect_eq "a merge-approval posted after the merge is no approval of it" \
   "$(admin_merges_of '[{"oid": "h1"}, {"oid": "h2", "approvals": [{"state": "SUCCESS", "at": "2026-11-02T13:00:00Z"}]}]' '[]')" '[30]'
+expect_eq "a pending review, which has no submission time, is left out" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2"}, {"state": "PENDING", "oid": "h2", "pending": true}]')" '[]'
 expect_eq "a later change request by the same reviewer withdraws their approval" \
   "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2"}, {"state": "CHANGES_REQUESTED", "oid": "h2"}]')" '[30]'
 expect_eq "a later comment by the same reviewer leaves their approval standing" \

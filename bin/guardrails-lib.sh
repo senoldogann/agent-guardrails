@@ -630,12 +630,15 @@ report_since() {
 # The final commit is the PR's head (headRefOid; for a merged PR, the commit it merged), wherever the commit list
 # puts it. An approval in the times and re-approvals is an approving review (also one a later push dismissed) or a
 # merge-approval success, on any commit. Both modes count both kinds, since the report does not know which mode a
-# merge happened in. A review counts only from a reviewer with write access (latestOpinionatedReviews with
-# writersOnly, as GitHub answers when the report runs) and, for a merged PR, only when submitted before the merge:
-# GitHub keeps taking reviews afterwards. A reviewer's latest approving, change-requesting or dismissed review is
-# their standing word, as on GitHub, where comments change nothing. A rule that also asks for a code owner is not
-# checked here. Of two runs of a check, the one with the higher ID is the newer. Titles are written by the agent, so
-# control characters are replaced. Arguments: window start (timestamp), agent App slug ("" when none is registered).
+# merge happened in. A review counts only when submitted (a pending one has no time), from a reviewer with write
+# access (latestOpinionatedReviews with writersOnly, as GitHub answers when the report runs, not as it was at the
+# merge) and, for a merged PR, before the merge: GitHub keeps taking reviews afterwards. A reviewer's latest
+# approving, change-requesting or dismissed review is their standing word, as on GitHub, where comments change
+# nothing. The kit's review ruleset asks for more than this list checks, a code owner's approval and one by someone
+# other than the last pusher, so a merge listed here certainly lacked an approval, while one not listed may still
+# have needed a bypass. Of two runs of a check, the one with the higher ID is the newer. Titles are written by the
+# agent, so control characters are replaced. Arguments: window start (timestamp), agent App slug ("" when none is
+# registered).
 pr_report() {
   jq -c --arg since "$1" --arg agent "$2" "$report_jq_defs"'
     def clean: gsub("[[:cntrl:]]"; "?");
@@ -648,7 +651,7 @@ pr_report() {
     # The reviews that count: from a reviewer with write access, submitted before the merge.
     def counted_reviews: [.latestOpinionatedReviews.nodes[]? | .author.login // empty] as $writers
       | . as $pr
-      | [.timelineItems.nodes[]? | select(.__typename == "PullRequestReview")
+      | [.timelineItems.nodes[]? | select(.__typename == "PullRequestReview" and .submittedAt != null)
         | select((.author.login // "") as $login | any($writers[]; . == $login))
         | select(.submittedAt as $at | $pr | before_merge($at))];
     def approval_statuses: . as $pr
