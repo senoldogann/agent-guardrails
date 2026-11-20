@@ -176,7 +176,7 @@ struct ReviewView: View {
 
                 Rectangle().fill(Palette.hairline).frame(height: 1)
 
-                checksSummary
+                checksLine(model)
 
                 boardAction(model)
 
@@ -220,20 +220,24 @@ struct ReviewView: View {
         return pullRequestChain(plan: plan, specTicket: ticket, checks: checksReading, progress: model.progress)
     }
 
-    /// What the checks on this commit add up to, in one line: passed only when every run passed.
-    private var checksSummary: some View {
-        let reading = checksReading
-        let icon: Octicon =
-            switch reading.tone {
-            case .problem: .alert
-            case .waiting: .clock
-            case .passed: .checkCircle
-            case .incomplete: .skip
-            }
-        return OcticonLabel(reading.summary, icon: icon)
-            .font(.system(size: 12))
-            .foregroundStyle(reading.tone == .problem ? Palette.danger : Palette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
+    /// What the checks on this commit add up to for this action, in one line (`summarizeChecks`). Gone after a success:
+    /// the board does not reload the checks by itself, and the result card says what happened.
+    @ViewBuilder
+    private func checksLine(_ model: ActionModel) -> some View {
+        if let plan = model.plan, model.progress != .succeeded {
+            let summary = summarizeChecks(checksReading, for: plan)
+            let icon: Octicon =
+                switch summary.tone {
+                case .problem: .alert
+                case .waiting: .clock
+                case .passed: .checkCircle
+                case .incomplete: .skip
+                }
+            OcticonLabel(summary.text, icon: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(summary.tone == .problem ? Palette.danger : Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// What this approval means for this PR: a moved head, the owner's own push, a kit that already matches.
@@ -360,7 +364,8 @@ struct ReviewView: View {
             "The PR is in the merge queue at exactly the commit you confirmed; it merges when its group passes the checks."
         case .approve where model.plan?.pullRequest?.isOwnMerge == true:
             "The PR is merged at exactly the commit you confirmed."
-        case .approve: "The PR merges by itself once its checks pass. A new push needs a new approval."
+        case .approve:
+            "Approved at exactly the commit you confirmed. With auto-merge on it merges once its checks pass; otherwise merge it on GitHub. A new push needs a new approval."
         case .turnOn, .turnOnRepo: "Ask your agent for /ticket-spec <ID> in this repository."
         case .turnOnMergeQueue: "Approved PRs now merge through the merge queue, which checks them together with the PRs ahead of them."
         case .turnOff: "Pull the default branch in your local clones so their .agent/ disappears too."

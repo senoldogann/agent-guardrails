@@ -158,7 +158,8 @@ struct WorkspacePageView: View {
         case .reports:
             ReportsView(reports: projects.reports)
         case .repository(let repo):
-            if let project = projects.project(named: repo) {
+            // As the app shows it: an `on` repository with an inbox alarm reads as an alarm (shownProject).
+            if let project = projects.project(named: repo).map({ shownProject($0, inbox: model.snapshot) }) {
                 ProjectDetail(project: project, model: model, projects: projects).id(project.repo)
             } else {
                 MissingPage(text: projects.isLoading ? "Loading \(repo)…" : "\(repo) is not among your repositories.")
@@ -230,7 +231,7 @@ struct WorkspaceStatusBar: View {
 
     /// Counted as the overview counts them: enforced repositories, alarms included.
     private var enforcedText: String {
-        let groups = groupProjects(projects.projects, matching: "")
+        let groups = groupProjects(shownProjects(projects.projects, inbox: model.snapshot), matching: "")
         let count = groups.needsYou.count + groups.on.count
         return count == 1 ? "1 enforced repository" : "\(count) enforced repositories"
     }

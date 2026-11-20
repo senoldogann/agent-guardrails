@@ -18,7 +18,7 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 - A repository page opens with the same chain the review board draws, one level up: kit, ruleset, approval, and
   the merge queue where the repository has one.
 - Reports start with the window's totals — merges, failed runs, re-approvals, merges without an approval — and
-  each merge made by an admin bypass opens its pull request.
+  each merge without an approval on its final commit opens its pull request.
 - When sensitive files change, the review's primary button is now "Open changes on GitHub" until the diff is
   opened, then Approve. Before, Approve stayed disabled with only a small gray hint. Approve is also disabled
   once GitHub reports a newer commit than the one under review.
@@ -30,6 +30,17 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- The review board showed "Guard failed" for a guard run that a newer run had cancelled, while the CLI and the
+  approval go by the newer run. It now reads the guard as the CLI does (the run named exactly "guard", a real
+  failure first, else the newest run), counts a rerun check by its newest run, and lists a replaced run as
+  replaced; the pull request window no longer counts such a cancelled run as failing, and the inbox's checks
+  note counts a rerun by its newest run too. A bootstrap PR's chain no longer waits for a guard that cannot
+  run before the turn-on, and a failing check there is shown as a reason to look before turning on, not as a
+  stop. An enforced repository with an inbox alarm about it (such as a disabled review ruleset) is shown as an
+  alarm everywhere: its page, with Restore and without the "status mode" card or Switch to review mode, the
+  sidebar and the overview. After a run, only the merge can still be listed as missing, and the checks line is
+  gone. An own merge or a turn-on now shows that GitHub recorded no review. The approval's success text no
+  longer promises a merge that only auto-merge makes, and the Reports row is now called "Without an approval".
 - In a Python project on Python 3.9 to 3.11, every `make test` failed before any test ran: the kit's pytest
   plugin used Python 3.12's `type` statement, and the language adapter tests only ran 3.12. It now loads on
   3.9 and newer, so Python 3.11 projects pass the whole gate; on 3.9 and 3.10 the mutation gate still needs

@@ -393,7 +393,8 @@ remove_agents_section() {
 # its group passes; nothing waits for the owner), answer (the agent asked a question: label needs-decision), draft (the agent's
 # work in progress), approved (HEAD approved by merge-approval in status mode, or by the required review in
 # review mode, where GitHub dismisses the review when a push changes the PR), wait (guard running), blocked (guard failed), approve (guard passed,
-# HEAD not approved yet; the note sums up the security and checks-<lang> runs). Any failed run named guard wins
+# HEAD not approved yet; the note sums up the newest security and checks-<lang> run of each name, as GitHub counts a
+# required check after a rerun). Any failed run named guard wins
 # over a later success, because a workflow added by the PR could report a run of that name (approve-head checks
 # the real guard run). Titles are written by the agent, so control characters are replaced before they reach a
 # terminal or the app.
@@ -408,7 +409,8 @@ pr_states() {
            and (.conclusion | IN("SUCCESS", "CANCELLED", "SKIPPED", "NEUTRAL") | not))
        then {status: "COMPLETED", conclusion: "FAILURE"} else $latest_guard end) as $guard
     | (latest(.__typename == "StatusContext" and .context == "merge-approval")) as $approval
-    | ([.statusCheckRollup[]? | select(.__typename == "CheckRun" and (.name == "security" or (.name | startswith("checks-"))))]) as $checks
+    | ([.statusCheckRollup[]? | select(.__typename == "CheckRun" and (.name == "security" or (.name | startswith("checks-"))))]
+       | group_by(.name) | map(sort_by(.startedAt // .createdAt // "") | last)) as $checks
     | (if ($checks | length) == 0 then "checks not started"
        elif any($checks[]; .status != "COMPLETED") then "checks running"
        elif all($checks[]; .conclusion == "SUCCESS") then "checks green"

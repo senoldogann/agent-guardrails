@@ -67,6 +67,11 @@ public struct InboxSnapshot: Sendable, Equatable {
 
     /// An alarm without a repository concerns the kit install itself; on, off and approve refuse until it is fixed.
     public var hasKitInstallAlarm: Bool { alarms.contains { $0.repo.isEmpty } }
+
+    /// The alarms about one repository (owner/repo, compared without case, as GitHub compares names).
+    public func alarms(of repo: String) -> [InboxItem] {
+        alarms.filter { !$0.repo.isEmpty && $0.repo.caseInsensitiveCompare(repo) == .orderedSame }
+    }
     public var isQuiet: Bool { alarms.isEmpty && approvals.isEmpty && turnOns.isEmpty && answers.isEmpty }
 }
 

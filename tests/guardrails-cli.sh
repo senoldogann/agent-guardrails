@@ -241,6 +241,17 @@ wait${tab}u6${tab}feat(A-6): new${tab}guard is running${tab}
 approve${tab}u7${tab}feat(A-7): revoked${tab}checks green${tab}
 approve${tab}u8${tab}feat(A-8): leak${tab}checks failing${tab}"
 
+# A check that ran again counts by its newest run, as GitHub counts a required check.
+rerun='[{"url":"u9","title":"feat(A-9): rerun","isDraft":false,"labels":[],"statusCheckRollup":[
+  {"__typename":"CheckRun","name":"guard","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"},
+  {"__typename":"CheckRun","name":"checks-node","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-02T00:00:00Z"},
+  {"__typename":"CheckRun","name":"checks-node","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:05:00Z"},
+  {"__typename":"CheckRun","name":"security","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z"}]}]'
+expect_eq "a check that passed on its rerun is green" "$(pr_states "[]" <<<"$rerun" | jq -r .note)" "checks green"
+expect_eq "a check that failed on its rerun is failing" \
+  "$(jq -c '.[0].statusCheckRollup[1].conclusion = "SUCCESS" | .[0].statusCheckRollup[2].conclusion = "FAILURE"' <<<"$rerun" |
+    pr_states "[]" | jq -r .note)" "checks failing"
+
 echo "pr_states"
 expect_eq "every open PR has a kind" "$(pr_states "[]" <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
   "u1 answer u2 draft u3 approve u4 approved u5 blocked u6 wait u7 approve u8 approve "

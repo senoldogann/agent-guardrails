@@ -50,11 +50,33 @@ public struct Chain: Sendable, Equatable {
 
 // MARK: repository
 
-/// What makes one repository's merges guarded, from what `guardrails projects --json` establishes about it. Only an
-/// enforced repository (`on`: listed on this Mac with its branch ruleset active) shows proved links. An alarm proves
-/// nothing either way: it can mean the ruleset is disabled or missing, that GitHub cannot read the repository, or
-/// that this Mac's list lost it. So the ruleset link is broken and the rest unknown until the alarm is resolved
-/// (Restore, or what the alarm says). A repository a teammate enforces from another Mac is unknown here, not off.
+/// The project as the app shows it, everywhere it lists or draws it. `on` only says the repository is listed here and
+/// its branch ruleset is active; the inbox reads every kit ruleset (`ruleset_problems`), so an `on` repository with an
+/// inbox alarm about it, such as a disabled review ruleset, is shown as an alarm, with the alarm's words as its note.
+public func shownProject(_ project: Project, inbox: InboxSnapshot) -> Project {
+    let alarms = inbox.alarms(of: project.repo)
+    guard project.state == .on, !alarms.isEmpty else { return project }
+    let words = alarms.map { alarm in
+        let note = alarm.noteBesideRestore
+        let prefix = "\(alarm.repo): "
+        return note.hasPrefix(prefix) ? String(note.dropFirst(prefix.count)) : note
+    }
+    return Project(
+        repo: project.repo, state: .alarm, note: words.joined(separator: " "), private: project.private,
+        fork: project.fork, branch: project.branch, pushed: project.pushed, openPRs: project.openPRs,
+        setupURL: project.setupURL, setupTitle: project.setupTitle, mode: project.mode, agentApp: project.agentApp,
+        mergeQueue: project.mergeQueue, organization: project.organization)
+}
+
+public func shownProjects(_ projects: [Project], inbox: InboxSnapshot) -> [Project] {
+    projects.map { shownProject($0, inbox: inbox) }
+}
+
+/// What makes one repository's merges guarded, from what the app shows about it (`shownProject`). Only an enforced
+/// repository without an alarm shows proved links. An alarm proves nothing either way: it can mean a ruleset is
+/// disabled, missing or changed, that GitHub cannot read the repository, or that this Mac's list lost it, so the
+/// ruleset link is broken and the rest unknown until the alarm is resolved (Restore, or what the alarm says). A
+/// repository a teammate enforces from another Mac is unknown here, not off.
 public func repositoryChain(_ project: Project) -> Chain {
     switch project.state {
     case .on:
@@ -143,7 +165,7 @@ public enum ActionProgress: Sendable, Equatable {
 
 /// The tone of the sentence that sums up the checks.
 public enum ChecksTone: Sendable, Equatable {
-    /// A run failed: the approval should wait.
+    /// A run failed: the approval should wait, or the owner should look before turning on.
     case problem
     /// Results are still coming in, or could not be read.
     case waiting
@@ -153,43 +175,79 @@ public enum ChecksTone: Sendable, Equatable {
     case incomplete
 }
 
-/// What the check runs on the commit under review add up to, read once for the rail and its summary. The guard is the
-/// run named guard; every other run is a check. A neutral or skipped run is neither a pass nor a failure, so "passed"
-/// is said only when every run passed.
+/// The check runs on the commit under review, for the rail and its summary, read as the CLI's inbox reads them
+/// (`pr_states`). The guard is decided by its runs named exactly "guard": any real failure (cancelled, skipped and
+/// neutral are not) wins, because a workflow the PR adds could report a run of that name; otherwise the newest run
+/// decides, so a run that a newer one cancelled (the guard's concurrency group does that) is not a failure, and only a
+/// newest run that succeeded passes the guard. Every other check is counted by its newest run per name, as GitHub does
+/// for a required check after a rerun. One difference from the CLI, which orders runs by start time: here "newest" is
+/// the highest run id, since GitHub numbers runs as it creates them, while start times have whole seconds and a queued
+/// run has none. A neutral or skipped check is neither a pass nor a failure, so "passed" is said only when every
+/// counted run passed.
 public struct ChecksReading: Sendable, Equatable {
+    public enum Source: Sendable, Equatable {
+        case loading
+        case unavailable
+        case loaded
+    }
+
+    public let source: Source
+    /// The run that decides the guard; nil when none was reported or the runs are not loaded.
+    public let guardRun: CheckRun?
+    /// Every other check, the newest run of each name, ordered by name.
+    public let checks: [CheckRun]
+    /// Runs a newer run of the same name replaced: listed, but not counted.
+    public let replacedIDs: Set<Int>
     public let guardLink: ChainLink
     public let checksLink: ChainLink
-    public let summary: String
-    public let tone: ChecksTone
 
     public init(_ evidence: ChecksEvidence) {
         let runs: [CheckRun]
         switch evidence {
         case .loading:
+            source = .loading
+            guardRun = nil
+            checks = []
+            replacedIDs = []
             guardLink = ChainLink(kind: .guardRun, title: "Guard", detail: "loading", state: .unknown)
             checksLink = ChainLink(kind: .checks, title: "Checks", detail: "loading", state: .unknown)
-            summary = "Loading the checks from GitHub…"
-            tone = .waiting
             return
         case .unavailable:
+            source = .unavailable
+            guardRun = nil
+            checks = []
+            replacedIDs = []
             guardLink = ChainLink(kind: .guardRun, title: "Guard", detail: "not read", state: .unknown)
             checksLink = ChainLink(kind: .checks, title: "Checks", detail: "not read", state: .unknown)
-            summary = "The checks could not be read from GitHub; load them again under Checks."
-            tone = .waiting
             return
         case .loaded(let loaded):
+            source = .loaded
             runs = loaded
         }
 
-        let guardRun = runs.first { $0.name.lowercased().hasPrefix("guard") }
+        let guardRuns = runs.filter { $0.name == "guard" }
+        let decisive =
+            guardRuns.first { $0.status == "completed" && !Self.notFailures.contains($0.conclusion ?? "") }
+            ?? guardRuns.max { $0.id < $1.id }
+        guardRun = decisive
         guardLink = ChainLink(
-            kind: .guardRun, title: "Guard",
-            detail: guardRun.map { run in
-                run.name.lowercased() == "guard" ? Self.word(run) : "\(run.name) · \(Self.word(run))"
-            } ?? "not run yet",
-            state: guardRun.map(Self.state(of:)) ?? .pending)
+            kind: .guardRun, title: "Guard", detail: decisive.map(Self.word) ?? "not run yet",
+            state: decisive.map { $0.outcome == .passed ? .done : $0.outcome == .running ? .now : .failed } ?? .pending)
 
-        let checks = runs.filter { $0.id != guardRun?.id }
+        var newest: [String: CheckRun] = [:]
+        for run in runs {
+            if let kept = newest[run.name], kept.id > run.id { continue }
+            newest[run.name] = run
+        }
+        checks = newest.values.filter { $0.name != "guard" }.sorted { $0.name < $1.name }
+        // A guard run that failed for real stays a failure, whatever ran after it: any of them decides the guard.
+        replacedIDs = Set(
+            runs.filter { run in
+                newest[run.name]?.id != run.id
+                    && !(run.name == "guard" && run.status == "completed"
+                        && !Self.notFailures.contains(run.conclusion ?? ""))
+            }.map(\.id))
+
         let failed = checks.filter { $0.outcome == .failed }.count
         let running = checks.filter { $0.outcome == .running }.count
         let passed = checks.filter { $0.outcome == .passed }.count
@@ -207,32 +265,15 @@ public struct ChecksReading: Sendable, Equatable {
         } else {
             checksLink = ChainLink(kind: .checks, title: "Checks", detail: Self.tally(checks), state: .done)
         }
-
-        if let broken = [guardLink, checksLink].first(where: { $0.state == .failed }) {
-            summary = "\(broken.title) \(broken.detail): fix it before approving."
-            tone = .problem
-        } else if [guardLink, checksLink].contains(where: { $0.state == .now }) {
-            summary = "Checks are still running on this commit."
-            tone = .waiting
-        } else if runs.isEmpty {
-            summary = "No checks reported for this commit yet."
-            tone = .waiting
-        } else if guardRun == nil {
-            summary = "The guard has not reported on this commit yet."
-            tone = .waiting
-        } else if checks.isEmpty {
-            summary = "Only the guard has reported on this commit so far."
-            tone = .waiting
-        } else if runs.allSatisfy({ $0.outcome == .passed }) {
-            summary = "Every check reported on this commit passed."
-            tone = .passed
-        } else {
-            summary = "No check failed on this commit, but not all passed: \(Self.tally(runs))."
-            tone = .incomplete
-        }
     }
 
-    /// "3 passed, 1 skipped, 1 neutral": the finished runs by result, in that order, leaving out the zeros.
+    /// The guard run and the counted checks.
+    public var counted: [CheckRun] { (guardRun.map { [$0] } ?? []) + checks }
+
+    /// Conclusions of a completed guard run that are no failure of the guard itself.
+    static let notFailures: Set<String> = ["success", "cancelled", "skipped", "neutral"]
+
+    /// "3 passed, 1 skipped, 1 neutral": the finished runs that did not fail, by result, leaving out the zeros.
     static func tally(_ runs: [CheckRun]) -> String {
         let words = runs.filter { $0.outcome != .running && $0.outcome != .failed }.map(word)
         return ["passed", "skipped", "neutral"]
@@ -242,81 +283,154 @@ public struct ChecksReading: Sendable, Equatable {
             .joined(separator: ", ")
     }
 
-    static func state(of run: CheckRun) -> ChainLink.State {
-        switch run.outcome {
-        case .passed: .done
-        case .failed: .failed
-        case .running: .now
-        case .skipped: .pending
-        }
-    }
-
-    /// The run's result in a word: a neutral run is not a skipped one.
+    /// The run's result in a word: a neutral run is not a skipped one, and a cancelled run did not fail a check.
     public static func word(_ run: CheckRun) -> String {
         switch run.outcome {
         case .passed: "passed"
-        case .failed: "failed"
+        case .failed: run.conclusion == "cancelled" ? "cancelled" : "failed"
         case .running: "running"
         case .skipped: run.conclusion == "neutral" ? "neutral" : "skipped"
         }
     }
 }
 
+/// The sentence under the commit and its tone.
+public struct ChecksSentence: Sendable, Equatable {
+    public let text: String
+    public let tone: ChecksTone
+}
+
+/// What the checks add up to for the action at hand. An approval waits for the guard and every check. Turning a
+/// repository on merges its bootstrap PR before any ruleset exists, and the guard cannot run on that PR yet (it runs
+/// from the default branch, which does not have it), so there the checks inform the owner and a failure is a reason
+/// to look first, not a stop. Arguments: the checks, the plan (`approve` or `turnOn`).
+public func summarizeChecks(_ reading: ChecksReading, for plan: Plan) -> ChecksSentence {
+    switch reading.source {
+    case .loading:
+        return ChecksSentence(text: "Loading the checks from GitHub…", tone: .waiting)
+    case .unavailable:
+        return ChecksSentence(
+            text: "The checks could not be read from GitHub; load them again under Checks.", tone: .waiting)
+    case .loaded:
+        break
+    }
+    let gates = [reading.guardLink, reading.checksLink]
+    let runs = reading.counted
+    if case .turnOn = plan {
+        if let broken = gates.first(where: { $0.state == .failed }) {
+            return ChecksSentence(
+                text: "\(broken.title) \(broken.detail): turning on merges this PR anyway, so look at it first.",
+                tone: .problem)
+        }
+        if gates.contains(where: { $0.state == .now }) {
+            return ChecksSentence(text: "Checks are still running on this commit.", tone: .waiting)
+        }
+        if reading.checks.isEmpty {
+            return ChecksSentence(text: "No checks reported for this commit yet.", tone: .waiting)
+        }
+    } else {
+        if let broken = gates.first(where: { $0.state == .failed }) {
+            return ChecksSentence(text: "\(broken.title) \(broken.detail): fix it before approving.", tone: .problem)
+        }
+        if gates.contains(where: { $0.state == .now }) {
+            return ChecksSentence(text: "Checks are still running on this commit.", tone: .waiting)
+        }
+        if runs.isEmpty {
+            return ChecksSentence(text: "No checks reported for this commit yet.", tone: .waiting)
+        }
+        if reading.guardRun == nil {
+            return ChecksSentence(text: "The guard has not reported on this commit yet.", tone: .waiting)
+        }
+        if reading.checks.isEmpty {
+            return ChecksSentence(text: "Only the guard has reported on this commit so far.", tone: .waiting)
+        }
+    }
+    if runs.allSatisfy({ $0.outcome == .passed }) {
+        return ChecksSentence(text: "Every check reported on this commit passed.", tone: .passed)
+    }
+    return ChecksSentence(
+        text: "No check failed on this commit, but not all passed: \(ChecksReading.tally(runs)).", tone: .incomplete)
+}
+
 /// The chain a pull request passes, from the CLI's plan, GitHub's check runs and where the owner's action stands:
-/// spec (when the PR carries one), guard, checks, approval, merge. The approval and the merge follow the action: `on`
-/// merges the bootstrap PR right after the confirmation; in review mode the owner's own PR merges at once, or goes into
-/// the merge queue; any other approval leaves the merge to GitHub's auto-merge or a person. After a failed run the app
-/// cannot tell what the CLI did before it stopped, so neither link claims anything. Arguments: the plan (`approve` or
+/// spec (when the PR carries one), guard, checks, approval, merge. A bootstrap PR (`turnOn`) has no guard to wait for:
+/// the guard runs from the default branch, which does not have it yet, so its link is shown only when a guard run
+/// reported, and its checks inform rather than block. The approval and the merge follow the action: `on` merges the
+/// bootstrap PR right after the confirmation; in review mode the owner's own PR merges at once, or goes into the merge
+/// queue, without any GitHub review; any other approval leaves the merge to GitHub's auto-merge or a person. While the
+/// run works, and after it failed, nothing is said to be missing: the run's own output says what happened, and the app
+/// cannot tell what a failed run did before it stopped, so neither link claims anything then. After a success only the
+/// merge can still be missing, whatever the (possibly older) check results show. Arguments: the plan (`approve` or
 /// `turnOn`; any other plan has no chain), the spec's ticket when the PR carries a loaded spec, the checks, and the
 /// action's progress.
 public func pullRequestChain(plan: Plan, specTicket: String?, checks: ChecksReading, progress: ActionProgress) -> Chain {
     guard let pr = plan.pullRequest else { return Chain(links: [], missing: nil) }
-    let mergesNow: Bool
-    if case .turnOn = plan { mergesNow = true } else { mergesNow = pr.isOwnMerge && !pr.isOwnQueueEntry }
-    let queues: Bool
-    if case .approve = plan { queues = pr.isOwnQueueEntry } else { queues = false }
+    let turningOn: Bool
+    if case .turnOn = plan { turningOn = true } else { turningOn = false }
+    let mergesNow = turningOn || (pr.isOwnMerge && !pr.isOwnQueueEntry)
+    let queues = !turningOn && pr.isOwnQueueEntry
+    let unreviewed = turningOn || pr.isOwnMerge
 
     let approval: ChainLink
-    let merge: ChainLink
     switch progress {
-    case .preparing, .awaiting, .working, .cancelled:
+    case .preparing, .awaiting:
+        approval = ChainLink(kind: .approval, title: "Approval", detail: "this commit", state: .now)
+    case .working:
+        approval = ChainLink(kind: .approval, title: "Approval", detail: "confirmed, under way", state: .now)
+    case .succeeded:
         approval = ChainLink(
             kind: .approval, title: "Approval",
-            detail: progress == .working ? "confirmed, under way" : progress == .cancelled ? "cancelled" : "this commit",
-            state: progress == .cancelled ? .pending : .now)
-        merge = ChainLink(
-            kind: .merge, title: "Merge",
-            detail: mergesNow ? "right after you confirm" : queues ? "through the merge queue" : "after your approval",
-            state: .pending)
-    case .succeeded:
-        approval = ChainLink(kind: .approval, title: "Approval", detail: "given for this commit", state: .done)
-        merge = ChainLink(
-            kind: .merge, title: "Merge",
-            detail: mergesNow ? "merged" : queues ? "in the merge queue" : "auto-merge or by hand",
-            state: mergesNow ? .done : .pending)
+            detail: unreviewed ? "confirmed by you, no GitHub review" : "given for this commit", state: .done)
     case .failed:
         approval = ChainLink(kind: .approval, title: "Approval", detail: "stopped: see the log", state: .unknown)
-        merge = ChainLink(
-            kind: .merge, title: "Merge", detail: mergesNow || queues ? "see the log" : "after your approval",
-            state: mergesNow || queues ? .unknown : .pending)
+    case .cancelled:
+        approval = ChainLink(kind: .approval, title: "Approval", detail: "cancelled", state: .pending)
+    }
+
+    let merge: ChainLink
+    if !mergesNow && !queues {
+        merge = ChainLink(kind: .merge, title: "Merge", detail: "auto-merge or by hand", state: .pending)
+    } else {
+        switch progress {
+        case .preparing, .awaiting, .cancelled:
+            merge = ChainLink(
+                kind: .merge, title: "Merge",
+                detail: mergesNow ? "right after you confirm" : "through the merge queue", state: .pending)
+        case .working:
+            merge = ChainLink(kind: .merge, title: "Merge", detail: "under way", state: .now)
+        case .succeeded:
+            merge = ChainLink(
+                kind: .merge, title: "Merge", detail: mergesNow ? "merged" : "in the merge queue",
+                state: mergesNow ? .done : .pending)
+        case .failed:
+            merge = ChainLink(kind: .merge, title: "Merge", detail: "see the log", state: .unknown)
+        }
     }
 
     var links: [ChainLink] = []
     if let specTicket {
         links.append(ChainLink(kind: .spec, title: "Spec", detail: "\(specTicket) · in this change", state: .done))
     }
-    links += [checks.guardLink, checks.checksLink, approval, merge]
+    if !turningOn || checks.guardRun != nil {
+        links.append(checks.guardLink)
+    }
+    links += [checks.checksLink, approval, merge]
 
     let missing: String?
-    if let broken = [checks.guardLink, checks.checksLink].first(where: { $0.state == .failed }) {
-        missing = "\(broken.title.lowercased()) failed"
-    } else if checks.guardLink.state != .done || checks.checksLink.state != .done {
-        missing = "the checks"
-    } else {
-        switch progress {
-        case .preparing, .awaiting, .working, .cancelled: missing = "your approval"
-        case .failed: missing = nil
-        case .succeeded: missing = mergesNow ? nil : queues ? "the merge queue" : "the merge"
+    switch progress {
+    case .working, .failed:
+        missing = nil
+    case .succeeded:
+        missing = mergesNow ? nil : queues ? "the merge queue" : "the merge"
+    case .preparing, .awaiting, .cancelled:
+        if turningOn {
+            missing = "your approval"
+        } else if let broken = [checks.guardLink, checks.checksLink].first(where: { $0.state == .failed }) {
+            missing = "\(broken.title.lowercased()) failed"
+        } else if checks.guardLink.state != .done || checks.checksLink.state != .done {
+            missing = "the checks"
+        } else {
+            missing = "your approval"
         }
     }
     return Chain(links: links, missing: missing)

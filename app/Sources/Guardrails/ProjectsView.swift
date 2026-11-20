@@ -16,7 +16,7 @@ struct ProjectSidebar: View {
     @AppStorage(AppStyle.key) private var style = AppStyle.glass
 
     var body: some View {
-        let groups = groupProjects(projects.projects, matching: search)
+        let groups = groupProjects(shownProjects(projects.projects, inbox: snapshot), matching: search)
         List(selection: $selection) {
             if search.isEmpty {
                 OcticonLabel("Overview", icon: .apps)
