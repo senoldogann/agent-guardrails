@@ -207,7 +207,8 @@ struct WorkspaceStatusBar: View {
                     .foregroundStyle(Palette.danger)
             }
             OcticonLabel(waiting == 0 ? "Nothing waits for you" : (waiting == 1 ? "1 waits for you" : "\(waiting) wait for you"), icon: .inbox)
-            OcticonLabel(enforcedText, icon: .shieldCheck)
+            // As in the menu bar: the check only on a current inbox, which read every enforced repository.
+            OcticonLabel(enforcedText, icon: model.inboxCurrent ? .shieldCheck : .shield)
             Spacer()
             if model.loadState == .loading || projects.isLoading {
                 ProgressView().controlSize(.mini)

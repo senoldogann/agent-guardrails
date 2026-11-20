@@ -138,8 +138,8 @@ private struct Connector: View {
     }
 }
 
-/// The repository page's chain: `repositoryChain` of the project as the app shows it (`shownProject`), or, until the
-/// inbox is first read, `repositoryChainBeforeInbox`.
+/// The repository page's chain: `repositoryChain` of the project as the app shows it (`shownProject`) when the inbox
+/// confirms the repository (`AppModel.inboxConfirms`), `unconfirmedRepositoryChain` otherwise.
 struct RepositoryRail: View {
     let chain: Chain
 
