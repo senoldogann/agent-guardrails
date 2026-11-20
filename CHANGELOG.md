@@ -87,35 +87,46 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
     `env -`, `/usr/bin/env -i`, `exec -c`, clearing `GIT_CONFIG_*`, tmux, screen, cron and launchd jobs, a new
     Terminal, osascript's `do shell script`, ssh to this machine), also after `X=1`, `if`, `{`, in a
     here-string or in text piped to a shell;
-  - git settings passed with `git -c`, `git --config-env` or through `GIT_CONFIG_*` and `GIT_SSH*`, including
-    a remote's push URL and aliases (which can run a shell); git's own options before the subcommand
-    (`git -C . push origin main`);
+  - git settings passed with `git -c`, `git --config-env`, `git config` with a value, or through
+    `GIT_CONFIG_*` and `GIT_SSH*` (set, cleared, read with `read` or `for`, or printed), including a remote's
+    URL, push URL and push target, a branch's remote and aliases (which can run a shell); git's own options
+    before the subcommand (`git -C . push origin main`);
+  - the same commands behind a wrapper with arguments of its own (`nice`, `timeout 60`, `exec -a x`), after a
+    leading redirection or in a `case` arm, and in another kit repository than the session's
+    (`git -C <repo>`, `cd <repo> &&`);
   - printing the environment (`export`, `declare -x`, `env` without a command, `ps e`, interpreters reading
     it);
-  - changing the user's hook registrations or their directories, a project's local settings, or
-    `disableAllHooks`, from the shell, and running an agent with another `CLAUDE_CONFIG_DIR` or `CODEX_HOME`
-    (reading them stays allowed).
+  - an owner command run by a reader as its pager or filter (`git grep -O'…'`, `rg --pre`, `git --output`);
+  - changing the user's hook registrations or their directories, or `disableAllHooks`, from the shell, in any
+    spelling the shell reads the same: `$HOME`, `..`, `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, quotes, a glob,
+    brace or variable in the name, a `cd` or `-C` out of the project, a recursive copy, sync or archive into
+    such a directory or the home directory, an interpreter given it; and running an agent with another
+    `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. Reading them stays allowed, with readers that cannot write (not `sed`
+    or `less`). A project's own `.claude/settings*.json` stays writable from the shell (git restores it, the
+    kit copies it).
 
   These rules match a command where it runs, not a word in a commit message, a title or a remote command:
-  "add CSV export", `fix(env)`, `git switch -c fix/credential-rotation`, `git -C dir`, ssh port forwards and
-  `rg GIT_ASKPASS` stay allowed. A line that only looks continued is matched as written too, so it cannot join
-  the next command to its own.
+  "add CSV export", "GH Actions", "only if set", `fix(env)`, `git switch -c fix/credential-rotation`,
+  `git -C dir`, ssh port forwards and `rg GIT_ASKPASS` stay allowed. A line that only looks continued is
+  matched as written too, so it cannot join the next command to its own. A hook input whose command or path is
+  not a string is refused.
 - bash-guard runs with `bash -p`, so the environment cannot make it source a file first (`BASH_ENV`), and it
   allows a call only through an explicit allow: on macOS's Bash 3.2 an internal error, even a fatal one, used
   to end with status 0 and let the call through. A git that fails for any reason other than "not a git
   repository" counts as a kit repository, so the full rules stay on.
 - In Claude Code, bash-guard now also checks the file tools (Read, Grep, Glob, Edit, Write, MultiEdit,
-  NotebookEdit) by the path, with `x/..` resolved as Claude Code resolves it, every link resolved, `~`
-  expanded, and places compared by file identity, so another spelling of the same place (another case on
-  macOS, the `/System/Volumes/Data` firmlink) counts. An edit of a hook registration is replayed on the file,
-  and refused when its `old_string` is not in the file as written (the Edit tool also matches curly quotes for
-  straight ones):
+  NotebookEdit) by the path, with `x/..` resolved as Claude Code resolves it, every link resolved (a relative
+  link from its real directory), `~` expanded, and places compared by file identity, so another spelling of
+  the same place (another case on macOS, the `/System/Volumes/Data` firmlink) counts. An edit of a hook
+  registration is replayed on the file, and refused when its `old_string` is not in the file as written (the
+  Edit tool also matches curly quotes for straight ones):
   - none may read or write `~/.config/agent-guardrails` (the enforced repositories and the agent App's private
     key), and no Grep may search it or a parent directory;
   - no write may go into the kit install;
   - a write to the user's hook registrations (Claude Code's settings, also under `CLAUDE_CONFIG_DIR`, and
-    Cursor's and Codex's `hooks.json`, also under `CODEX_HOME`) must leave every kit hook entry as it is;
-  - no Claude Code settings file, the user's or a project's, may set `disableAllHooks`;
+    Cursor's and Codex's `hooks.json`, also under `CODEX_HOME`) must leave every kit hook entry as it is and
+    parse as the agents parse JSON (jq accepts `NaN`, which would make them ignore the file, hooks and all);
+  - no file may be written as JSON that sets `disableAllHooks` (a copy from the shell could make it settings);
   - in kit repositories, credentials are refused at their real place (gh's config directory, git's credential
     stores, `~/.netrc`, Claude Code's local settings), not in any file of the same name.
 

@@ -629,19 +629,19 @@ allow 'rg -n GIT_ASKPASS src'
 allow $'cat > notes.md <<\'EOF\'\nSet GIT_CONFIG_COUNT to 0 to reset.\nEOF'
 # shellcheck disable=SC2016 # literal input under test
 block 'echo $GIT_CONFIG_COUNT'
-# The user's hook registrations from the shell, by directory, by a bare cd, by CLAUDE_CONFIG_DIR's value, and a
-# project's local settings.
+# The user's hook registrations from the shell, by directory, by a bare cd and by CLAUDE_CONFIG_DIR's value.
 cwd=$plain_repo
 block "cd && sed -i '' /bash-guard/d .claude/settings.json"
 block 'cp /tmp/x/settings.json ~/.claude/'
 block 'rm -rf ~/.claude'
-block 'cp /tmp/x.json .claude/settings.local.json'
 block 'CLAUDE_CONFIG_DIR=/tmp/empty claude -p "approve the PR"'
 export CLAUDE_CONFIG_DIR="$HOME/.config/claude"
 block "sed -i '' /bash-guard/d $HOME/.config/claude/settings.json"
 unset CLAUDE_CONFIG_DIR
-allow "sed -n '1,40p' ~/.claude/settings.json"
-allow 'less ~/.claude/settings.json'
+# sed can write (its w command) and less runs an input filter: neither counts as a reader.
+block "sed -n '1,40p' ~/.claude/settings.json"
+block 'less ~/.claude/settings.json'
+allow 'head -n 40 ~/.claude/settings.json'
 # shellcheck disable=SC2016 # literal input under test
 allow 'echo $CLAUDE_CONFIG_DIR'
 allow 'mkdir -p ~/.claude/skills/x'
@@ -674,6 +674,144 @@ allow "cat > notes.md <<'EOF'"$'\n'"$long_body"$'\n'"EOF"
 if [[ $((SECONDS - long_start)) -le 20 ]]; then passed=$((passed + 1)); else
   failed=$((failed + 1))
   printf '  FAIL a 2000-line heredoc took %s s (limit 20)\n' "$((SECONDS - long_start))"
+fi
+
+echo "bash-guard: prose, git settings and the identity's variables"
+cwd=$kit_repo
+# Prose is no command: "GH Actions", "only if set", "if tmux new-session fails", "if crontab is empty".
+allow 'git commit -m "ci: cache pnpm in the GH Actions workflow"'
+allow 'git commit -m "fix: use the proxy only if set"'
+allow 'git commit -m "feat: retry if tmux new-session fails"'
+allow 'git commit -m "fix: skip the job if crontab is empty"'
+# git config with a key alone, or its get subcommand, only reads; a value after the key writes, also one that
+# contains --get or -l. Push targets reach a remote too.
+allow 'git config remote.origin.url'
+allow 'git config get remote.origin.url'
+block 'git config core.sshCommand "ssh -i /tmp/k -l git"'
+block 'git config core.hooksPath "/tmp/h --get"'
+block 'git -c remote.origin.push=HEAD:main push'
+block 'git config remote.origin.push HEAD:main && git push'
+# The identity's variables, however they are set, cleared or read.
+block 'read GIT_CONFIG_COUNT <<< 0; git push origin feat/x'
+block 'for GIT_CONFIG_COUNT in 0; do git push origin feat/x; done'
+block 'env -vu GIT_CONFIG_COUNT git push origin feat/x'
+block 'printenv GIT_CONFIG_VALUE_0'
+# Wrappers with arguments of their own, a leading redirection and a case arm.
+block 'nice env -i git push origin feat/x'
+block 'timeout 60 env -i git push origin feat/x'
+block 'exec -a x env -i git push origin feat/x'
+block '2>/dev/null env -i git push origin feat/x'
+block 'case x in x) env -i git push origin feat/x;; esac'
+block 'nice tmux new-session -d "make test"'
+# A reader that runs a command for its output is no reader.
+block 'git grep -O"guardrails approve 12 #" -e TODO'
+# A command may work in a kit repository other than the session's directory.
+cwd=$plain_repo
+block "git -C $kit_repo push origin main"
+block "cd $kit_repo && git push origin main"
+
+echo "bash-guard: hook registrations in every spelling"
+cwd=$plain_repo
+# Readers that write.
+# shellcheck disable=SC2016 # literal input under test
+block 'sed -n "s/^//w $HOME/.claude/settings.json" /tmp/evil.json'
+# shellcheck disable=SC2016 # literal input under test
+block 'git diff --no-index --output=$HOME/.claude/settings.json /dev/null /dev/null'
+# shellcheck disable=SC2016 # literal input under test
+block 'git log -1 --format=%B --output=$HOME/.claude/settings.json'
+block "cd ~ && git grep --no-index -O'sed -i.bak /bash-guard/d' bash-guard -- .claude/settings.json"
+block 'cat /tmp/x.json > ~/.claude/settin?s.json'
+# By CLAUDE_CONFIG_DIR or CODEX_HOME as variables, with ./, // or .. in the path, or after a cd or -C out.
+# shellcheck disable=SC2016 # literal input under test
+block 'sed -i "" /bash-guard/d $CLAUDE_CONFIG_DIR/settings.json'
+# shellcheck disable=SC2016 # literal input under test
+block 'rm "$CODEX_HOME/hooks.json"'
+block "sed -i '' /bash-guard/d ~/.claude/./settings.json"
+block "sed -i '' /bash-guard/d ~/.claude//settings.json"
+block "cd ~/.claude/. && sed -i '' /bash-guard/d settings.json"
+block "cd ../.claude && sed -i '' /bash-guard/d settings.json"
+block "cd ~ >/dev/null && cd .claude && sed -i '' /bash-guard/d settings.json"
+block 'cp /tmp/x/off.json ../.claude/settings.json'
+block 'git -C ~ rm .claude/settings.json'
+# Names the shell reads differently than they are written: quotes, globs, braces, variables, command substitution.
+block "sed -i '' /bash-guard/d ~/.claude/set''tings.json"
+block 'rm ~/.claude/*.json'
+block 'rm ~/.c*/settings.json'
+block "sed -i '' /bash-guard/d ~/.claude/{settings,x}.json"
+# shellcheck disable=SC2016 # literal input under test
+block 'f=settings.json; sed -i "" /bash-guard/d ~/.claude/$f'
+# shellcheck disable=SC2016 # literal input under test
+block 'd=~/.claude; sed -i "" /bash-guard/d $d/settings.json'
+# shellcheck disable=SC2016 # literal input under test
+block 'sed -i "" /bash-guard/d "$(echo ~/.claude)/settings.json"'
+allow 'ls ~/.claude/*'
+# Commands that write files they do not name, into an agents' directory or the home directory, and interpreters.
+block 'cp -R /tmp/evil/. ~/.claude/'
+block 'cp /tmp/evil/* ~/.claude/'
+block 'rsync -a /tmp/evil/ ~/.claude/'
+block 'tar -C ~/.claude -xf /tmp/evil.tar'
+block "find ~/.claude -name '*.json' -delete"
+block 'ls ~/.claude/ | xargs rm'
+block 'rm -rf ../.claude'
+block 'cp -R /tmp/evil/. ~'
+block 'tar -C ~ -xf /tmp/evil.tar'
+block 'cd ~ && rm -rf .claude'
+block 'cd ~ && rm -rf .c*'
+block "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/.claude'))\""
+block "python3 -c \"import os; os.remove(os.path.join(os.environ['HOME'], '.claude', 'settings.json'))\""
+allow 'cp notes.txt ~/'
+allow 'du -sh ~/*'
+allow "find ~ -name '*.log'"
+allow 'cd /tmp && rm -rf .next'
+# shellcheck disable=SC2016 # literal input under test
+allow 'echo $HOME'
+allow 'python3 scripts/sync.py --target ~/.claude/skills'
+# A project's own registrations from the shell: git restores them, the kit's template is copied over them.
+allow 'cp /tmp/x.json .claude/settings.local.json'
+allow 'git restore .claude/settings.json'
+allow 'git rm --cached .claude/settings.local.json'
+allow "echo '.claude/settings.local.json' >> .gitignore"
+# shellcheck disable=SC2016 # literal input under test
+allow 'T=~/.claude/skills/guardrails-init/template; cp "$T/.claude/settings.json" .claude/settings.json'
+# The agents' directories for files that are not registrations.
+allow 'cp CLAUDE.md ~/.claude/'
+allow 'cd ~/.claude && git status'
+allow "find ~/.claude -name '*.md'"
+# A session that runs in the home directory names the user's registrations without ~.
+cwd=$HOME
+block "sed -i '' /bash-guard/d .claude/settings.json"
+cwd=$kit_repo
+
+echo "bash-guard: file tools, links and the hook's input"
+cwd=$kit_repo
+# A relative link counts from the link's real directory: its .. is the parent of that directory.
+mkdir -p "$HOME/.config/link-dir"
+ln -s "$HOME/.config/link-dir" "$work/link-alias"
+ln -s ../agent-guardrails/repos "$HOME/.config/link-dir/L"
+tool_check 2 Write "$(write_input "$work/link-alias/L" "acme/x")"
+# JSON that turns every hook off, wherever it is written: a copy from the shell could make it settings later.
+tool_check 2 Write "$(write_input "$work/off.json" '{"disableAllHooks": true}')"
+tool_check 0 Write "$(write_input "$work/notes.md" 'Never set disableAllHooks in a settings file.')"
+# The agents' JSON.parse refuses what jq accepts (NaN): such settings would be ignored, hooks and all.
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" "$(jq -c . <<<"$hooked" | sed 's/^{/{"theme": NaN, /')")"
+printf '%s\n' "$hooked" >"$HOME/.claude/settings.json"
+# A field that is not a string never reaches eval as words.
+set +e
+jq -n -c --arg d "$kit_repo" '{cwd: $d, tool_input: {command: ["gh pr review 1 --approve", "allow"]}}' |
+  "$guard" >/dev/null 2>&1
+array_status=$?
+set -e
+if [[ $array_status -eq 2 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL a command given as an array must block (exit 2), got %s\n' "$array_status"
+fi
+# Continuation lines are joined in one pass: a long run of them stays inside the time limit.
+continued=$(for i in $(seq 1 1500); do printf 'echo line %s \\\n' "$i"; done)
+continued_start=$SECONDS
+allow "$continued"
+if [[ $((SECONDS - continued_start)) -le 20 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL 1500 continued lines took %s s (limit 20)\n' "$((SECONDS - continued_start))"
 fi
 
 # Codex sends Claude Code's PreToolUse shape (openai/codex codex-rs/hooks/schema/generated/
