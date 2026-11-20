@@ -340,13 +340,15 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
   `bash-guard` blocks owner-only commands, credential reads and settings changes by matching command text. It
   also refuses the plain ways around that: a gh call nested in another's arguments, checked flags in any
   spelling, commands that drop the session's identity so gh and git fall back to your login (`env -i`,
-  `exec -c`, a shell started outside the session), git settings passed with `-c` or through the environment,
-  printing the environment. In Claude Code it also checks the file tools by the path with every link resolved:
-  none reads or writes the kit's settings (the agent App's private key among them) or greps the directory
-  that holds them, and none writes into the kit install or drops the kit's hooks from the agents' hook
-  registrations. Shell commands are still matched as text: one written to a script file, assembled at run
-  time, or reaching a file without naming it (a glob, a recursive search of a parent directory) can evade it.
-  It stops mistakes and shortcuts, not an adversary.
+  `exec -c`, clearing `GIT_CONFIG_*`, a shell started outside the session), git settings passed with `-c` or
+  through the environment, printing the environment, and changing your hook registrations or
+  `disableAllHooks` from the shell. In Claude Code it also checks the file tools by the path with every link
+  resolved: none reads or writes the kit's settings (the agent App's private key among them) or greps the
+  directory that holds them, none writes into the kit install, a change to your hook registrations must leave
+  every kit hook entry as it is, and no settings file may set `disableAllHooks`. Shell commands are still
+  matched as text: one written to a script file, assembled at run time, or reaching a file without naming it
+  (a glob, a recursive search of a parent directory) can evade it. It stops mistakes and shortcuts, not an
+  adversary.
   **Teams use review mode:** register the agent App (`guardrails agent create`), install it on the
   repositories, and run `guardrails on <repo>` again. Status mode is for one owner who accepts these limits.
 - **The agent's identity is checked per session** (Claude Code only). In a kit repository with the agent App

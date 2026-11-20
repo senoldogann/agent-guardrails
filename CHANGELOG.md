@@ -81,15 +81,30 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   it entirely. Now refused:
   - a gh call nested in another's arguments (`$(gh pr review --approve)`, backticks, `<(…)`);
   - a variable or command substitution in a gh merge, edit, auth or api call;
-  - checked flags in other spellings (`--base=x`, `-Bx`, `--admin=true`, `-fbody=x`, `-ht`);
-  - commands that drop the session's identity so gh and git fall back to the owner's login (`env -i`, `env -`, `exec -c`, tmux, screen, cron and launchd jobs, a new Terminal, osascript's `do shell script`, ssh to this machine);
-  - git settings passed with `git -c` or through `GIT_CONFIG_*` and `GIT_SSH*`;
-  - printing the environment (`export`, `declare -x`, `env` without a command, `ps e`, interpreters reading it).
+  - checked flags in other spellings (`--base=x`, `-Bx`, `--admin=true`, `-fbody=x`, `-ht`), and flags on a
+    continuation line (a line ending in `\`);
+  - commands that drop the session's identity so gh and git fall back to the owner's login (`env -i`,
+    `env -`, `/usr/bin/env -i`, `exec -c`, clearing `GIT_CONFIG_*`, tmux, screen, cron and launchd jobs, a new
+    Terminal, osascript's `do shell script`, ssh to this machine);
+  - git settings passed with `git -c`, `git --config-env` or through `GIT_CONFIG_*` and `GIT_SSH*`;
+  - printing the environment (`export`, `declare -x`, `env` without a command, `ps e`, interpreters reading
+    it);
+  - changing the user's hook registrations, or `disableAllHooks`, from the shell (reading them stays allowed).
+
+  These rules match a command where it runs, not a word in a commit message, a title or a remote command:
+  "add CSV export", `git switch -c fix/credential-rotation`, `git -C dir` and ssh port forwards stay allowed.
 - In Claude Code, bash-guard now also checks the file tools (Read, Grep, Glob, Edit, Write, MultiEdit,
-  NotebookEdit) by the path with every link resolved. None may read or write `~/.config/agent-guardrails` (the
-  enforced repositories and the agent App's private key), no Grep may search it or a parent directory, and no
-  write may go into the kit install or drop the kit's hooks from `~/.claude/settings.json` or the Cursor and
-  Codex hook files. Run `./install.sh` (Update does) to register these hooks.
+  NotebookEdit) by the path, with every link resolved and `~` expanded:
+  - none may read or write `~/.config/agent-guardrails` (the enforced repositories and the agent App's private
+    key), and no Grep may search it or a parent directory;
+  - no write may go into the kit install;
+  - a write to the user's hook registrations (Claude Code's settings, also under `CLAUDE_CONFIG_DIR`, and
+    Cursor's and Codex's `hooks.json`, also under `CODEX_HOME`) must leave every kit hook entry as it is;
+  - no Claude Code settings file, the user's or a project's, may set `disableAllHooks`;
+  - in kit repositories, credentials are refused at their real place (gh's config directory, git's credential
+    stores, `~/.netrc`, Claude Code's local settings), not in any file of the same name.
+
+  Run `./install.sh` (Update does) to register these hooks.
 
 ## [0.6.0] - 2026-11-19
 
