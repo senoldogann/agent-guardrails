@@ -62,6 +62,9 @@ guard() {
   printf '{"tool_input":{"file_path":"%s"}}' "$1" |
     HOME="$fake_home" CLAUDE_PROJECT_DIR="$repo" "$repo/.agent/hooks/write-guard.sh"
 }
+guard_input() {
+  printf '%s' "$1" | HOME="$fake_home" CLAUDE_PROJECT_DIR="$repo" "$repo/.agent/hooks/write-guard.sh"
+}
 stop_hook() {
   printf '{"session_id":"s1","stop_hook_active":false}' |
     CLAUDE_PROJECT_DIR="$repo" "$repo/.agent/hooks/stop-check.sh"
@@ -201,6 +204,26 @@ expect_exit ".codex denied (new file)" 2 guard "$repo/.codex/hooks.json"
 expect_exit "AGENTS.md denied" 2 guard "$repo/AGENTS.md"
 expect_exit "home .claude dir denied" 2 guard "$fake_home/.claude/settings.json"
 expect_exit "dot-dot path denied" 2 guard "$repo/src/../.agent/active"
+# Names the file system resolves without case (macOS), links into guarded paths, and new configuration.
+expect_exit ".agent in another case denied" 2 guard "$repo/.AGENT/active"
+expect_exit ".claude in another case denied (new file)" 2 guard "$repo/.Claude/settings.local.json"
+expect_exit "makefile in lower case denied (make reads it before Makefile)" 2 guard "$repo/makefile"
+ln -s "$repo/.agent" "$repo/src/agent-link"
+expect_exit "link inside the project into .agent denied" 2 guard "$repo/src/agent-link/hooks/write-guard.sh"
+rm "$repo/src/agent-link"
+ln -s "$repo/.agent" "$work/agent-link"
+expect_exit "link outside the project into .agent denied" 2 guard "$work/agent-link/active"
+rm "$work/agent-link"
+expect_exit "new GNUmakefile denied in the spec phase" 2 guard "$repo/GNUmakefile"
+expect_exit "new uv.toml denied in the spec phase" 2 guard "$repo/uv.toml"
+expect_exit "new setup file denied in the spec phase" 2 guard "$repo/src/domain/vitest.setup.ts"
+expect_exit "new test file allowed in the spec phase" 0 guard "$repo/src/domain/rate.prop.test.ts"
+cp specs/ABC-1/locked-files "$work/locked-files.bak"
+printf 'src/domain/percent.ts\n' >>specs/ABC-1/locked-files
+expect_exit "a file added to locked-files is not editable until spec-lock locks it" 2 guard "$repo/src/domain/percent.ts"
+cp "$work/locked-files.bak" specs/ABC-1/locked-files
+expect_exit "input that is not JSON blocks (fails closed)" 2 guard_input 'not json'
+expect_out "an internal error says so" "internal error"
 implement
 expect_failure "finish refuses while the spec gate fails" .agent/bin/finish
 unimplement
@@ -216,6 +239,10 @@ expect_exit "locked contract denied" 2 guard "$repo/src/domain/percent.contract.
 expect_exit "file outside write-allow denied" 2 guard "$repo/src/other.ts"
 expect_exit "human-owned config denied" 2 guard "$repo/src/domain/vitest.setup.ts"
 expect_exit "specs denied" 2 guard "$repo/specs/ABC-1/OPEN_QUESTIONS.md"
+expect_exit "locked contract in another case denied" 2 guard "$repo/src/domain/Percent.contract.ts"
+expect_out "the case variant is denied as locked" "locked by ABC-1/spec.lock"
+expect_exit "conftest in another case denied" 2 guard "$repo/src/domain/CONFTEST.py"
+expect_exit "uv.toml denied" 2 guard "$repo/uv.toml"
 
 echo "stop-check / block / report"
 expect_exit "red checks block stop" 2 stop_hook
@@ -303,6 +330,17 @@ printf '// IMPLEMENTED\nexport const y = 2;\n' >src/domain/percent.ts
 git commit -qam "feat(ABC-1): more"
 expect_success "amended spec with implementation passes the guard" ci_guard feat/ABC-1-relock feat/ABC-1-relock main
 expect_out "re-lock is flagged for review" "specs/ABC-1/spec.lock"
+if grep -F "PATHS OUTSIDE" "$work/out" >/dev/null; then fail "a PR inside write-allow lists no paths outside it"; else
+  ok "a PR inside write-allow lists no paths outside it"
+fi
+git checkout -q -b feat/ABC-1-scope
+printf 'export const other = 1;\n' >src/other.ts
+git add src/other.ts
+git commit -qm "feat(ABC-1): touch another module"
+expect_success "a path outside write-allow passes the guard" ci_guard feat/ABC-1-scope feat/ABC-1-scope main
+expect_out "the owner sees the path outside write-allow" 'PATHS OUTSIDE specs/ABC-1/write-allow'
+expect_out "the path is named" '"src/other.ts"'
+git checkout -q feat/ABC-1-relock
 
 echo "ci-run"
 git checkout -q feat/ABC-1-impl

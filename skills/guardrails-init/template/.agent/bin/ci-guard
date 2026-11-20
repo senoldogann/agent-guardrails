@@ -9,7 +9,8 @@
 #                    reach guarded paths, workflow files that could stand in for a required check or post
 #                    statuses
 #   review summary - head SHA, ticket, spec amendments and every file a lock stopped or started locking,
-#                    accepted mutants and security findings, and every human-owned path the PR changes
+#                    accepted mutants and security findings, every path outside the ticket's write-allow and
+#                    every human-owned path the PR changes
 # The checks it shares with ci-guard-group (a merge queue's group commit) live in guard-lib.sh.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -63,5 +64,6 @@ if [[ $spec_count -gt 1 ]]; then
   done < <(git show "$last:specs/${ticket:-}/locked-files" | awk 'NF && $0 !~ /^#/')
   git diff --stat "$first" "$last" -- "${amended_paths[@]}"
 fi
+[[ -z ${ticket:-} ]] || guard_write_scope "$ticket" "$head"
 guard_review_summary "$base" "$head"
 exit "$guard_status"

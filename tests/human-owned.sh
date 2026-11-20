@@ -32,4 +32,47 @@ check yes Packages/Core/Tests/CoreTests/PasswordTests.swift
 check no Packages/Core/Sources/Core/Password.swift
 check no src/domain/discount.ts
 check no src/shared/math.ts
-[[ $failed -eq 0 ]]
+# Names macOS's default file system resolves without case.
+check yes MAKEFILE
+check yes src/pkg/CONFTEST.py
+check yes TESTS/test_rates.py
+check yes Pyproject.toml
+# Swift's test suffixes keep their case: Latest.swift is source.
+check no Sources/App/Latest.swift
+check no Sources/App/Contests.swift
+# Configuration of tools that run or judge the checks, manifests and lock files.
+check yes uv.toml
+check yes poetry.lock
+check yes Pipfile
+check yes noxfile.py
+check yes jest.config.ts
+check yes playwright.config.ts
+check yes eslint.config.js
+check yes webpack.config.js
+check yes bun.lockb
+check yes deno.json
+check yes deny.toml
+check yes Package@swift-5.9.swift
+check yes Podfile.lock
+check yes compose.yaml
+check yes justfile
+
+failed_tests=0
+check_test() {
+  local want=$1 path=$2 got=no
+  if is_test_path "$path"; then got=yes; fi
+  if [[ $got == "$want" ]]; then printf '  ok   test path %s %s\n' "$want" "$path"; else
+    printf '  FAIL test path %s: want %s, got %s\n' "$path" "$want" "$got"
+    failed_tests=$((failed_tests + 1))
+  fi
+}
+echo "is_test_path"
+check_test yes tests/test_rates.py
+check_test yes tests/conftest.py
+check_test yes src/domain/discount.test.ts
+check_test yes Packages/Core/Tests/CoreTests/PasswordTests.swift
+check_test no conftest.py
+check_test no pyproject.toml
+check_test no src/domain/vitest.setup.ts
+check_test no Sources/App/Latest.swift
+[[ $failed -eq 0 && $failed_tests -eq 0 ]]

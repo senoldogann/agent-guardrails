@@ -137,9 +137,11 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   Python 3.8 compatible (the owner's Mac has 3.9), standard library plus `guardrails_pyyaml` only, and never
   write bytecode: a `__pycache__` in the template shows up as kit drift in every project. The pytest plugin
   (`test-support/pytest_integrity.py`) runs on the project's Python and must parse as 3.9; `tests/smoke.sh` parses
-  both files with their oldest grammar, since CI's Python is newer. A Python project's mutation gate (`make ci`,
-  `make mutation`) still needs 3.11: `mutants-mutmut-run` checks the mutmut configuration with `tomllib` on the
-  project's interpreter. Running the plugin locally writes a `__pycache__` next to it: delete it before committing.
+  both files with their oldest grammar, since CI's Python is newer. `mutants-mutmut-run` checks the mutmut
+  configuration on the project's interpreter with the parser mutmut uses there (`tomllib` from 3.11, the `toml`
+  package before); the language adapter suite also runs Python 3.10 for it. On macOS, mutmut 3.3.1, the last
+  release for Python 3.9, crashes in every mutant's process, also without the kit's plugin. Running the plugin
+  locally writes a `__pycache__` next to it: delete it before committing.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority. The same holds for the Cursor and Codex hooks.
 - A new kit file in projects (like `.cursor/hooks.json`) goes into `kit_drift`, `remove_kit_files`, the kit-file

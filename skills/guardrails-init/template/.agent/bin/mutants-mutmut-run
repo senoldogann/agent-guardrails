@@ -3,9 +3,10 @@
 # Runs mutmut 3 on the Python files of the mutation scope (see mutants-scope) in a scratch copy of the
 # project (.agent/reports/mutation/mutmut), so mutmut's `mutants/` tree never lands in the repository.
 # The configuration is the kit's: the copy's pyproject.toml gets the kit's [tool.mutmut] table in place
-# of the project's (mutmut reads no other source once that table exists), checked with tomllib before
-# the run. Only the locked test files run (a kill must come from a locked test), with the integrity
-# guard and a fixed Hypothesis seed.
+# of the project's (mutmut reads no other source once that table exists), checked before the run with the
+# parser mutmut itself reads pyproject.toml with (tomllib from Python 3.11, the toml package before).
+# Only the locked test files run (a kill must come from a locked test), with the integrity guard and a
+# fixed Hypothesis seed.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/mutants-lib.sh"
@@ -52,9 +53,13 @@ rm "$work/pyproject.toml.tmp"
 
 cd "$work"
 uv run -q --project "$root" python -c '
-import json, sys, tomllib
-with open("pyproject.toml", "rb") as handle:
-    actual = tomllib.load(handle).get("tool", {}).get("mutmut")
+import json, sys
+if sys.version_info >= (3, 11):
+    from tomllib import loads
+else:
+    from toml import loads
+with open("pyproject.toml", encoding="utf-8") as handle:
+    actual = loads(handle.read()).get("tool", {}).get("mutmut")
 if actual != json.loads(sys.argv[1]):
     raise SystemExit(f"mutmut configuration of the scratch copy is not the kit configuration: {actual!r}")
 ' "$config"

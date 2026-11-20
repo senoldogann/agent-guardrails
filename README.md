@@ -322,7 +322,7 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
 - **Not in Cursor or Codex:** write-guard and stop-check, which use Claude Code's hook protocol. Nothing stops
   these agents from editing files outside `write-allow` as they work, or from finishing before `make check`
   passes. In the PR, `ci-guard` still fails changed locked specs and tests and lists every human-owned path it
-  changes, and the language checks still have to pass.
+  changes and every path outside the ticket's `write-allow`, and the language checks still have to pass.
 - **Agent identity:** `agent-identity.sh` hands the App's token to Claude Code's shell commands through
   `CLAUDE_ENV_FILE`. Cursor's `sessionStart` hook passes environment variables only to later hooks, not to the
   agent's commands, and Codex has no hook that sets them, so Cursor and Codex run gh and git push with your own
