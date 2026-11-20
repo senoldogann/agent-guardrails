@@ -35,6 +35,18 @@ final class ActionModel {
     }
 
     var needsDiffReview: Bool { plan?.pullRequest?.needsDiffReview ?? false }
+
+    /// Where the run stands, as the chain of gates shows it.
+    var progress: ActionProgress {
+        switch phase {
+        case .preparing: .preparing
+        case .awaitingConfirmation, .verifyingOwner: .awaiting
+        case .working: .working
+        case .succeeded: .succeeded
+        case .failed: .failed
+        case .cancelled: .cancelled
+        }
+    }
     var isRunning: Bool {
         switch phase {
         case .preparing, .awaitingConfirmation, .verifyingOwner, .working: true

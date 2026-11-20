@@ -87,10 +87,9 @@ struct ReviewView: View {
     /// A pull request's review as one board: the chain of gates on top, the evidence on the left and the commit
     /// the approval lands on, with the one button that closes the last link, on the right.
     private func decisionBoard(_ pr: PullRequestPlan, model: ActionModel) -> some View {
-        let (links, verdict) = PullRequestChain.chain(plan: pr, evidence: evidence)
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             boardHeader(pr, model: model)
-            GateRail(links: links, verdict: verdict)
+            GateRail(chain: chain(model))
                 .padding(.horizontal, Metrics.windowPadding)
                 .padding(.bottom, 14)
             Rectangle().fill(Palette.hairline).frame(height: 1)
@@ -177,7 +176,7 @@ struct ReviewView: View {
 
                 Rectangle().fill(Palette.hairline).frame(height: 1)
 
-                chainSummary(pr)
+                checksSummary
 
                 boardAction(model)
 
@@ -204,31 +203,37 @@ struct ReviewView: View {
         }
     }
 
-    /// What the chain already proved on this commit, in one line.
-    @ViewBuilder
-    private func chainSummary(_ pr: PullRequestPlan) -> some View {
-        let (links, _) = PullRequestChain.chain(plan: pr, evidence: evidence)
-        if let failed = links.first(where: { $0.state == .failed }) {
-            OcticonLabel("\(failed.title) \(failed.detail): fix it before approving.", icon: .alert)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.danger)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if links.contains(where: { $0.id == "checks" && $0.state == .now }) {
-            OcticonLabel("Checks are still running on this commit.", icon: .clock)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if links.contains(where: { $0.id == "checks" && $0.state == .done }) {
-            OcticonLabel("Every check the kit runs passed on this commit.", icon: .checkCircle)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else {
-            OcticonLabel("No checks reported for this commit yet.", icon: .clock)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+    /// The checks as GuardrailsCore reads them (`ChecksReading`): the rail's guard and checks links and the summary.
+    private var checksReading: ChecksReading {
+        switch evidence.checks {
+        case .loading: ChecksReading(.loading)
+        case .failed(let message): ChecksReading(.unavailable(message))
+        case .loaded(let runs): ChecksReading(.loaded(runs))
         }
+    }
+
+    /// The chain of gates for this run: the plan, the checks and where the action stands (`pullRequestChain`).
+    private func chain(_ model: ActionModel) -> Chain {
+        guard let plan = model.plan else { return Chain(links: [], missing: nil) }
+        var ticket: String?
+        if case .loaded(let spec) = evidence.spec { ticket = spec.ticket }
+        return pullRequestChain(plan: plan, specTicket: ticket, checks: checksReading, progress: model.progress)
+    }
+
+    /// What the checks on this commit add up to, in one line: passed only when every run passed.
+    private var checksSummary: some View {
+        let reading = checksReading
+        let icon: Octicon =
+            switch reading.tone {
+            case .problem: .alert
+            case .waiting: .clock
+            case .passed: .checkCircle
+            case .incomplete: .skip
+            }
+        return OcticonLabel(reading.summary, icon: icon)
+            .font(.system(size: 12))
+            .foregroundStyle(reading.tone == .problem ? Palette.danger : Palette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// What this approval means for this PR: a moved head, the owner's own push, a kit that already matches.

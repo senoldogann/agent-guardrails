@@ -30,6 +30,18 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- A repository page in alarm drew its chain as enforced: the ruleset filled in as "protected", and the
+  approval as done. The alarm can mean the ruleset is disabled or missing, or that GitHub cannot read the
+  repository, so the chain now marks the ruleset broken ("alarm: not confirmed") and the kit and approval
+  unknown, with a dashed ring, until the alarm is fixed. A repository a teammate enforces from another Mac no
+  longer reads as off ("not installed", "stays open"): its links are unknown here.
+- The review board said "Every check the kit runs passed" when some runs were skipped or neutral, and "No
+  checks reported" while checks were still running, still loading or could not be read. It now says passed
+  only when every run passed, names skipped and neutral runs (also in the Checks list), and keeps running,
+  loading, unreadable and empty apart; a failure still comes first. The approval and merge links follow the
+  action: right after the confirmation for `on` and for the owner's own merge, through the merge queue for a
+  queued PR, and auto-merge or a person for any other approval. After a success they show what happened; after
+  a failed run they claim nothing.
 - `guardrails report` counted any review still in the approved state as an approval of a merged PR, whatever
   commit it approved. A PR whose only approval was of an earlier commit (in status mode, where pushes dismiss
   no review, or after a push that did not dismiss it) did not appear under merges without an approval on the
