@@ -138,11 +138,12 @@ private struct Connector: View {
     }
 }
 
-/// The repository page's chain, for the project as the app shows it (`shownProject`).
+/// The repository page's chain: `repositoryChain` of the project as the app shows it (`shownProject`) when the inbox
+/// confirms the repository (`AppModel.inboxConfirms`), `unconfirmedRepositoryChain` otherwise.
 struct RepositoryRail: View {
-    let project: Project
+    let chain: Chain
 
     var body: some View {
-        GateRail(chain: repositoryChain(project))
+        GateRail(chain: chain)
     }
 }

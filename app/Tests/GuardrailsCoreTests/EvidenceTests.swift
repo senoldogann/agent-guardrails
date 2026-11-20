@@ -84,6 +84,7 @@ struct ActivityTests {
         let entries = [entry(0, repo: "a/x"), entry(120, repo: "a/y"), entry(60, repo: "a/x")]
         #expect(latestActivity(entries, limit: 2).map(\.date) == [base.addingTimeInterval(120), base.addingTimeInterval(60)])
         #expect(activity(of: "a/x", in: entries, limit: 5).map(\.date) == [base.addingTimeInterval(60), base])
+        #expect(activity(of: "A/X", in: entries, limit: 5).map(\.date) == [base.addingTimeInterval(60), base])
         #expect(trimActivity(entries, keeping: 2).map(\.date) == [base.addingTimeInterval(60), base.addingTimeInterval(120)])
     }
 

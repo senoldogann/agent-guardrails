@@ -36,7 +36,7 @@ final class ProjectsModel {
     }
 
     func project(named repo: String) -> Project? {
-        projects.first { $0.repo == repo }
+        projects.first { sameRepository($0.repo, repo) }
     }
 
     func loadProjects() async {
@@ -77,23 +77,30 @@ final class ProjectsModel {
 
     /// Loads the open PRs of a repo, reusing a list younger than a minute.
     func loadPullRequests(of repo: String) async {
-        if let cached = pullRequests[repo], Date().timeIntervalSince(cached.loaded) < 60 { return }
+        if let cached = pullRequests[listKey(repo)], Date().timeIntervalSince(cached.loaded) < 60 { return }
         await reloadPullRequests(of: repo)
     }
 
     /// Loads the open PRs of a repo from GitHub now.
     func reloadPullRequests(of repo: String) async {
+        let key = listKey(repo)
         do {
             let result = try await runGuardrails(["prs", repo, "--json"])
             guard result.status == 0 else {
-                pullRequestErrors[repo] = describeCommandFailure(result, command: "guardrails prs \(repo)")
+                pullRequestErrors[key] = describeCommandFailure(result, command: "guardrails prs \(repo)")
                 return
             }
-            pullRequests[repo] = PullRequestList(items: try parsePullRequests(result.standardOutput), loaded: Date())
-            pullRequestErrors[repo] = nil
+            pullRequests[key] = PullRequestList(items: try parsePullRequests(result.standardOutput), loaded: Date())
+            pullRequestErrors[key] = nil
         } catch {
-            pullRequestErrors[repo] = String(describing: error)
+            pullRequestErrors[key] = String(describing: error)
         }
+    }
+
+    /// The key a repository's PR list is kept under: its name as the projects list spells it, so a name that came in
+    /// another case (an alarm's, as the owner typed it) reaches the list the page reads.
+    private func listKey(_ repo: String) -> String {
+        project(named: repo)?.repo ?? repo
     }
 
     func markSetupStarted(_ repo: String) {

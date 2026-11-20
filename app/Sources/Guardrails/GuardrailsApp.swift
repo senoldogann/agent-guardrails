@@ -80,7 +80,8 @@ struct MenuBarLabel: View {
 
     var body: some View {
         let snapshot = model.snapshot
-        let symbol: Octicon = snapshot.alarms.isEmpty ? .shieldCheck : .shieldX
+        // Quiet only on a current inbox: before the first read, or after a failed one, the plain shield claims nothing.
+        let symbol: Octicon = !snapshot.alarms.isEmpty ? .shieldX : model.inboxCurrent ? .shieldCheck : .shield
         let count = waitingCount(snapshot)
         HStack(spacing: 3) {
             // The menu bar draws the 16-point template image itself, in the menu bar's own color.

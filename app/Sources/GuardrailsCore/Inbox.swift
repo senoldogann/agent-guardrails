@@ -68,9 +68,14 @@ public struct InboxSnapshot: Sendable, Equatable {
     /// An alarm without a repository concerns the kit install itself; on, off and approve refuse until it is fixed.
     public var hasKitInstallAlarm: Bool { alarms.contains { $0.repo.isEmpty } }
 
-    /// The alarms about one repository (owner/repo, compared without case, as GitHub compares names).
+    /// The alarms about one repository (owner/repo, compared as `sameRepository` compares them).
     public func alarms(of repo: String) -> [InboxItem] {
-        alarms.filter { !$0.repo.isEmpty && $0.repo.caseInsensitiveCompare(repo) == .orderedSame }
+        alarms.filter { !$0.repo.isEmpty && sameRepository($0.repo, repo) }
+    }
+
+    /// Whether the inbox read the repository: it lists every enforced repository whose rulesets it checked.
+    public func covers(_ repo: String) -> Bool {
+        repos.contains { sameRepository($0.name, repo) }
     }
     public var isQuiet: Bool { alarms.isEmpty && approvals.isEmpty && turnOns.isEmpty && answers.isEmpty }
 }
@@ -127,7 +132,13 @@ public func waitingCount(_ snapshot: InboxSnapshot) -> Int {
 
 /// Approvals and questions that wait for the owner in one repository.
 public func waitingCount(_ snapshot: InboxSnapshot, repo: String) -> Int {
-    (snapshot.approvals + snapshot.answers).filter { $0.repo == repo }.count
+    (snapshot.approvals + snapshot.answers).filter { sameRepository($0.repo, repo) }.count
+}
+
+/// Whether two "owner/repo" names name the same repository. GitHub compares them without case, and a name can reach
+/// the app in another case than GitHub's, such as the owner typed it for `guardrails on`.
+public func sameRepository(_ one: String, _ other: String) -> Bool {
+    one.caseInsensitiveCompare(other) == .orderedSame
 }
 
 /// Where a click on an inbox notification takes the owner.
