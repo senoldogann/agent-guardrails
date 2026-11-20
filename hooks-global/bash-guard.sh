@@ -193,12 +193,15 @@ if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit inst
 if [[ -z $raw ]]; then
   settings_root=$(physical_path "$(dirname "$(guardrails_registry)")")
   target=$(physical_path "$read_path")
+  # The searched directory with one trailing slash ("/" for the root): a pattern built from a quoted empty string
+  # does not match on Bash 5.2.
+  searched=${target%/}/
   case $target/ in
     "$settings_root"/*) deny "the owner's kit settings (enforced repositories, agent App key)" ;;
   esac
   if [[ $tool == Grep ]]; then
     case $(dirname "$settings_root")/ in
-      "${target%/}"/*) deny "searching $target, which holds the owner's kit settings and credentials; search a narrower directory" ;;
+      "$searched"*) deny "searching $target, which holds the owner's kit settings and credentials; search a narrower directory" ;;
     esac
   fi
   case $tool in
@@ -233,22 +236,30 @@ fi
 # The command rules below would read a path as a command (src/environments/ as environment access), so a file path
 # stops here: where the full rule set applies, the places that hold credentials are refused by their physical path,
 # not any file of the same name (an Ansible inventory's hosts.yml): gh's config directory, git's credential stores,
-# ~/.netrc and Claude Code's local settings.
+# ~/.netrc and Claude Code's local settings. gh's and git's directories are taken both where the environment puts
+# them (GH_CONFIG_DIR, XDG_CONFIG_HOME) and in their default place under the home directory.
 if [[ -z $raw ]]; then
   is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" || allow
-  home_root=$(physical_path "$HOME")
-  gh_config=$(physical_path "${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}")
-  git_store=$(physical_path "${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials")
-  case $target in
-    "$gh_config" | "$gh_config"/* | "$git_store" | "$home_root/.git-credentials" | "$home_root/.netrc" | */.claude/settings.local.json)
-      deny "reading stored GitHub credentials"
-      ;;
-  esac
-  if [[ $tool == Grep ]]; then
-    case $gh_config/ in
-      "${target%/}"/*) deny "searching $target, which holds gh's credentials; search a narrower directory" ;;
+  credential_places=$(
+    for place in "${GH_CONFIG_DIR:-$HOME/.config/gh}" "${XDG_CONFIG_HOME:-$HOME/.config}/gh" "$HOME/.config/gh" \
+      "${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials" "$HOME/.config/git/credentials" "$HOME/.git-credentials" \
+      "$HOME/.netrc"; do
+      physical_path "$place" || exit 1
+    done
+  )
+  while IFS= read -r place; do
+    case $target/ in
+      "$place"/*) deny "reading stored GitHub credentials" ;;
     esac
-  fi
+    if [[ $tool == Grep ]]; then
+      case $place/ in
+        "$searched"*) deny "searching $target, which holds stored GitHub credentials; search a narrower directory" ;;
+      esac
+    fi
+  done <<<"$credential_places"
+  case $target in
+    */.claude/settings.local.json) deny "reading stored GitHub credentials" ;;
+  esac
   allow
 fi
 matches 'merge-approval' && deny "merge approval (owner-only commit status)"

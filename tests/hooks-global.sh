@@ -19,9 +19,9 @@ failed=0
 cwd=$kit_repo
 
 check() {
-  local want=$1 cmd=$2 got
+  local want=$1 cmd=$2 got said
   set +e
-  jq -n --arg c "$cmd" --arg d "$cwd" '{cwd: $d, tool_input: {command: $c}}' | "$guard" >/dev/null 2>&1
+  said=$(jq -n --arg c "$cmd" --arg d "$cwd" '{cwd: $d, tool_input: {command: $c}}' | "$guard" 2>&1 >/dev/null)
   got=$?
   set -e
   if [[ $got -eq $want ]]; then
@@ -29,6 +29,7 @@ check() {
   else
     failed=$((failed + 1))
     printf '  FAIL want %d got %d: %s\n' "$want" "$got" "$cmd"
+    [[ -z $said ]] || printf '       %s\n' "$(head -n 1 <<<"$said")"
   fi
 }
 allow() { check 0 "$1"; }
@@ -463,14 +464,15 @@ cwd=$kit_repo
 echo "bash-guard: file tools"
 # Runs the guard on a file tool's input; checks its exit status. Arguments: want, tool, tool_input JSON.
 tool_check() {
-  local want=$1 got
+  local want=$1 got said
   set +e
-  jq -n --arg t "$2" --argjson i "$3" --arg d "$cwd" '{cwd: $d, tool_name: $t, tool_input: $i}' | "$guard" >/dev/null 2>&1
+  said=$(jq -n --arg t "$2" --argjson i "$3" --arg d "$cwd" '{cwd: $d, tool_name: $t, tool_input: $i}' | "$guard" 2>&1 >/dev/null)
   got=$?
   set -e
   if [[ $got -eq $want ]]; then passed=$((passed + 1)); else
     failed=$((failed + 1))
     printf '  FAIL %s want %d got %d: %s\n' "$2" "$want" "$got" "$3"
+    [[ -z $said ]] || printf '       %s\n' "$(head -n 1 <<<"$said")"
   fi
 }
 write_input() { jq -n -c --arg f "$1" --arg c "$2" '{file_path: $f, content: $c}'; }
@@ -556,6 +558,14 @@ tool_check 0 Read "$(jq -n -c --arg f "$kit_repo/inventory/hosts.yml" '{file_pat
 tool_check 0 Edit "$(edit_input "$kit_repo/inventory/hosts.yml" 'a' 'b')"
 tool_check 2 Read "$(jq -n -c --arg f "$HOME/.netrc" '{file_path: $f}')"
 tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/git/credentials" '{file_path: $f}')"
+# With XDG_CONFIG_HOME elsewhere (GitHub's Linux runners set it), gh's and git's places count both there and in
+# their default place.
+export XDG_CONFIG_HOME="$work/xdg"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$work/xdg/gh/hosts.yml" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$work/xdg/git/credentials" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$work/xdg" '{pattern: "oauth_token", path: $p}')"
+unset XDG_CONFIG_HOME
 tool_check 2 Read "$(jq -n -c --arg f "$kit_repo/.claude/settings.local.json" '{file_path: $f}')"
 cwd=$HOME
 tool_check 2 Grep '{"pattern": "BEGIN"}'
