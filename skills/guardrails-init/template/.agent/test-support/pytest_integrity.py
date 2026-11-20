@@ -45,7 +45,8 @@ WATCHED_CLASSES: tuple[str, ...] = (
     "settings",
 )
 
-type Snapshot = dict[str, object]
+# A plain alias rather than a `type` statement: projects on Python 3.9 to 3.11 load this plugin too.
+Snapshot = dict[str, object]
 
 
 class TestMachineryChangedError(Exception):

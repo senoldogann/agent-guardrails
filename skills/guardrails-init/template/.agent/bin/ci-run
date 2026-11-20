@@ -13,6 +13,8 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require_args 1 $# "ci-run <base-commit>"
+# The directory of this script, resolved before cd_project_root: a relative $0 names it from where it was called.
+bin=$(cd "$(dirname "$0")" && pwd -P)
 cd_project_root
 
 base=$1
@@ -45,9 +47,9 @@ if [[ $spec_commit != "$head" ]]; then
   printf '=== full gate at %s ===\n' "$head"
   if make --no-print-directory check; then
     printf '=== mutation gate for changes since %s ===\n' "$base"
-    "$(dirname "$0")/mutation-scope" "$base"
+    "$bin/mutation-scope" "$base"
     if [[ -s .agent/reports/mutation/scope.txt ]]; then
-      { make --no-print-directory test-mutation && "$(dirname "$0")/mutation-gate"; } || status=1
+      { make --no-print-directory test-mutation && "$bin/mutation-gate"; } || status=1
     fi
   else
     status=1
