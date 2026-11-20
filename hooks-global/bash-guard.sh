@@ -19,10 +19,16 @@
 # the ruleset on GitHub, which needs the owner's typed approval per HEAD, is the authority.
 # Exit code 2 blocks the call and shows stderr to the agent.
 set -euo pipefail
-# Fail closed: any exit other than 0 (allow) becomes 2 (block), so an internal error (missing jq, unreadable
-# file) blocks the call instead of letting it through. Subshells keep their own exit codes.
+# Fail closed: a call is allowed only through allow (below); every other end blocks it with 2. That covers an
+# internal error (missing jq, an unreadable file) and the fatal ones (a failed source, an unset variable) after
+# which Bash 3.2, macOS's /bin/bash, runs the EXIT trap with status 0. A deny, also one in a subshell, ends with 2
+# and has said why. Subshells keep their own exit codes.
 # shellcheck disable=SC2154 # status is assigned inside the trap
-trap 'status=$?; if [[ $status -ne 0 && $status -ne 2 ]]; then printf "BLOCKED by bash-guard: internal error (exit %s); ask the user to check the hook\n" "$status" >&2; exit 2; fi' EXIT
+trap 'status=$?; if [[ ${allowed:-} != 1 ]]; then [[ $status -eq 2 ]] || printf "BLOCKED by bash-guard: internal error (exit %s); ask the user to check the hook\n" "$status" >&2; exit 2; fi' EXIT
+allow() {
+  allowed=1
+  exit 0
+}
 # shellcheck source=kit-project.sh
 source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
@@ -39,7 +45,7 @@ raw=${raw//"$continuation"/ }
 read_path=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // empty' <<<"$input")
 # Grep without a path searches the session's directory.
 [[ $tool != Grep || -n $read_path ]] || read_path=$(jq -r '.cwd // empty' <<<"$input")
-[[ -n $raw || -n $read_path ]] || exit 0
+[[ -n $raw || -n $read_path ]] || allow
 # Normalize common spellings so quoting or path tricks do not hide a gh call:
 # drop quotes and backslashes, and turn $(which gh)/$(command -v gh)/`which gh` into gh.
 quote_chars=$'\\\\"\''
@@ -229,7 +235,7 @@ fi
 # not any file of the same name (an Ansible inventory's hosts.yml): gh's config directory, git's credential stores,
 # ~/.netrc and Claude Code's local settings.
 if [[ -z $raw ]]; then
-  is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" || exit 0
+  is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" || allow
   home_root=$(physical_path "$HOME")
   gh_config=$(physical_path "${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}")
   git_store=$(physical_path "${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials")
@@ -243,7 +249,7 @@ if [[ -z $raw ]]; then
       "${target%/}"/*) deny "searching $target, which holds gh's credentials; search a narrower directory" ;;
     esac
   fi
-  exit 0
+  allow
 fi
 matches 'merge-approval' && deny "merge approval (owner-only commit status)"
 # The topic is matched as a value (`--add-topic agent-guardrails`, `names[]=…`, `topic:…`), not as a path or
@@ -365,7 +371,7 @@ done <<<"$segments"
 # Everything below applies inside kit repositories, to commands that name an enforced repository, and to
 # commands that address a repository by its numeric id (which hides its name).
 is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" ||
-  matches 'repositories/[0-9]+' || exit 0
+  matches 'repositories/[0-9]+' || allow
 
 # Credentials and token fallbacks.
 matches 'security[[:space:]]+(find|dump|export)-' && deny "reading the macOS keychain"
@@ -480,4 +486,4 @@ done < <({
   grep -oE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"'$()<>]*)?' <<<"$cmd" || true
 } | sed -E 's/^[/;&|(`"'"'"'[:space:]]+//; s/^.*\/gh /gh /')
 
-exit 0
+allow

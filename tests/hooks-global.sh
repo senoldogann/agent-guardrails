@@ -235,6 +235,18 @@ if [[ $invalid_status -eq 2 ]]; then passed=$((passed + 1)); else
   failed=$((failed + 1))
   printf '  FAIL invalid hook input must block (exit 2), got %s\n' "$invalid_status"
 fi
+# A fatal shell error (here a failed source) ends Bash 3.2 with the EXIT trap seeing status 0: it must still block.
+broken_hooks="$work/broken-hooks"
+mkdir -p "$broken_hooks"
+cp "$hooks/bash-guard.sh" "$broken_hooks/bash-guard.sh"
+set +e
+jq -n --arg d "$plain_repo" '{cwd: $d, tool_input: {command: "make check"}}' | "$broken_hooks/bash-guard.sh" >/dev/null 2>&1
+fatal_status=$?
+set -e
+if [[ $fatal_status -eq 2 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL a guard that cannot load its library must block (exit 2), got %s\n' "$fatal_status"
+fi
 
 echo "prompt-reminder"
 reminder_out() { jq -n --arg d "$1" '{cwd: $d, prompt: "hi"}' | "$hooks/prompt-reminder.sh"; }
