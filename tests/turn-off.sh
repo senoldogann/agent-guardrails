@@ -121,8 +121,11 @@ turn_off() {
   local status=0
   rm -f "$fake/writes.log" "$work/events"
   touch "$fake/writes.log" "$work/events"
+  # The removal commit needs a git identity, which a CI runner does not have.
   env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR HOME="$fake_home" PATH="$fake/bin:$PATH" GUARDRAILS_EVENTS_FD=3 \
     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$work/remote/.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/ \
+    GIT_AUTHOR_NAME=owner GIT_AUTHOR_EMAIL=owner@example.invalid \
+    GIT_COMMITTER_NAME=owner GIT_COMMITTER_EMAIL=owner@example.invalid \
     python3 -I "$here/tests/pty-run.py" "$2" -- "$work/install/bin/guardrails" off "$1" \
     >"$work/out" 2>&1 3>"$work/events" || status=$?
   printf '%s\n' "$status"
