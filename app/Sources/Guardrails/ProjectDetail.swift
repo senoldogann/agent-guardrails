@@ -14,15 +14,19 @@ struct ProjectDetail: View {
                 ProjectHeader(
                     project: project, actionsLocked: model.snapshot.hasKitInstallAlarm, open: open,
                     startSetup: { showsSetup = true })
-                RepositoryRail(chain: model.inboxRead ? repositoryChain(project) : repositoryChainBeforeInbox(project))
+                RepositoryRail(chain: model.inboxConfirms(project.repo) ? repositoryChain(project) : unconfirmedRepositoryChain(project))
                 if model.snapshot.hasKitInstallAlarm {
                     StatusPanel(
                         symbol: .lock, title: "Actions are locked",
                         message: "The kit install needs attention: use Update in the menu bar, or fix the alarm shown there. On, off and approve refuse until then.")
                 }
-                ProjectStateCard(
-                    project: project, setupStarted: projects.setupsStarted[project.repo], agent: projects.agent,
-                    actionsLocked: model.snapshot.hasKitInstallAlarm, open: open, startSetup: { showsSetup = true })
+                if project.state == .on && !model.inboxConfirms(project.repo) {
+                    UnconfirmedOnCard()
+                } else {
+                    ProjectStateCard(
+                        project: project, setupStarted: projects.setupsStarted[project.repo], agent: projects.agent,
+                        actionsLocked: model.snapshot.hasKitInstallAlarm, open: open, startSetup: { showsSetup = true })
+                }
                 if project.state == .on || project.state == .alarm {
                     PullRequestSection(
                         repo: project.repo, projects: projects, approvalsLocked: model.snapshot.hasKitInstallAlarm,
@@ -298,6 +302,17 @@ private func formatRelative(_ date: Date, style: RelativeDateTimeFormatter.Units
     formatter.locale = Locale(identifier: "en_US")
     formatter.unitsStyle = style
     return formatter.localizedString(for: date, relativeTo: now)
+}
+
+/// An enforced repository the inbox has not confirmed (see `unconfirmedRepositoryChain`): no claim of protection yet.
+struct UnconfirmedOnCard: View {
+    var body: some View {
+        Card {
+            Explainer(
+                symbol: .shield, color: Palette.textSecondary, title: "Guardrails are on · waiting for the inbox",
+                text: "The inbox reads every kit ruleset of this repository and raises an alarm when one is missing or off. Until its last read succeeds and covers this repository, this page claims no protection. If it does not come, open the menu bar inbox for its error.")
+        }
+    }
 }
 
 /// An enforced repository: how approvals work here, and the step to review mode when it is one click away.

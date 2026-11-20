@@ -72,6 +72,11 @@ public struct InboxSnapshot: Sendable, Equatable {
     public func alarms(of repo: String) -> [InboxItem] {
         alarms.filter { !$0.repo.isEmpty && sameRepository($0.repo, repo) }
     }
+
+    /// Whether the inbox read the repository: it lists every enforced repository whose rulesets it checked.
+    public func covers(_ repo: String) -> Bool {
+        repos.contains { sameRepository($0.name, repo) }
+    }
     public var isQuiet: Bool { alarms.isEmpty && approvals.isEmpty && turnOns.isEmpty && answers.isEmpty }
 }
 
