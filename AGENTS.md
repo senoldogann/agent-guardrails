@@ -146,6 +146,9 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
 - Hooks fail closed through an explicit `allow`: on Bash 3.2 (macOS's `/bin/bash`, which `#!/usr/bin/env bash`
   finds on a stock Mac) the EXIT trap sees status 0 after a fatal error such as a failed `source`, so a trap that
   only maps non-zero statuses would let the call through. Never end an allowed path with a bare `exit 0`.
+- Physical paths in hooks: Bash 3.2's builtin `pwd -P` keeps a directory as typed (another case, another Unicode
+  form, the `/System/Volumes/Data` firmlink), so use the external `/bin/pwd -P` or `realpath`, and never build a
+  `case` pattern from a quoted expansion that can be empty: Bash 5.2 does not match `"$empty"/*`.
 - Hooks are a fast local layer only; Bash can bypass them. `ci-guard`, run from the base branch
   via `pull_request_target`, is the authority. The same holds for the Cursor and Codex hooks.
 - A new kit file in projects (like `.cursor/hooks.json`) goes into `kit_drift`, `remove_kit_files`, the kit-file

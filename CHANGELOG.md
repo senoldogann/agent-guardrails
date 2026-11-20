@@ -51,12 +51,13 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   - an error inside the hook let the write through, also a fatal one (a missing library), after which macOS's
     Bash 3.2 ends with status 0.
 
-  It now follows every link, judges an existing file by the name its directory stores, refuses a file with
-  several hard links and a new name that is not plain ASCII, compares guarded names without case, lets the
-  spec phase edit only what the ticket's `spec.lock` locks and create no configuration, manifests, build files
-  or dotfiles in any directory, refuses a write when a lock cannot be read, and allows a write only through
-  an explicit allow, so every other end blocks. The project's bash-guard shim blocks on its own errors the
-  same way.
+  It now follows every link, judges an existing path by the names the file system stores (also for its
+  directories, which Bash 3.2's own `pwd -P` keeps as typed), refuses a file with several hard links, a name
+  with a control character and a new name that is not plain ASCII, compares guarded names without case, lets
+  the spec phase edit only what the ticket's `spec.lock` locks and create no configuration, manifests, build
+  files or dotfiles in any directory, refuses a write when a lock cannot be read, and allows a write only
+  through an explicit allow, so every other end blocks. The project's bash-guard shim blocks on its own errors
+  the same way.
 - `is_human_owned` matches names without case, except Swift's `Tests.swift` suffixes, and covers more
   configuration, manifests and lock files: `uv.toml`, Poetry, Pipenv, PDM, Hatch and Pixi files, `noxfile.py`,
   Jest, Playwright, Cypress, Karma, AVA, ESLint, Prettier, Stylelint, Babel, webpack, Rollup and tsup configs,

@@ -18,6 +18,8 @@
 set -euo pipefail
 # Fail closed, also after the fatal errors (a failed source, an unset variable) after which Bash 3.2, macOS's
 # /bin/bash, runs the EXIT trap with status 0. A deny, also one in a subshell, ends with 2 and has said why.
+# Not inherited from the environment: only allow sets it.
+allowed=0
 # shellcheck disable=SC2154 # status is assigned inside the trap
 trap 'status=$?; if [[ ${allowed:-} != 1 ]]; then [[ $status -eq 2 ]] || printf "BLOCKED by write-guard: internal error (exit %s); ask the user to check .agent/hooks/write-guard.sh\n" "$status" >&2; exit 2; fi' EXIT
 allow() {
@@ -59,7 +61,9 @@ stored_name() {
 }
 
 # Prints an absolute path with every link resolved, also below a part that does not exist yet (the file a write
-# would create). Existing parts come out as the file system stores them. Argument: absolute path.
+# would create). Existing parts come out as the file system stores them: directories through the external pwd (Bash
+# 3.2's builtin pwd -P keeps a directory as typed, in another case or Unicode form, or under the
+# /System/Volumes/Data firmlink), the last name through stored_name. Argument: absolute path.
 physical_path() {
   local path=$1 rest="" link hops=0
   while :; do
@@ -70,11 +74,11 @@ physical_path() {
       [[ $link == /* ]] || link="$(dirname "$path")/$link"
       path=$link
     elif [[ -d $path ]]; then
-      path=$(cd -P "$path" && pwd -P) || return 1
+      path=$(cd -P "$path" && /bin/pwd -P) || return 1
       printf '%s%s\n' "${path%/}" "$rest"
       return 0
     elif [[ -e $path ]]; then
-      link=$(cd -P "$(dirname "$path")" && pwd -P) || return 1
+      link=$(cd -P "$(dirname "$path")" && /bin/pwd -P) || return 1
       printf '%s/%s%s\n' "${link%/}" "$(stored_name "$link" "$path")" "$rest"
       return 0
     elif [[ -z $path || $path == / ]]; then
@@ -95,7 +99,7 @@ esac
 case "$file/" in
   */../* | */./*) deny "path must be normalized (no '.' or '..' segments)" ;;
 esac
-root=$(CDPATH='' cd -P -- "$root" && pwd -P)
+root=$(CDPATH='' cd -P -- "$root" && /bin/pwd -P)
 target=$(physical_path "$file")
 # A link to a directory that does not exist yet can still leave a '..' behind.
 case "$target/" in
@@ -108,13 +112,20 @@ esac
 [[ $target == "$root/"* ]] || allow
 
 rel=${target#"$root"/}
+# A newline or other control character would add lines to the created list and the checks that read it.
+is_repo_path "$rel" || deny "the path has a control character, a backslash, a backtick or a blank at the end of a name"
 if [[ -e $target ]]; then
   if [[ -f $target ]]; then
     linked=$(find "$target" -maxdepth 0 -links +1)
     [[ -z $linked ]] || deny "the file has several hard links, and another of them could be a guarded file"
   fi
-elif LC_ALL=C grep '[^ -~]' <<<"$rel" >/dev/null; then
-  deny "a new path must be plain ASCII: macOS reads some other characters as letters of a guarded name (ſ as s)"
+else
+  # Only the names this write creates must be ASCII; an existing directory keeps the name it has.
+  existing=$target
+  while [[ ! -e $existing ]]; do existing=$(dirname "$existing"); done
+  if LC_ALL=C grep '[^ -~]' <<<"${target#"$existing"}" >/dev/null; then
+    deny "a new name must be plain ASCII: macOS reads some other characters as letters of a guarded name (ſ as s)"
+  fi
 fi
 rel_lower=$(lower "$rel")
 case $rel_lower in

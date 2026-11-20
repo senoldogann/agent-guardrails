@@ -234,6 +234,20 @@ expect_exit "a guard that cannot load its library blocks" 2 bash -c \
 # Another name for a guarded file: on macOS ſ opens s (the ticket's own lock); elsewhere the new name is not ASCII.
 expect_exit "a lock file spelled with a Unicode look-alike denied" 2 guard "$repo/specs/ABC-1/ſpec.lock"
 expect_exit "a new file with a non-ASCII name denied" 2 guard "$repo/src/domain/ﬁle.ts"
+mkdir -p "$repo/src/çeviri"
+expect_exit "a new file in an existing non-ASCII directory allowed" 0 guard "$repo/src/çeviri/new.ts"
+# A directory spelled another way is the same directory on macOS (Bash 3.2's own pwd -P keeps the spelling).
+if [[ -e ${repo%/*}/REPO ]]; then
+  expect_exit "the project directory in another case still guards .agent" 2 guard "${repo%/*}/REPO/.agent/active"
+fi
+expect_exit "a parent directory spelled with a Unicode look-alike still guards specs" 2 guard "$repo/ſpecs/ABC-2/x.md"
+# A newline in a name would add a line to the created list.
+expect_exit "a name with a newline denied" 2 guard_input "$(jq -n -c --arg f "$repo/x"$'\n'"package.json" '{tool_input: {file_path: $f}}')"
+expect_exit "package.json not listed as created by it" 2 guard "$repo/package.json"
+# An allowed=1 in the environment does not turn the fail-closed ending off.
+# shellcheck disable=SC2016 # the inner script expands its own arguments
+expect_exit "an inherited allowed=1 does not allow on an internal error" 2 env allowed=1 bash -c \
+  'printf "{\"tool_input\":{\"file_path\":\"%s/src/x.ts\"}}" "$1" | HOME="$2" "$3"' _ "$repo" "$fake_home" "$repo/.agent/hooks/write-guard.sh"
 # Configuration inside a test directory configures the tests below it.
 expect_exit "new pytest.ini in a test directory denied" 2 guard "$repo/tests/pytest.ini"
 expect_exit "new dotfile in a test directory denied" 2 guard "$repo/tests/.env"
@@ -258,6 +272,7 @@ expect_out "the case variant is denied as locked" "locked by ABC-1/spec.lock"
 expect_exit "conftest in another case denied" 2 guard "$repo/src/domain/CONFTEST.py"
 expect_exit "uv.toml denied" 2 guard "$repo/uv.toml"
 expect_exit "locked contract spelled with a Unicode look-alike denied" 2 guard "$repo/src/domain/percent.contract.tſ"
+expect_exit "locked contract under a parent spelled with a Unicode look-alike denied" 2 guard "$repo/ſrc/domain/percent.contract.ts"
 # A write-allowed file that is a hard link of a locked one.
 cp src/domain/percent.ts "$work/percent.ts.bak"
 ln -f src/domain/percent.contract.ts src/domain/percent.ts

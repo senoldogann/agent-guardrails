@@ -6,6 +6,8 @@
 # A command is allowed only through allow: any other end, an error of this shim included (a dangling skill link,
 # missing jq, a fatal error after which Bash 3.2 runs the EXIT trap with status 0), blocks it with 2.
 set -euo pipefail
+# Not inherited from the environment: only allow sets it.
+allowed=0
 # shellcheck disable=SC2154 # status is assigned inside the trap
 trap 'status=$?; if [[ ${allowed:-} != 1 ]]; then [[ $status -eq 2 ]] || printf "BLOCKED by .agent/hooks/bash-guard.sh: internal error (exit %s); ask the user to check the hook\n" "$status" >&2; exit 2; fi' EXIT
 allow() {

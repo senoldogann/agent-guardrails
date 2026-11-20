@@ -53,7 +53,7 @@ awk '
 rm "$work/pyproject.toml.tmp"
 
 cd "$work"
-uv run -q --project "$root" python -c '
+uv run -q --project "$root" python -I -c '
 import json, pathlib, sys
 from importlib.util import find_spec
 if sys.version_info >= (3, 11):
@@ -72,6 +72,6 @@ source = "".join(path.read_text(encoding="utf-8") for path in pathlib.Path(spec.
 unread = [key for key in expected if json.dumps(key) not in source and repr(key) not in source]
 if unread:
     raise SystemExit(f"the installed mutmut does not read {unread} from [tool.mutmut], so it would mutate and test "
-                     "without the kit settings; the mutation gate needs mutmut 3.8 or newer, which needs Python 3.10")
+                     "without the kit settings; the mutation gate needs mutmut 3.7 or newer, which needs Python 3.10")
 ' "$config"
 PYTHONPATH="$root/.agent/test-support" uv run -q --project "$root" mutmut run --max-children 4
