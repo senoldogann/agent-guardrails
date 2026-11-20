@@ -46,7 +46,11 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
     commit, CODEOWNERS required, in its own ruleset that admins may bypass through a PR) and status mode
     otherwise (the commit status `merge-approval`). A repository whose live rulesets are in review mode
     (`review_mode_rulesets`) is not switched to status mode without `--status-mode` (`on_mode`, which the plan event
-    and the confirmation name); `tests/turn-on.sh` drives `on <owner/repo>` with a fake gh and a local clone.
+    and the confirmation name). A mode switch puts the new approval rule in place before it removes the old one
+    (`enforce`: the review ruleset before the branch ruleset drops merge-approval, merge-approval before the review
+    ruleset goes), so a failure or an interruption halfway never leaves an approval-less repository; `stop_note`, printed
+    by the EXIT trap, names what is on and the command that finishes. `tests/turn-on.sh` drives `on <owner/repo>` with
+    a fake gh that keeps its ruleset writes (and refuses a chosen one) and a local clone.
     Nobody bypasses the branch ruleset with the checks; only
     admins create, move or delete tags. `off` deletes the rulesets and merges a PR that removes the kit.
   - `on --merge-queue` (organization repositories in review mode only; `merge_queue_refusal` says why not) adds

@@ -47,9 +47,14 @@ review_ruleset_name=agent-guardrails-review
 tag_ruleset_name=agent-guardrails-tags
 topic=agent-guardrails
 tmp_dirs=""
+# What a repository is left with when a state-changing command stops before it finishes, and the command that
+# finishes it. The EXIT trap prints it after the error, so a failure or an interruption never leaves the owner to
+# guess what is on; the command sets it before each step and clears it when it is done.
+stop_note=""
 # shellcheck disable=SC2329,SC2317 # invoked by the EXIT trap
 cleanup() {
   local d
+  [[ -z $stop_note ]] || printf '%s\n' "$stop_note" >&2
   for d in $tmp_dirs; do rm -rf "$d"; done
 }
 trap cleanup EXIT
@@ -296,14 +301,32 @@ on_mode() {
   printf 'status true\n'
 }
 
+# Prints the `guardrails on` command that runs one target again with the flags the owner gave, for stop_note.
+# Arguments: owner/repo or PR link, merge queue choice (on, off or keep), --status-mode given ("true" or "false").
+on_command() {
+  local command="guardrails on $1"
+  case $2 in
+    on) command+=" --merge-queue" ;;
+    off) command+=" --no-merge-queue" ;;
+  esac
+  [[ $3 != true ]] || command+=" --status-mode"
+  printf '%s\n' "$command"
+}
+
 # Applies the rulesets and repository settings the kit relies on. Required checks: guard, security and the
 # checkout's own checks-<lang> workflows. Nobody bypasses the branch ruleset (checks, history, deletion); in
 # review mode a separate review ruleset lets admins merge their own PRs without a review. With the merge queue
 # (third argument "true", review mode only) the branch ruleset also requires it. The fourth argument is the mode the
 # owner confirmed (on_mode); when review mode became ready or stopped being ready since then, nothing is changed.
-# Arguments: owner/repo, checkout of the default branch, "true" or "false", "review" or "status".
+# A switch between the modes puts the new mode's approval rule in place before it takes the old one away: the review
+# ruleset before the branch ruleset drops merge-approval, merge-approval before the review ruleset is deleted. So a
+# repository that required the owner's approval still requires it after every step, wherever a failure or an
+# interruption stops this, and stop_note says which rules are on at that point and what finishes the change. A write
+# GitHub was taking when the command stopped may have gone through, so the notes say "may" about that one ruleset.
+# Arguments: owner/repo, checkout of the default branch, "true" or "false", "review" or "status", the command that
+# runs this again (on_command).
 enforce() {
-  local repo=$1 dir=$2 queue=$3 planned=$4 jobs checks mode now=status
+  local repo=$1 dir=$2 queue=$3 planned=$4 again=$5 jobs checks mode now=status branch review halfway settled
   jobs=$(check_jobs "$dir")
   [[ -n $jobs ]] || die "no checks-<lang> job found in .github/workflows/checks-*.yml"
   # ci-guard keeps PR workflows from defining jobs with these names.
@@ -311,27 +334,53 @@ enforce() {
   if review_mode_ready "$repo" "$dir"; then now=review; fi
   [[ $now == "$planned" ]] ||
     die "$repo is ready for $now mode now, not for the $planned mode you confirmed; nothing changed. Run guardrails on $repo again"
+  # Read before anything changes, so a stop can say what the rulesets still hold.
+  branch=$(ruleset_by_name "$repo" "$ruleset_name") || exit 1
+  review=$(ruleset_by_name "$repo" "$review_ruleset_name") || exit 1
+  settled="guardrails on stopped halfway: $repo is in $now mode, but its tag ruleset or repository settings may not be applied yet. Run again: $again"
+  stop_note="guardrails on stopped before it changed the rulesets of $repo; they are as before, apart from a change GitHub may have taken as it stopped. Run again: $again"
   if [[ $now == review ]]; then
+    # What the next step leaves, worked out before the write so only the write sits between the two notes.
+    halfway="guardrails on stopped halfway: $repo has the $review_ruleset_name ruleset, so every merge needs a code owner's review"
+    if [[ -z $branch ]]; then
+      halfway+=", but it may have no $ruleset_name ruleset yet, so merges may not wait for the checks."
+    elif jq -e 'any(.rules[]?; .type == "required_status_checks"
+      and any(.parameters.required_status_checks[]?; .context == "merge-approval"))' <<<"$branch" >/dev/null; then
+      halfway+=", and its $ruleset_name ruleset may still require merge-approval as well."
+    else
+      halfway+=", and its $ruleset_name ruleset may not have its new rules yet."
+    fi
+    put_ruleset "$repo" "$review_ruleset_name" "$(review_ruleset "$review_ruleset_name")" ||
+      die "GitHub did not take the $review_ruleset_name ruleset of $repo"
     if [[ $queue == true ]]; then
+      stop_note="$halfway Run again: $again. If GitHub refuses the merge queue there, turn it on without it: guardrails on $repo --no-merge-queue"
       put_ruleset "$repo" "$ruleset_name" "$(queued_branch_ruleset "$ruleset_name" "$checks")" ||
-        die "GitHub refused the merge queue on $repo: it needs a public organization repository, or GitHub Enterprise Cloud for a private one. Enforce it without the queue: guardrails on $repo --no-merge-queue"
+        die "GitHub did not take the $ruleset_name ruleset with the merge queue on $repo (a merge queue needs an organization repository: public, or private on GitHub Enterprise Cloud)"
       list_queue "$repo"
     else
-      put_ruleset "$repo" "$ruleset_name" "$(branch_ruleset "$ruleset_name" "$checks")"
+      stop_note="$halfway Run again: $again"
+      put_ruleset "$repo" "$ruleset_name" "$(branch_ruleset "$ruleset_name" "$checks")" ||
+        die "GitHub did not take the $ruleset_name ruleset of $repo"
       unlist_queue "$repo"
     fi
-    put_ruleset "$repo" "$review_ruleset_name" "$(review_ruleset "$review_ruleset_name")"
     mode="review mode: approve the agent's PRs with a GitHub review (guardrails approve, github.com or GitHub Mobile); tags: admins only"
     [[ $queue != true ]] || mode+="; merge queue: squash, every PR green, up to 3 per group"
   else
     # require_merge_queue_ready checked this before the confirmation; review mode changed in between.
     [[ $queue != true ]] || die "the merge queue needs review mode, and $repo is no longer ready for it; run guardrails on $repo again"
-    put_ruleset "$repo" "$ruleset_name" "$(status_mode_ruleset "$ruleset_name" "$checks")"
+    put_ruleset "$repo" "$ruleset_name" "$(status_mode_ruleset "$ruleset_name" "$checks")" ||
+      die "GitHub did not take the $ruleset_name ruleset of $repo"
+    stop_note=$settled
+    if [[ -n $review ]]; then
+      stop_note="guardrails on stopped halfway: the $ruleset_name ruleset of $repo requires merge-approval now, and its $review_ruleset_name ruleset may still be there, so merges may need both your merge-approval and a code owner's review. Run again: $again"
+    fi
     unlist_queue "$repo"
-    delete_ruleset "$repo" "$review_ruleset_name"
+    delete_ruleset "$repo" "$review_ruleset_name" || die "GitHub did not delete the $review_ruleset_name ruleset of $repo"
     mode="status mode: approve each PR's HEAD with guardrails approve (merge-approval); tags: admins, which includes the agent while it uses your login. For a team, use review mode: guardrails agent create, install the App here, then guardrails on $repo again"
   fi
-  put_ruleset "$repo" "$tag_ruleset_name" "$(tag_ruleset "$tag_ruleset_name")"
+  stop_note=$settled
+  put_ruleset "$repo" "$tag_ruleset_name" "$(tag_ruleset "$tag_ruleset_name")" ||
+    die "GitHub did not take the $tag_ruleset_name ruleset of $repo"
   gh api -X PATCH "repos/$repo" -F allow_squash_merge=true -F allow_merge_commit=false \
     -F allow_rebase_merge=false -F allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null
   gh api -X PUT "repos/$repo/actions/permissions/workflow" \
@@ -341,6 +390,7 @@ enforce() {
   gh label create needs-decision -R "$repo" --force --color D93F0B \
     --description "The agent is waiting for the owner's decision" >/dev/null
   gh repo edit "$repo" --add-topic "$topic" >/dev/null
+  stop_note=""
   printf 'on: %s (%s; required checks: guard security %s)\n' "$repo" "$mode" "$(tr '\n' ' ' <<<"$jobs")"
 }
 
@@ -422,12 +472,11 @@ $extra_workflows"
 
   # Listed before the merge, so a failure in between still shows up as an alarm in the inbox.
   register "$repo"
-  trap 'printf "guardrails on stopped before merging. Retry with: guardrails on %s\n" "$1" >&2; cleanup' EXIT
+  stop_note="guardrails on stopped before merging PR #$pr. Run again: $(on_command "$1" "$2" "$3")"
   gh pr merge "$pr" -R "$repo" --squash --delete-branch --match-head-commit "$sha" >/dev/null
   printf 'merged PR #%s\n' "$pr"
-  trap 'printf "guardrails on stopped after merging, before %s was fully enforced. Finish with: guardrails on %s\n" "$repo" "$repo" >&2; cleanup' EXIT
-  enforce "$repo" "$dir" "$queue" "$mode"
-  trap cleanup EXIT
+  stop_note="guardrails on stopped after merging PR #$pr, before $repo was enforced. Finish with: $(on_command "$repo" "$2" "$3")"
+  enforce "$repo" "$dir" "$queue" "$mode" "$(on_command "$repo" "$2" "$3")"
   printf 'Next: ask the agent for /ticket-spec <ID>. Run guardrails to see what waits for you.\n'
 }
 
@@ -456,7 +505,7 @@ on_repo() {
     '{event: "plan", action: "on-repo", repo: $repo, branch: $branch, mergeQueue: $queue, mode: $mode, leavesReviewMode: $leaves}')"
   confirm repo "$repo" "Kit files on $default_branch match your installed kit. ${leaving}Type $repo to turn the guardrails on$with: "
   register "$repo"
-  enforce "$repo" "$dir" "$queue" "$mode"
+  enforce "$repo" "$dir" "$queue" "$mode" "$(on_command "$repo" "$2" "$3")"
 }
 
 off_repo() {
