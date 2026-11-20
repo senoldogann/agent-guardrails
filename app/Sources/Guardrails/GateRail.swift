@@ -138,7 +138,7 @@ private struct Connector: View {
     }
 }
 
-/// The repository page's chain.
+/// The repository page's chain, for the project as the app shows it (`shownProject`).
 struct RepositoryRail: View {
     let project: Project
 

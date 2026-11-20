@@ -75,10 +75,12 @@ public struct RollupEntry: Codable, Sendable, Hashable {
     public let context: String?
     public let state: String?
     public let targetUrl: String?
+    /// When a check run started (ISO 8601); gh leaves it out for commit statuses.
+    public let startedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case typename = "__typename"
-        case name, status, conclusion, detailsUrl, context, state, targetUrl
+        case name, status, conclusion, detailsUrl, context, state, targetUrl, startedAt
     }
 
     public var title: String { name ?? context ?? "check" }
@@ -140,10 +142,19 @@ public struct PullRequestDetail: Codable, Sendable, Equatable {
 
     /// The checks of the head commit, failed first, as the owner reads them. A check that ran again with the
     /// same result (a rerun, or `guard` after "ready for review") is listed once; runs that disagree all stay,
-    /// because an earlier failure of a check named `guard` can matter (a PR may add a look-alike workflow).
+    /// because an earlier failure of a check named `guard` can matter (a PR may add a look-alike workflow). A run
+    /// that a run of the same name started at or after it cancelled, without being cancelled itself, is left out:
+    /// the guard's concurrency group cancels the older run that way, and the CLI's inbox counts no failure for it.
     public var checks: [RollupEntry] {
+        let current = statusCheckRollup.filter { entry in
+            !(entry.conclusion == "CANCELLED"
+                && statusCheckRollup.contains { other in
+                    other.title == entry.title && other.conclusion != "CANCELLED"
+                        && (other.startedAt ?? "") >= (entry.startedAt ?? "")
+                })
+        }
         var seen = Set<String>()
-        let distinct = statusCheckRollup.filter { seen.insert("\($0.title)|\($0.outcome)").inserted }
+        let distinct = current.filter { seen.insert("\($0.title)|\($0.outcome)").inserted }
         return distinct.sorted { ($0.outcome, $0.title) < ($1.outcome, $1.title) }
     }
 

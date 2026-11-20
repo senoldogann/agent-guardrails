@@ -9,7 +9,7 @@ struct OverviewView: View {
     let select: (String) -> Void
 
     var body: some View {
-        let groups = groupProjects(projects.projects, matching: "")
+        let groups = groupProjects(shownProjects(projects.projects, inbox: model.snapshot), matching: "")
         let enforced = groups.needsYou + groups.on
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {

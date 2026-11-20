@@ -51,8 +51,9 @@ struct ChecksCard: View {
                 case .loaded(let runs) where runs.isEmpty:
                     Text("No checks ran on this commit.").font(.caption).foregroundStyle(Palette.textSecondary)
                 case .loaded(let runs):
+                    let replaced = ChecksReading(.loaded(runs)).replacedIDs
                     ForEach(runs) { run in
-                        CheckRow(run: run)
+                        CheckRow(run: run, replaced: replaced.contains(run.id))
                         if run.isKitGate, let gate = evidence.gates[run.id] {
                             GateDetail(gate: gate).padding(.leading, 26)
                         }
@@ -63,14 +64,20 @@ struct ChecksCard: View {
     }
 }
 
+/// One check run. A run a newer run of the same name replaced (a rerun, or the guard's cancelled run) is listed with
+/// what it was, but not as a failure: the chain counts the newer run, as the CLI's inbox and GitHub's required checks
+/// do. A real failure of a run named guard is never shown as replaced.
 struct CheckRow: View {
     let run: CheckRun
+    let replaced: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            CheckSymbol(outcome: run.outcome)
+            CheckSymbol(outcome: replaced ? .skipped : run.outcome)
             Text(displaySafe(run.name)).font(.system(size: 13, weight: .medium))
-            if run.outcome == .skipped {
+            if replaced {
+                Text("\(ChecksReading.word(run)), replaced by a newer run").font(.caption).foregroundStyle(Palette.textSecondary)
+            } else if run.outcome == .skipped {
                 // Skipped and neutral share the symbol; the word tells them apart.
                 Text(ChecksReading.word(run)).font(.caption).foregroundStyle(Palette.textSecondary)
             }

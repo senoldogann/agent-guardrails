@@ -129,7 +129,7 @@ struct RepoReportSection: View {
                 Divider().padding(.leading, 40)
                 ReportRow(icon: .checkCircle, title: "Guard and checks", text: checksSentence(report))
                 Divider().padding(.leading, 40)
-                ReportRow(icon: .shieldLock, title: "Admin merges", text: adminMergeSentence(report))
+                ReportRow(icon: .shieldLock, title: "Without an approval", text: adminMergeSentence(report))
                 ForEach(report.adminMerges) { merge in
                     Button {
                         openInBrowser(merge.url)
