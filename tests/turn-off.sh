@@ -101,9 +101,14 @@ for hooks in "$work/global-hooks" "$work/template/hooks"; do
   chmod +x "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/pre-push"
 done
 printf '[core]\n\thooksPath = %s\n[init]\n\ttemplateDir = %s\n' "$work/global-hooks" "$work/template" >"$work/gitconfig-hooks"
-# A hook git config defines by name (git 2.46 and later), which core.hooksPath does not reach.
+# Hooks git config defines by name (git 2.54 and later; older git ignores them), which core.hooksPath does not reach:
+# one directly, one in an include that applies only inside a repository with a github.com remote, as the clone is.
 printf '[hook "spy two"]\n\tcommand = echo config-hook >>%s\n\tevent = post-checkout\n\tevent = pre-commit\n\tevent = pre-push\n' \
   "$work/hooks-ran" >>"$work/gitconfig-hooks"
+printf '[hook "included"]\n\tcommand = echo include-hook >>%s\n\tevent = post-checkout\n\tevent = reference-transaction\n' \
+  "$work/hooks-ran" >"$work/gitconfig-included"
+printf '[includeIf "hasconfig:remote.*.url:https://github.com/**"]\n\tpath = %s\n' "$work/gitconfig-included" \
+  >>"$work/gitconfig-hooks"
 # The owner signs commits: a fake gpg that signs anything, as git expects gpg to answer.
 printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s\\n" "-----BEGIN PGP SIGNATURE-----" fake "-----END PGP SIGNATURE-----"\nprintf "\\n[GNUPG:] SIG_CREATED D 1 8 00 1700000000 FAKE\\n" >&2\n' \
   >"$work/fake-gpg"
@@ -148,13 +153,14 @@ turn_off() {
   local status=0
   rm -f "$fake/writes.log" "$work/events"
   touch "$fake/writes.log" "$work/events"
-  # The removal commit needs a git identity, which a CI runner does not have.
-  env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR HOME="$fake_home" PATH="$fake/bin:$PATH" GUARDRAILS_EVENTS_FD=3 \
+  # The removal commit needs a git identity, which a CI runner does not have. The command runs from /, as the app
+  # starts it, outside any repository, so only the clone itself can match a conditional include.
+  (cd / && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR HOME="$fake_home" PATH="$fake/bin:$PATH" GUARDRAILS_EVENTS_FD=3 \
     GIT_CONFIG_GLOBAL="$3" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$work/remote/.insteadOf" \
     GIT_CONFIG_VALUE_0=https://github.com/ \
     GIT_AUTHOR_NAME=owner GIT_AUTHOR_EMAIL=owner@example.invalid \
     GIT_COMMITTER_NAME=owner GIT_COMMITTER_EMAIL=owner@example.invalid \
-    python3 -I "$here/tests/pty-run.py" "$2" -- "$work/install/bin/guardrails" off "$1" \
+    python3 -I "$here/tests/pty-run.py" "$2" -- "$work/install/bin/guardrails" off "$1") \
     >"$work/out" 2>&1 3>"$work/events" || status=$?
   printf '%s\n' "$status"
 }
