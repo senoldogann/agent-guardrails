@@ -26,6 +26,8 @@
 # The global hooks treat a listed repo as a kit repo even if its local .agent/ is deleted, and from any
 # directory when a command names it; the inbox raises an alarm when the list and the topics disagree.
 set -euo pipefail
+# Pathspec settings from the environment would make this command's pathspecs literal or case-blind.
+unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
 kit=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
 source "$kit/skills/guardrails-init/template/.agent/bin/lib.sh"
 source "$kit/bin/pr-target.sh"
@@ -199,19 +201,40 @@ ruleset_state() {
   ruleset_enforcement "$1" "$ruleset_name"
 }
 
-# Clones a repo into a new temporary directory at the given ref (a branch or a PR's head SHA). Always over
-# HTTPS with gh as the credential helper, whatever gh's git_protocol says, so a machine without a GitHub SSH
-# key works. Runs inside $(...), where `set -e` does not apply, so every step dies on its own failure.
+# Fetches a repo into a new temporary directory at the given ref (a branch or a PR's head SHA). Always over HTTPS
+# with gh as the credential helper, whatever gh's git_protocol says, so a machine without a GitHub SSH key works.
+# The clone runs no hooks and no fsmonitor, whatever the owner's git settings say: a hooks path, a template
+# directory, or hooks defined in git config (hook.<name>.command), which are read inside the new repository, where
+# conditional includes (gitdir:, hasconfig:remote.*.url:, onbranch:) apply, and turned off by name before anything
+# that runs hooks. The repository's contents come from whoever writes to it, and `off` commits from an index that
+# hooks must not change. Runs inside $(...), where `set -e` does not apply, so every step dies on its own failure.
 clone_at() {
-  local repo=$1 ref=$2 dir
+  local repo=$1 ref=$2 dir hooks name
   dir=$(mktemp -d) || die "cannot create a temporary directory"
-  git -c credential.https://github.com.helper= -c "credential.https://github.com.helper=!gh auth git-credential" \
-    clone --quiet --no-checkout "https://github.com/$repo.git" "$dir" || die "cannot clone $repo over HTTPS"
-  git -C "$dir" config credential.https://github.com.helper ''
-  git -C "$dir" config --add credential.https://github.com.helper '!gh auth git-credential'
+  git -c init.defaultBranch=main init --quiet --template= "$dir" || die "cannot create a repository in $dir"
+  git -C "$dir" config core.hooksPath /dev/null || die "cannot configure the clone of $repo"
+  git -C "$dir" config core.fsmonitor false || die "cannot configure the clone of $repo"
+  git -C "$dir" remote add origin "https://github.com/$repo.git" || die "cannot configure the clone of $repo"
+  git -C "$dir" config credential.https://github.com.helper '' || die "cannot configure the clone of $repo"
+  git -C "$dir" config --add credential.https://github.com.helper '!gh auth git-credential' ||
+    die "cannot configure the clone of $repo"
+  hooks=$(cd "$dir" && config_hooks) || exit 1
+  while IFS= read -r name; do
+    [[ -z $name ]] || git -C "$dir" config "hook.$name.enabled" false || die "cannot turn off the git hook $name in the clone"
+  done <<<"$hooks"
   git -C "$dir" fetch --quiet origin "$ref" || die "cannot fetch $ref from $repo"
   git -C "$dir" checkout --quiet --detach FETCH_HEAD || die "cannot check out $ref of $repo"
   printf '%s\n' "$dir"
+}
+
+# Prints the names of the hooks the git config of the current directory defines (hook.<name>.command or
+# hook.<name>.event, git 2.54 and later), one per line. core.hooksPath does not reach these, so clone_at turns each
+# off by name (hook.<name>.enabled). Dies when git cannot read the config; no such hook prints nothing.
+config_hooks() {
+  local keys status=0
+  keys=$(git config --name-only --get-regexp '^hook\..*\.(command|event)$') || status=$?
+  [[ $status -le 1 ]] || die "cannot read the hooks in your git config (git config exit $status)"
+  [[ -z $keys ]] || sed -E 's/^hook\.(.*)\.(command|event)$/\1/' <<<"$keys" | sort -u
 }
 
 require_no_drift() {
@@ -509,15 +532,18 @@ on_repo() {
 }
 
 off_repo() {
-  local repo=$1 default_branch dir notes name branch=chore/remove-agent-guardrails url head file
+  local repo=$1 default_branch dir notes name branch=chore/remove-agent-guardrails url head file tree base_tree gpgsign=""
+  local -a sign
   default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
   dir=$(clone_at "$repo" "$default_branch") || exit 1
   tmp_dirs+=" $dir"
   [[ -z $(git -C "$dir" ls-remote origin "refs/heads/$branch") ]] ||
     die "branch $branch already exists on $repo; nobody but this command should create it. Inspect and delete it, then try again."
-  git -C "$dir" switch --quiet -c "$branch"
-  notes=$(remove_kit_files "$dir")
-  git -C "$dir" add -A
+  # Only the index changes (remove_kit_files). Its tree is written now, so what is committed after the confirmation is
+  # exactly the plan shown, whatever happens to the index or the working tree in between.
+  notes=$(remove_kit_files "$dir") || exit 1
+  tree=$(git -C "$dir" write-tree) || die "cannot write the planned tree of $repo"
+  base_tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || die "cannot read the tree of $repo's $default_branch"
 
   printf '\nTurning off %s:\n  - delete the %s ruleset (merges no longer wait for checks or your approval)\n' "$repo" "$ruleset_name"
   printf '  - delete the %s and %s rulesets (no review required, anyone with write access can create tags)\n' \
@@ -525,14 +551,15 @@ off_repo() {
   printf '  - stop treating it as a kit repo on this machine and remove its %s topic\n' "$topic"
   printf '  - keep the repository settings the kit set: squash merge only, auto-merge allowed, branch deleted\n'
   printf '    on merge, read-only workflow token, actions pinned to SHAs, label needs-decision\n'
-  if git -C "$dir" diff --cached --quiet; then
+  if [[ $tree == "$base_tree" ]]; then
     printf '  - no kit files left on %s\n' "$default_branch"
   else
     printf '  - open and merge a PR on %s that removes:\n' "$default_branch"
     git -C "$dir" diff --cached --name-status | sed 's/^/      /'
     for file in AGENTS.md Makefile; do
       if git -C "$dir" diff --cached --quiet -- "$file" 2>/dev/null; then continue; fi
-      [[ -e "$dir/$file" ]] || continue
+      # Edited rather than removed: the index still has it (the working tree is never changed).
+      [[ -n $(git -C "$dir" ls-files -- ":(literal)$file") ]] || continue
       printf '\n    changes to %s:\n' "$file"
       git -C "$dir" --no-pager diff --cached --no-color -- "$file" | sed 's/^/      /'
     done
@@ -545,18 +572,24 @@ off_repo() {
       removed: ($removed | split("\n") | map(select(length > 0))), notes: ($notes | split("\n") | map(select(length > 0)))}')"
   confirm repo "$repo" "Type $repo to turn the guardrails off: "
 
-  if ! git -C "$dir" diff --cached --quiet; then
-    git -C "$dir" commit --quiet -m "chore: remove agent guardrails kit" \
-      -m "The owner turned the agent guardrails off for this repository with 'guardrails off'."
-    head=$(git -C "$dir" rev-parse HEAD)
-    git -C "$dir" push --quiet -u origin "$branch"
+  if [[ $tree != "$base_tree" ]]; then
+    # commit-tree runs no hooks and commits the planned tree itself, not whatever the index holds by now. It does not
+    # read commit.gpgSign, so an owner who signs commits (and may push only signed ones) gets -S as with git commit.
+    sign=()
+    gpgsign=$(git -C "$dir" config --type=bool --get commit.gpgsign) || [[ $? -eq 1 ]] ||
+      die "commit.gpgSign in your git config is not true or false; nothing changed on $repo"
+    [[ $gpgsign != true ]] || sign=(-S)
+    head=$(git -C "$dir" commit-tree ${sign[@]+"${sign[@]}"} "$tree" -p HEAD -m "chore: remove agent guardrails kit" \
+      -m "The owner turned the agent guardrails off for this repository with 'guardrails off'.") ||
+      die "cannot commit the removal; nothing changed on $repo"
+    git -C "$dir" push --quiet origin "$head:refs/heads/$branch" || die "cannot push $branch to $repo; nothing else changed"
   fi
   for name in "$ruleset_name" "$review_ruleset_name" "$tag_ruleset_name"; do
     delete_ruleset "$repo" "$name"
   done
   printf 'rulesets deleted\n'
   if [[ -n ${head:-} ]]; then
-    url=$(cd "$dir" && gh pr create --base "$default_branch" --head "$branch" \
+    url=$(gh pr create -R "$repo" --base "$default_branch" --head "$branch" \
       --title "chore: remove agent guardrails kit" \
       --body "The owner turned the agent guardrails off with \`guardrails off\`. This removes the kit's files; specs/ stays as the record of decided requirements.")
     gh pr merge "$url" --squash --delete-branch --match-head-commit "$head" >/dev/null

@@ -17,6 +17,7 @@ test:
 	tests/spec-lock.sh
 	tests/approval.sh
 	tests/turn-on.sh
+	tests/turn-off.sh
 	tests/release.sh
 	tests/agent-app.sh
 	tests/kit-update.sh

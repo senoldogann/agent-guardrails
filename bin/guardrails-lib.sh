@@ -320,70 +320,166 @@ check_jobs() {
   done | sort -u
 }
 
-# Removes the kit from a checkout, leaving it as before the kit was installed. Prints one line per file
-# it kept on purpose or could only partly undo, so the owner can review them in the removal PR.
-# Kept: specs/ (the team's record of decided requirements), dev dependencies, .gitignore entries.
+# Stages the removal of the kit in a checkout's index, so its commit is the project as before the kit was installed;
+# `guardrails off` commits exactly that index. The working tree is never read or written, and no temporary file is
+# made: blobs are read by object id, an edit goes into the object store as a new blob, and an index entry that is a
+# symbolic link is removed or kept as a link, never followed. So preparing the plan, which happens before the owner
+# confirms it, cannot read or change anything outside the checkout's .git, whatever links the repository holds.
+# Prints one line per file it kept on purpose or could only partly undo, so the owner can review them in the removal
+# PR. Kept: specs/ (the team's record of decided requirements), dev dependencies, .gitignore entries. Runs inside
+# $(...), where `set -e` does not apply, so every git call dies on its own failure: callers write
+# `notes=$(remove_kit_files ...) || exit 1`. Argument: a git checkout whose index is its HEAD.
 remove_kit_files() {
-  local dir=$1 workflow name makefile lang
-  rm -rf "$dir/.agent"
-  rm -f "$dir/.github/workflows/agent-guard.yml" "$dir/.github/workflows/security.yml" "$dir/.github/security-ignore" \
-    "$dir/.github/workflows/agent-notify.yml"
-  for workflow in "$dir"/.github/workflows/checks-*.yml; do
-    [[ -e $workflow ]] || continue
-    name=${workflow##*/}
-    if cmp -s "$template/ci/$name" "$workflow"; then
-      rm -f "$workflow"
+  local dir=$1 entries entry line path name mode object content lang removed=0
+  # These would change what the pathspecs below match (taken literally, or ignoring case) and could leave the kit in
+  # place without an error. This runs in $(...), so only this subshell loses them.
+  unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
+  unstage_paths "$dir" .agent .github/workflows/agent-guard.yml .github/workflows/security.yml \
+    .github/security-ignore .github/workflows/agent-notify.yml
+  # The checks-<lang> workflows: removed when they are the kit's, kept and noted otherwise. A name git has to quote
+  # names no kit workflow, so it is kept.
+  entries=$(git -C "$dir" ls-files -s -- ':(glob).github/workflows/checks-*.yml') ||
+    die "cannot read the index of $dir"
+  while IFS=$'\t' read -r line path; do
+    [[ -n $path ]] || continue
+    read -r mode object _ <<<"$line"
+    name=${path##*/}
+    if is_kit_blob "$dir" "$mode" "$object" "$template/ci/$name"; then
+      unstage_paths "$dir" "$path"
     else
       printf 'kept (differs from the kit, review it): .github/workflows/%s\n' "$name"
     fi
+  done <<<"$entries"
+  for path in .claude/settings.json .cursor/hooks.json; do
+    entry=$(index_entry "$dir" "$path") || exit 1
+    if [[ -z $entry ]]; then
+      # A linked .claude or .cursor is an entry of its own, and what it points to is never read.
+      entry=$(index_entry "$dir" "${path%%/*}") || exit 1
+      [[ -z $entry ]] ||
+        printf 'kept (a symbolic link or other non-directory, not followed; remove the kit hooks by hand): %s\n' "${path%%/*}"
+      continue
+    fi
+    read -r mode object <<<"$entry"
+    if is_kit_blob "$dir" "$mode" "$object" "$template/$path"; then
+      unstage_paths "$dir" "$path"
+    else
+      printf 'kept (differs from the kit, remove the kit hooks by hand): %s\n' "$path"
+    fi
   done
-  if [[ -f "$dir/.claude/settings.json" ]]; then
-    if cmp -s "$template/.claude/settings.json" "$dir/.claude/settings.json"; then
-      rm -f "$dir/.claude/settings.json"
-      rmdir "$dir/.claude" 2>/dev/null || true
+  entry=$(index_entry "$dir" Makefile) || exit 1
+  if [[ -n $entry ]]; then
+    read -r mode object <<<"$entry"
+    if ! is_regular_mode "$mode"; then
+      printf 'kept (a symbolic link or other non-file, not followed; remove the kit include by hand if it has one): Makefile\n'
     else
-      printf 'kept (differs from the kit, remove the kit hooks by hand): .claude/settings.json\n'
-    fi
-  fi
-  if [[ -f "$dir/.cursor/hooks.json" ]]; then
-    if cmp -s "$template/.cursor/hooks.json" "$dir/.cursor/hooks.json"; then
-      rm -f "$dir/.cursor/hooks.json"
-      rmdir "$dir/.cursor" 2>/dev/null || true
-    else
-      printf 'kept (differs from the kit, remove the kit hooks by hand): .cursor/hooks.json\n'
-    fi
-  fi
-  makefile="$dir/Makefile"
-  if [[ -f $makefile ]] && grep -F 'include .agent/common.mk' "$makefile" >/dev/null; then
-    for lang in typescript javascript python rust swift; do
-      if cmp -s "$template/makefiles/Makefile.$lang" "$makefile"; then
-        rm -f "$makefile"
-        break
+      content=$(staged_blob "$dir" "$object") || exit 1
+      if grep -F 'include .agent/common.mk' <<<"$content" >/dev/null; then
+        for lang in typescript javascript python rust swift; do
+          if is_kit_blob "$dir" "$mode" "$object" "$template/makefiles/Makefile.$lang"; then
+            unstage_paths "$dir" Makefile
+            removed=1
+            break
+          fi
+        done
+        if [[ $removed -eq 0 ]]; then
+          restage_filtered "$dir" Makefile "$mode" "$object" without_kit_include
+          printf 'edited (kit include removed; targets that called .agent/ scripts need a look): Makefile\n'
+        fi
       fi
-    done
-    if [[ -f $makefile ]]; then
-      grep -vF 'include .agent/common.mk' "$makefile" >"$makefile.tmp"
-      mv "$makefile.tmp" "$makefile"
-      printf 'edited (kit include removed; targets that called .agent/ scripts need a look): Makefile\n'
     fi
   fi
-  [[ -f "$dir/AGENTS.md" ]] && remove_agents_section "$dir/AGENTS.md"
-  [[ -d "$dir/specs" ]] && printf 'kept (decided requirements stay as documentation): specs/\n'
-  return 0
+  entry=$(index_entry "$dir" AGENTS.md) || exit 1
+  if [[ -n $entry ]]; then
+    read -r mode object <<<"$entry"
+    if is_regular_mode "$mode"; then
+      restage_filtered "$dir" AGENTS.md "$mode" "$object" without_agents_section
+    else
+      printf 'kept (a symbolic link or other non-file, not followed; remove the kit section by hand): AGENTS.md\n'
+    fi
+  fi
+  entry=$(git -C "$dir" ls-files -- ':(literal)specs') || die "cannot read the index of $dir"
+  [[ -z $entry ]] || printf 'kept (decided requirements stay as documentation): specs/\n'
 }
 
-# Removes the kit's section from AGENTS.md: between the agent-guardrails start/end markers, or, for
-# installations made before the markers existed, from "## Agent guardrails" to the next "## " heading.
-remove_agents_section() {
-  local file=$1
-  if grep -F '<!-- agent-guardrails:start -->' "$file" >/dev/null; then
-    awk '/<!-- agent-guardrails:start -->/ {skip = 1} !skip {print} /<!-- agent-guardrails:end -->/ {skip = 0}' "$file" >"$file.tmp"
-  else
-    awk '/^## Agent guardrails[[:space:]]*$/ {skip = 1; next} skip && /^## / {skip = 0} !skip {print}' "$file" >"$file.tmp"
-  fi
-  # Squeeze the blank lines the removed section leaves behind and drop trailing ones.
-  cat -s "$file.tmp" | awk '{lines[NR] = $0} NF {last = NR} END {for (i = 1; i <= last; i++) print lines[i]}' >"$file"
-  rm -f "$file.tmp"
+# Prints "<mode> <object>" of a path's entry in a checkout's index (mode 100644 or 100755 for a file, 120000 for a
+# symbolic link, 160000 for a submodule), nothing when the index has no such path. Arguments: checkout, path.
+index_entry() {
+  local entries line path mode object
+  entries=$(git -C "$1" ls-files -s -- ":(literal)$2") || die "cannot read the index of $1"
+  # Only the entry of exactly this path: for a directory of that name git lists the entries under it.
+  while IFS=$'\t' read -r line path; do
+    if [[ $path == "$2" ]]; then
+      read -r mode object _ <<<"$line"
+      printf '%s %s\n' "$mode" "$object"
+    fi
+  done <<<"$entries"
+}
+
+is_regular_mode() {
+  [[ $1 == 100644 || $1 == 100755 ]]
+}
+
+# Succeeds when an index entry is a regular file with exactly the content of a kit file; the file mode is not
+# compared. Arguments: checkout, mode, object, kit file.
+is_kit_blob() {
+  local kit_object
+  is_regular_mode "$2" && [[ -f $4 ]] || return 1
+  kit_object=$(git -C "$1" hash-object --no-filters -- "$4") || die "cannot hash $4"
+  [[ $kit_object == "$3" ]]
+}
+
+# Prints a blob of a checkout's object store. Arguments: checkout, object.
+staged_blob() {
+  git -C "$1" cat-file blob "$2" || die "cannot read object $2 in $1"
+}
+
+# Removes paths (a file, a link, or every entry under a directory) from a checkout's index, never from its working
+# tree. Arguments: checkout, path...
+unstage_paths() {
+  local dir=$1 path
+  shift
+  for path in "$@"; do
+    git -C "$dir" ls-files -z -- ":(literal)$path" | git -C "$dir" update-index -z --force-remove --stdin ||
+      die "cannot remove $path from the index of $dir"
+  done
+}
+
+# Stages the output of a filter over a staged regular file as that file's new content, with the same mode, without
+# touching the working tree. Arguments: checkout, path, mode, object, filter (a command reading stdin).
+restage_filtered() {
+  local dir=$1 path=$2 mode=$3 object=$4 filter=$5 new
+  new=$(staged_blob "$dir" "$object" | "$filter" | git -C "$dir" hash-object -w --stdin) ||
+    die "cannot write the new $path into the objects of $dir"
+  git -C "$dir" update-index --cacheinfo "$mode,$new,$path" || die "cannot stage the new $path in $dir"
+}
+
+# Reads a Makefile and prints it without the kit's include line.
+without_kit_include() {
+  # grep exits 1 when no line is left, which is a valid (empty) Makefile.
+  grep -vF 'include .agent/common.mk' || [[ $? -eq 1 ]]
+}
+
+# Reads AGENTS.md and prints it without the kit's section: between the agent-guardrails start/end markers, or, for
+# installations made before the markers existed, from "## Agent guardrails" to the next "## " heading. Squeezes the
+# blank lines the removed section leaves behind and drops trailing ones.
+without_agents_section() {
+  awk '
+    /<!-- agent-guardrails:start -->/ { marked = 1 }
+    { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        line = lines[i]
+        if (marked) {
+          if (line ~ /<!-- agent-guardrails:start -->/) skip = 1
+          if (!skip) print line
+          if (line ~ /<!-- agent-guardrails:end -->/) skip = 0
+        } else {
+          if (line ~ /^## Agent guardrails[[:space:]]*$/) { skip = 1; continue }
+          if (skip && line ~ /^## /) skip = 0
+          if (!skip) print line
+        }
+      }
+    }' | cat -s | awk '{lines[NR] = $0} NF {last = NR} END {for (i = 1; i <= last; i++) print lines[i]}'
 }
 
 # Reads `gh pr list --json number,title,url,isDraft,headRefOid,labels,statusCheckRollup,reviewDecision,
