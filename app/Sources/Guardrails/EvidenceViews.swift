@@ -70,6 +70,10 @@ struct CheckRow: View {
         HStack(spacing: 10) {
             CheckSymbol(outcome: run.outcome)
             Text(displaySafe(run.name)).font(.system(size: 13, weight: .medium))
+            if run.outcome == .skipped {
+                // Skipped and neutral share the symbol; the word tells them apart.
+                Text(ChecksReading.word(run)).font(.caption).foregroundStyle(Palette.textSecondary)
+            }
             Spacer(minLength: 8)
             if let duration = run.duration {
                 Text(shortDuration(duration))
