@@ -82,19 +82,34 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   - a gh call nested in another's arguments (`$(gh pr review --approve)`, backticks, `<(…)`);
   - a variable or command substitution in a gh merge, edit, auth or api call;
   - checked flags in other spellings (`--base=x`, `-Bx`, `--admin=true`, `-fbody=x`, `-ht`), and flags on a
-    continuation line (a line ending in `\`);
+    continuation line (a line ending in `\`); gh spelled `GH`;
   - commands that drop the session's identity so gh and git fall back to the owner's login (`env -i`,
     `env -`, `/usr/bin/env -i`, `exec -c`, clearing `GIT_CONFIG_*`, tmux, screen, cron and launchd jobs, a new
-    Terminal, osascript's `do shell script`, ssh to this machine);
-  - git settings passed with `git -c`, `git --config-env` or through `GIT_CONFIG_*` and `GIT_SSH*`;
+    Terminal, osascript's `do shell script`, ssh to this machine), also after `X=1`, `if`, `{`, in a
+    here-string or in text piped to a shell;
+  - git settings passed with `git -c`, `git --config-env` or through `GIT_CONFIG_*` and `GIT_SSH*`, including
+    a remote's push URL and aliases (which can run a shell); git's own options before the subcommand
+    (`git -C . push origin main`);
   - printing the environment (`export`, `declare -x`, `env` without a command, `ps e`, interpreters reading
     it);
-  - changing the user's hook registrations, or `disableAllHooks`, from the shell (reading them stays allowed).
+  - changing the user's hook registrations or their directories, a project's local settings, or
+    `disableAllHooks`, from the shell, and running an agent with another `CLAUDE_CONFIG_DIR` or `CODEX_HOME`
+    (reading them stays allowed).
 
   These rules match a command where it runs, not a word in a commit message, a title or a remote command:
-  "add CSV export", `git switch -c fix/credential-rotation`, `git -C dir` and ssh port forwards stay allowed.
+  "add CSV export", `fix(env)`, `git switch -c fix/credential-rotation`, `git -C dir`, ssh port forwards and
+  `rg GIT_ASKPASS` stay allowed. A line that only looks continued is matched as written too, so it cannot join
+  the next command to its own.
+- bash-guard runs with `bash -p`, so the environment cannot make it source a file first (`BASH_ENV`), and it
+  allows a call only through an explicit allow: on macOS's Bash 3.2 an internal error, even a fatal one, used
+  to end with status 0 and let the call through. A git that fails for any reason other than "not a git
+  repository" counts as a kit repository, so the full rules stay on.
 - In Claude Code, bash-guard now also checks the file tools (Read, Grep, Glob, Edit, Write, MultiEdit,
-  NotebookEdit) by the path, with every link resolved and `~` expanded:
+  NotebookEdit) by the path, with `x/..` resolved as Claude Code resolves it, every link resolved, `~`
+  expanded, and places compared by file identity, so another spelling of the same place (another case on
+  macOS, the `/System/Volumes/Data` firmlink) counts. An edit of a hook registration is replayed on the file,
+  and refused when its `old_string` is not in the file as written (the Edit tool also matches curly quotes for
+  straight ones):
   - none may read or write `~/.config/agent-guardrails` (the enforced repositories and the agent App's private
     key), and no Grep may search it or a parent directory;
   - no write may go into the kit install;

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Global PreToolUse hook for Bash, registered by install.sh in ~/.claude/settings.json (Claude Code) and in
 # Codex's hooks.json (Codex sends the same input). Cursor reaches it through cursor-guard.sh. It is the single
 # source of truth for what the agent may run. Given a file tool's path (Claude Code's Read, Grep, Glob, Edit,
@@ -8,7 +8,8 @@
 # owner's list of enforced repositories) and to any command that names an enforced repository, from any
 # directory. Everywhere else the agent works as if the kit did not exist, with one exception that protects
 # the kit repositories themselves: nothing may run the owner's commands (approve-head, revoke-head,
-# guardrails on/off/approve/revoke/update/agent create), post a `merge-approval` status or touch the list of enforced repositories.
+# guardrails on/off/approve/revoke/update/agent create), post a `merge-approval` status, touch the list of enforced
+# repositories or the kit install, or change the agents' hook registrations.
 # In kit repositories the agent works with the owner's GitHub identity unless agent-identity.sh switched the
 # session to the agent App's bot, and the owner's login stays reachable either way, so actions reserved for
 # the human must be blocked before they run: approving or admin-merging PRs, approving deployments,
@@ -17,12 +18,14 @@
 # string, including text inside quotes (so `bash -c "..."` wrappers are covered).
 # Limits: obfuscated commands (string concatenation, scripts written to files) can evade text matching;
 # the ruleset on GitHub, which needs the owner's typed approval per HEAD, is the authority.
-# Exit code 2 blocks the call and shows stderr to the agent.
+# Exit code 2 blocks the call and shows stderr to the agent. Bash runs it with -p, so the environment cannot
+# make it source a file first (BASH_ENV) or replace its functions.
 set -euo pipefail
 # Fail closed: a call is allowed only through allow (below); every other end blocks it with 2. That covers an
 # internal error (missing jq, an unreadable file) and the fatal ones (a failed source, an unset variable) after
 # which Bash 3.2, macOS's /bin/bash, runs the EXIT trap with status 0. A deny, also one in a subshell, ends with 2
-# and has said why. Subshells keep their own exit codes.
+# and has said why. Subshells keep their own exit codes. Not inherited from the environment: only allow sets it.
+allowed=0
 # shellcheck disable=SC2154 # status is assigned inside the trap
 trap 'status=$?; if [[ ${allowed:-} != 1 ]]; then [[ $status -eq 2 ]] || printf "BLOCKED by bash-guard: internal error (exit %s); ask the user to check the hook\n" "$status" >&2; exit 2; fi' EXIT
 allow() {
@@ -33,34 +36,41 @@ allow() {
 source "$(dirname "$(realpath "$0")")/kit-project.sh"
 
 input=$(cat)
-tool=$(jq -r '.tool_name // empty' <<<"$input")
-raw=$(jq -r '.tool_input.command // empty' <<<"$input")
-# A line that ends in a backslash continues on the next one: joined, so a flag on a continuation line is checked
-# with its command.
-continuation=$'\\\n'
-raw=${raw//"$continuation"/ }
-# A file tool (Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit; other agents' read tools through their
-# adapters) is checked by its path, against the rules on the owner's files: reads against the owner's settings and
-# credential files, writes also against the kit install and the kit's hook registrations.
-read_path=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // empty' <<<"$input")
+# One jq call for every field (each call is a process the agent waits for); @sh quotes them for eval. A file tool
+# (Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit; other agents' read tools through their adapters) is
+# checked by its path, against the rules on the owner's files: reads against the owner's settings and credential
+# files, writes also against the kit install and the agents' hook registrations.
+fields=$(jq -r '@sh "tool=\(.tool_name // "") raw=\(.tool_input.command // "") cwd=\(.cwd // "") read_path=\(.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // "")"' <<<"$input")
+tool="" raw="" cwd="" read_path=""
+eval "$fields"
 # Grep without a path searches the session's directory.
-[[ $tool != Grep || -n $read_path ]] || read_path=$(jq -r '.cwd // empty' <<<"$input")
+[[ $tool != Grep || -n $read_path ]] || read_path=$cwd
 [[ -n $raw || -n $read_path ]] || allow
-# Normalize common spellings so quoting or path tricks do not hide a gh call:
-# drop quotes and backslashes, and turn $(which gh)/$(command -v gh)/`which gh` into gh.
-quote_chars=$'\\\\"\''
-# shellcheck disable=SC2016 # $( and backticks are literal text to rewrite, not expansions
-gh_lookup='s/\$\((which|command -v|type -p) gh\)/gh/g; s/`(which|command -v|type -p) gh`/gh/g'
-if [[ -n $raw ]]; then
-  cmd=$(tr -d "$quote_chars" <<<"$raw" | sed -E "$gh_lookup")
-else
-  cmd=$read_path
-fi
 
 deny() {
   printf 'BLOCKED by bash-guard: %s\nThis is reserved for the human (approvals, merges, credentials, repository settings). Do not work around it; ask the user to do it.\n' "$1" >&2
   exit 2
 }
+
+lower() {
+  tr '[:upper:]' '[:lower:]' <<<"$1"
+}
+
+# Normalize common spellings so quoting or path tricks do not hide a gh call: drop quotes and backslashes, and turn
+# $(which gh)/$(command -v gh)/`which gh` into gh. A line that ends in a backslash may continue on the next one, or
+# (after an escaped backslash, or in a heredoc) not: the command is matched both as written and with such lines
+# joined, so neither a flag on a continuation line nor a command after a line that only looks continued slips by.
+quote_chars=$'\\\\"\''
+# shellcheck disable=SC2016 # $( and backticks are literal text to rewrite, not expansions
+gh_lookup='s/\$\((which|command -v|type -p) gh\)/gh/g; s/`(which|command -v|type -p) gh`/gh/g'
+continuation=$'\\\n'
+joined=${raw//"$continuation"/ }
+if [[ -n $raw ]]; then
+  cmd=$(tr -d "$quote_chars" <<<"$raw" | sed -E "$gh_lookup")
+  [[ $joined == "$raw" ]] || cmd+=$'\n'$(tr -d "$quote_chars" <<<"$joined" | sed -E "$gh_lookup")
+else
+  cmd=$read_path
+fi
 
 matches() {
   grep -Eiq -- "$1" <<<"$cmd"
@@ -71,9 +81,26 @@ matches_case() {
   grep -Eq -- "$1" <<<"$cmd"
 }
 
-# Prints a path with every symbolic link resolved, also in a part that does not exist yet (a file a write would
-# create), so no link can dress up a protected path. Relative paths are taken from the tool call's directory, and a
-# leading ~ is the home directory (Grep hands its path over as written and expands ~ itself).
+# Prints an absolute path with "." and ".." resolved as text, as Claude Code resolves a tool's path: x/.. is the
+# directory that holds x, whether x exists or not. Argument: absolute path.
+lexical_path() {
+  local rest=${1#/} part out=""
+  while [[ -n $rest ]]; do
+    part=${rest%%/*}
+    if [[ $rest == */* ]]; then rest=${rest#*/}; else rest=""; fi
+    case $part in
+      "" | .) ;;
+      ..) out=${out%/*} ;;
+      *) out="$out/$part" ;;
+    esac
+  done
+  printf '%s\n' "${out:-/}"
+}
+
+# Prints a path with "." and ".." resolved as text and then every symbolic link resolved, also in a part that does
+# not exist yet (a file a write would create), so no link can dress up a protected path. Relative paths are taken
+# from the tool call's directory, and a leading ~ is the home directory (Grep hands its path over as written and
+# expands ~ itself).
 physical_path() {
   local path=$1 rest="" link hops=0
   # shellcheck disable=SC2088 # a literal ~, as Grep hands it over
@@ -81,7 +108,8 @@ physical_path() {
     "~") path=$HOME ;;
     "~/"*) path="$HOME/${path#"~/"}" ;;
   esac
-  [[ $path == /* ]] || path="$(jq -r '.cwd // empty' <<<"$input")/$path"
+  [[ $path == /* ]] || path="$cwd/$path"
+  path=$(lexical_path "$path")
   while :; do
     if [[ -e $path ]]; then
       path=$(realpath "$path") || return 1
@@ -93,7 +121,7 @@ physical_path() {
       [[ $hops -le 40 ]] || deny "a symbolic link loop at $path"
       link=$(readlink "$path") || return 1
       [[ $link == /* ]] || link="$(dirname "$path")/$link"
-      path=$link
+      path=$(lexical_path "$link")
       continue
     fi
     if [[ $path == / || -z $path ]]; then
@@ -103,6 +131,37 @@ physical_path() {
     rest="/${path##*/}$rest"
     path=${path%/*}
   done
+}
+
+# Succeeds when a path is a place or lies below it: by the text of their physical paths, and by file identity
+# wherever both exist, so the same place under another spelling (the /System/Volumes/Data firmlink, another case on
+# macOS) counts. Arguments: path, place.
+is_within() {
+  local path=$1 place=$2
+  case $path/ in
+    "$place"/*) return 0 ;;
+  esac
+  [[ -e $place ]] || return 1
+  while :; do
+    if [[ -e $path && $path -ef $place ]]; then return 0; fi
+    [[ $path != / && -n $path ]] || return 1
+    path=${path%/*}
+    [[ -n $path ]] || path=/
+  done
+}
+
+# Succeeds when two paths name the same file: by identity where both exist, otherwise by the same directory and the
+# same name without case (macOS reads a new Settings.json as settings.json). Arguments: two paths.
+same_file() {
+  local dir1=${1%/*} dir2=${2%/*}
+  if [[ -e $1 && -e $2 ]]; then
+    [[ $1 -ef $2 ]]
+    return
+  fi
+  [[ -n $dir1 ]] || dir1=/
+  [[ -n $dir2 ]] || dir2=/
+  [[ $dir1 == "$dir2" || (-e $dir1 && -e $dir2 && $dir1 -ef $dir2) ]] || return 1
+  [[ $(lower "${1##*/}") == "$(lower "${2##*/}")" ]]
 }
 
 # Prints the physical paths of the user's hook registrations: Claude Code's settings (also under CLAUDE_CONFIG_DIR),
@@ -117,16 +176,17 @@ user_hook_files() {
 }
 
 # Prints what a file-tool write leaves in a file: Write's content, or the file with Edit's or MultiEdit's
-# replacements applied as the tools apply them (the first occurrence, or every one with replace_all). Argument: the
-# file.
+# replacements applied as the tools apply them (the first occurrence, or every one with replace_all). Fails when an
+# old_string is not in the file as written: the Edit tool also matches looser spellings (curly quotes for straight
+# ones), which this replay could not follow. Argument: the file.
 content_after_write() {
   # shellcheck disable=SC2016 # jq's $variables, not the shell's
   local program='
     def replaced($e): ($e.old_string // "") as $old | ($e.new_string // "") as $new
       | if $old == "" then $new
+        elif (contains($old) | not) then error("old_string is not in the file as written")
         elif ($e.replace_all // false) then split($old) | join($new)
-        else split($old) as $parts
-          | if ($parts | length) < 2 then . else $parts[0] + $new + ($parts[1:] | join($old)) end
+        else split($old) as $parts | $parts[0] + $new + ($parts[1:] | join($old))
         end;
     .tool_input as $in
     | if $in.content != null then $in.content
@@ -141,12 +201,15 @@ content_after_write() {
 
 # Prints why a write that leaves `after` in a hook registration file that held `before` would drop, move or change
 # one of the kit's hook entries (event, matcher and the entry itself, for every entry that runs hooks-global/*.sh),
-# or nothing. Arguments: the file's content before and after the write.
+# or nothing. Entries count only where the agents read them: in an array per event, and, for Claude Code and Codex,
+# in an array of hooks per matcher. Arguments: the file's content before and after the write.
 kit_hooks_problem() {
   jq -rn --arg before "$1" --arg after "$2" '
-    def kit_hooks: [(.hooks // {}) | to_entries[] | .key as $event | (.value // [])[]
+    def kit_hooks: [(.hooks | if type == "object" then . else {} end) | to_entries[] | .key as $event
+      | (.value | if type == "array" then .[] else empty end)
       | if type == "object" and (.hooks | type) == "array" then (.matcher // "") as $matcher | .hooks[] | [$event, $matcher, .]
-        else [$event, "", .] end
+        elif type == "object" and has("command") then [$event, "", .]
+        else empty end
       | select((.[2] | type) == "object" and ((.[2].command // "") | tostring | test("hooks-global/[a-z-]+\\.sh")))];
     (try ($before | fromjson | kit_hooks) catch []) as $kept
     | if ($kept | length) == 0 then empty
@@ -170,63 +233,52 @@ hooks_off_problem() {
 }
 
 # Files that hold GitHub credentials or the tokens of Claude Code's local settings, as shell commands name them.
-credential_files='\.config/gh|hosts\.yml|\.git-credentials|git/credentials|\.netrc|settings\.local\.json'
-
-# Where a command word starts: the start of a line, a separator, or the text a wrapper runs (sh -c, bash -c, eval,
-# exec, sudo, nohup, time, command, builtin, xargs, env with options or assignments), with an optional directory
-# before the word (/usr/bin/env). Rules that name a command anchor it here, so a commit message that mentions
-# "export" or "tmux new-session" is no command.
-# shellcheck disable=SC2016 # backticks are literal regex characters
-command_at='(^|[;&|(`]|(^|[[:space:]/])((ba|z|da|k|fi)?sh[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-[a-zA-Z]*c|eval|exec|sudo|nohup|time|command|builtin|xargs|env([[:space:]]+(-[a-zA-Z0-9]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*))*))[[:space:]]*([^[:space:];&|`()]*/)?'
+credential_files='\.config/gh|hosts\.yml|\.git-credentials|\.config/git/credentials|\.netrc|settings\.local\.json'
 
 # Everywhere: the owner's commands, the approval status and the rulesets of kit repositories, and the
 # owner's list of enforced repositories are the owner's alone.
 # .config as a path component, not inside a word: `model.configuration` next to an agent-guardrails path is fine.
 if matches '\.config([/[:space:]]|$)' && matches 'agent-g'; then deny "the owner's list of enforced repositories"; fi
 if matches '\.local/share' && matches 'agent-g'; then deny "the owner's kit install"; fi
-# File tools, everywhere, by the physical path (every link resolved): none reads or writes the owner's kit settings
-# (~/.config/agent-guardrails: the enforced repositories and the agent App's private key), and a Grep, which reads
-# every file below its directory, does not search ~/.config or a parent of it. Writes also stay out of the kit
-# install this hook runs from; leave every kit hook entry in the user's hook registrations as it is (they may change
-# anything else there); and set disableAllHooks in no Claude Code settings file, the user's or a project's. Reads
-# of the kit install go by the path's text above, so a skill linked from ~/.claude/skills into it can still be read.
+# File tools, everywhere, by the physical path (every link resolved) and by file identity: none reads or writes the
+# owner's kit settings (~/.config/agent-guardrails: the enforced repositories and the agent App's private key), and
+# a Grep, which reads every file below its directory, does not search ~/.config or a parent of it. Writes also stay
+# out of the kit install this hook runs from; leave every kit hook entry in the user's hook registrations as it is
+# (they may change anything else there); and set disableAllHooks in no Claude Code settings file, the user's or a
+# project's. Reads of the kit install go by the path's text above, so a skill linked from ~/.claude/skills into it
+# can still be read.
 if [[ -z $raw ]]; then
   settings_root=$(physical_path "$(dirname "$(guardrails_registry)")")
   target=$(physical_path "$read_path")
-  # The searched directory with one trailing slash ("/" for the root): a pattern built from a quoted empty string
-  # does not match on Bash 5.2.
-  searched=${target%/}/
-  case $target/ in
-    "$settings_root"/*) deny "the owner's kit settings (enforced repositories, agent App key)" ;;
-  esac
-  if [[ $tool == Grep ]]; then
-    case $(dirname "$settings_root")/ in
-      "$searched"*) deny "searching $target, which holds the owner's kit settings and credentials; search a narrower directory" ;;
-    esac
+  ! is_within "$target" "$settings_root" || deny "the owner's kit settings (enforced repositories, agent App key)"
+  if [[ $tool == Grep ]] && is_within "${settings_root%/*}" "$target"; then
+    deny "searching $target, which holds the owner's kit settings and credentials; search a narrower directory"
   fi
   case $tool in
     Edit | Write | MultiEdit | NotebookEdit)
       kit_root=$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)
-      case $target/ in
-        "$kit_root"/*) deny "the owner's kit install ($kit_root)" ;;
-      esac
-      hook_files=$(user_hook_files)
+      ! is_within "$target" "$kit_root" || deny "the owner's kit install ($kit_root)"
       user_file=0
-      if grep -Fx -- "$target" <<<"$hook_files" >/dev/null; then
-        user_file=1
+      hook_files=$(user_hook_files)
+      while IFS= read -r hook_file; do
+        if same_file "$target" "$hook_file"; then user_file=1; fi
+      done <<<"$hook_files"
+      if [[ $user_file -eq 1 ]]; then
         before=""
         if [[ -f $target ]]; then before=$(cat "$target"); fi
-        after=$(content_after_write "$target")
+        after=$(content_after_write "$target") ||
+          deny "an edit of $target whose old_string is not in the file as written; the Edit tool would also match looser spellings, which this check cannot follow"
         problem=$(kit_hooks_problem "$before" "$after")
         [[ -z $problem ]] || deny "changing the kit's hooks in $target: $problem"
       fi
-      case $target in
+      case $(lower "$target") in
         */.claude/settings.json | */.claude/settings.local.json) claude_settings=1 ;;
         */settings.json | */settings.local.json) claude_settings=$user_file ;;
         *) claude_settings=0 ;;
       esac
       if [[ $claude_settings -eq 1 ]]; then
-        after=$(content_after_write "$target")
+        after=$(content_after_write "$target") ||
+          deny "an edit of $target whose old_string is not in the file as written; the Edit tool would also match looser spellings, which this check cannot follow"
         problem=$(hooks_off_problem "$after")
         [[ -z $problem ]] || deny "turning Claude Code's hooks off in $target: $problem"
       fi
@@ -234,12 +286,12 @@ if [[ -z $raw ]]; then
   esac
 fi
 # The command rules below would read a path as a command (src/environments/ as environment access), so a file path
-# stops here: where the full rule set applies, the places that hold credentials are refused by their physical path,
-# not any file of the same name (an Ansible inventory's hosts.yml): gh's config directory, git's credential stores,
-# ~/.netrc and Claude Code's local settings. gh's and git's directories are taken both where the environment puts
-# them (GH_CONFIG_DIR, XDG_CONFIG_HOME) and in their default place under the home directory.
+# stops here: where the full rule set applies, the places that hold credentials are refused by their physical path
+# and identity, not any file of the same name (an Ansible inventory's hosts.yml): gh's config directory, git's
+# credential stores, ~/.netrc and Claude Code's local settings. gh's and git's directories are taken both where the
+# environment puts them (GH_CONFIG_DIR, XDG_CONFIG_HOME) and in their default place under the home directory.
 if [[ -z $raw ]]; then
-  is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" || allow
+  is_kit_project "$cwd" || mentions_registered_repo "$cmd" || allow
   credential_places=$(
     for place in "${GH_CONFIG_DIR:-$HOME/.config/gh}" "${XDG_CONFIG_HOME:-$HOME/.config}/gh" "$HOME/.config/gh" \
       "${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials" "$HOME/.config/git/credentials" "$HOME/.git-credentials" \
@@ -248,16 +300,12 @@ if [[ -z $raw ]]; then
     done
   )
   while IFS= read -r place; do
-    case $target/ in
-      "$place"/*) deny "reading stored GitHub credentials" ;;
-    esac
-    if [[ $tool == Grep ]]; then
-      case $place/ in
-        "$searched"*) deny "searching $target, which holds stored GitHub credentials; search a narrower directory" ;;
-      esac
+    ! is_within "$target" "$place" || deny "reading stored GitHub credentials"
+    if [[ $tool == Grep ]] && is_within "$place" "$target"; then
+      deny "searching $target, which holds stored GitHub credentials; search a narrower directory"
     fi
   done <<<"$credential_places"
-  case $target in
+  case $(lower "$target") in
     */.claude/settings.local.json) deny "reading stored GitHub credentials" ;;
   esac
   allow
@@ -336,12 +384,12 @@ split_commands() {
 # command line that runs a shell or interpreter (which could read the "text" from a pipe).
 owner_command='(^|[^[:alnum:]_.-])(approve|revoke)-head([[:space:]]|$)|(^|[^[:alnum:]_.-])(agent-)?guardrails[[:space:]]+(on|off|approve|revoke|update|agent[[:space:]]+create)([[:space:]]|$)'
 segments=$(split_commands <<<"$raw")
+[[ $joined == "$raw" ]] || segments+=$'\n'$(split_commands <<<"$joined")
 interpreter=0
 if grep -Eq '^[[:space:]]*([^[:space:]]*/)?(sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|deno|bun|perl|ruby|php|osascript|xargs|eval|source|\.|env|exec|script|expect|unbuffer|nohup|time|sudo)([[:space:]]|$)' <<<"$segments"; then
   interpreter=1
 fi
 while IFS= read -r segment; do
-  grep -Eq "$owner_command" <<<"$segment" || continue
   bare=$(sed -E 's/^[[:space:]]+//' <<<"$segment")
   reader=0
   if [[ $interpreter -eq 0 ]] && ! grep -Eq '\$\(|(^|[[:space:]])--pre(-glob)?([[:space:]=]|$)' <<<"$bare"; then
@@ -353,40 +401,78 @@ while IFS= read -r segment; do
   fi
   [[ $reader -eq 1 ]] && continue
   deny "owner-only guardrails command (approve-head, revoke-head, guardrails on/off/approve/revoke/update/agent create)"
-done <<<"$segments"
+done < <(grep -E "$owner_command" <<<"$segments" || true)
 
-# The user's hook registrations (Claude Code's settings in ~/.claude or CLAUDE_CONFIG_DIR, Cursor's and Codex's
-# hooks.json) and Claude Code's switch for every hook (disableAllHooks, in any settings file) change only through the
-# file tools, which check the change; a shell command may read them. They are named by their path in the home
-# directory (~, $HOME, the home path), by CLAUDE_CONFIG_DIR or CODEX_HOME, or by file name after a cd there. A
-# project's own registrations (.claude/settings.json without the home directory) stay writable: the kit copies them.
-# shellcheck disable=SC2016 # sed's bracket expression, not a shell expansion
-home_spelling="(~|\\\$\\{?HOME\\}?|$(sed -E 's/[][\\.*^$(){}?+|]/\\&/g' <<<"$HOME"))"
-hook_paths="$home_spelling/\\.claude/settings(\\.local)?\\.json|$home_spelling/\\.(cursor|codex)/hooks\\.json|CLAUDE_CONFIG_DIR|CODEX_HOME|disableAllHooks"
-if grep -Eq -- "(^|[;&|(\`[:space:]])(cd|pushd)[[:space:]]+$home_spelling(/\\.(claude|cursor|codex))?/?([[:space:];&|]|\$)" <<<"$cmd"; then
-  hook_paths+='|(^|[/[:space:]])(settings(\.local)?|hooks)\.json'
+# Where a command word starts. Narrow by default: the start of a line, a separator, a subshell or command
+# substitution, a here-string, a shell keyword (if, then, do, {, !), an assignment (X=1 cmd), or the text a wrapper
+# runs (sh -c, bash -c, eval, exec, sudo, nohup, time, command, builtin, xargs, env with options or assignments),
+# with an optional directory before the word (/usr/bin/env). So a commit message that mentions "export" or "tmux
+# new-session", or a scope like fix(env), is no command. A command line that runs a shell or interpreter, which can
+# read any text as a command (echo "..." | bash), is matched broadly: after any blank.
+shell_runner='^[[:space:]]*(([^[:space:]]*/)?(sudo|env|nohup|time|command|builtin|exec)([[:space:]]+[^[:space:]]+)*[[:space:]]+)?([^[:space:]]*/)?(sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|deno|bun|perl|ruby|php|osascript|xargs|eval|source|\.|script|expect|unbuffer)([[:space:]]|$)'
+if grep -Eq "$shell_runner" <<<"$segments"; then
+  # shellcheck disable=SC2016 # backticks are literal regex characters
+  command_at='(^|[;&|(`"'"'"'[:space:]])[[:space:]]*([^[:space:];&|`()]*/)?'
+else
+  # shellcheck disable=SC2016 # backticks and $ are literal regex characters
+  command_at='(^|[;&|`]|(^|[;&|[:space:]])\(|\$\(|<<<|(^|[[:space:]])(if|then|else|elif|do|while|until|time|!|\{)[[:space:]]|(^|[[:space:]])[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*[[:space:]]|(^|[[:space:]/])((ba|z|da|k|fi)?sh[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-[a-zA-Z]*c|eval|exec|sudo|nohup|command|builtin|xargs|env([[:space:]]+(-[a-zA-Z0-9]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*))*)[[:space:]])[[:space:]]*([^[:space:];&|`()]*/)?'
 fi
+
+# The agents' hook registrations and Claude Code's switch for every hook change only through the file tools, which
+# check the change; a shell command may read them. Changed from the shell they are not checked, so a command that
+# is no reader may not name: the user's Claude Code, Cursor or Codex directory itself or a registration in it (by
+# ~, ~user, $HOME or the home path, by CLAUDE_CONFIG_DIR's or CODEX_HOME's value, or by name after a cd there or a
+# bare cd), a project's .claude/settings.local.json or .codex/hooks.json, an assignment of CLAUDE_CONFIG_DIR or
+# CODEX_HOME (a nested agent run without the hooks), or disableAllHooks. A project's .claude/settings.json and
+# .cursor/hooks.json may be copied from the kit's template, as guardrails-init does.
+# shellcheck disable=SC2016 # sed's bracket expression, not a shell expansion
+escape_regex() {
+  if [[ $1 == *[][\\.*^\$\(\)\{\}?+\|]* ]]; then sed -E 's/[][\\.*^$(){}?+|]/\\&/g' <<<"$1"; else printf '%s\n' "$1"; fi
+}
+home_spelling="(~[A-Za-z0-9_.-]*|\\\$\\{?HOME\\}?|$(escape_regex "$HOME"))"
+hook_place='(/(settings(\.local)?\.json|hooks\.json)?)?([[:space:];&|`)]|$)'
+user_hooks="$home_spelling/\\.(claude|cursor|codex)$hook_place"
+for place in "${CLAUDE_CONFIG_DIR:-}" "${CODEX_HOME:-}"; do
+  [[ -z $place ]] || user_hooks+="|$(escape_regex "${place%/}")$hook_place"
+done
+user_hooks+='|(^|[[:space:]])(CLAUDE_CONFIG_DIR|CODEX_HOME)=|(export|unset|-u)[[:space:]]+([^;&|]*[[:space:]])?(CLAUDE_CONFIG_DIR|CODEX_HOME)([^[:alnum:]_]|$)|disableAllHooks'
+user_hooks+='|\.claude/settings\.local\.json|\.codex/hooks\.json'
+if grep -Eq -- "(^|[;&|(\`[:space:]])(cd|pushd)([[:space:]]+$home_spelling(/\\.(claude|cursor|codex))?/?)?[[:space:]]*([;&|]|\$)" <<<"$cmd"; then
+  user_hooks+='|(^|[/[:space:]])(settings(\.local)?|hooks)\.json'
+fi
+project_hooks='\.claude/settings\.json|\.cursor/hooks\.json'
+reader_segment() {
+  local bare=$1
+  [[ $interpreter -eq 0 ]] || return 1
+  ! grep -Eq -- '\$\(|(^|[[:space:]])--pre(-glob)?([[:space:]=]|$)' <<<"$bare" || return 1
+  grep -Eq '^([^[:space:]]*/)?(cat|head|tail|grep|egrep|fgrep|rg|jq|wc|diff|ls|stat|file|realpath|readlink|less|bat)([[:space:]]|$)' <<<"$bare" ||
+    { grep -Eq '^([^[:space:]]*/)?sed[[:space:]]+-n[[:space:]]' <<<"$bare" && ! grep -Eq '(^|[[:space:]])-[a-zA-Z]*i|[[:space:]]w[[:space:]]' <<<"$bare"; } ||
+    grep -Eq '^git[[:space:]]+(commit|log|show|grep|status|add|diff|blame)([[:space:]]|$)' <<<"$bare" ||
+    grep -Eq '^gh[[:space:]]+(pr|issue|release)[[:space:]]+(create|comment|edit|view|list)([[:space:]]|$)' <<<"$bare"
+}
 while IFS= read -r segment; do
-  grep -Eq -- "$hook_paths" <<<"$segment" || continue
   bare=$(sed -E 's/^[[:space:]]+//' <<<"$segment")
-  if [[ $interpreter -eq 0 ]] && ! grep -Eq -- '\$\(|(^|[[:space:]])--pre(-glob)?([[:space:]=]|$)' <<<"$bare" &&
-    ! grep -Eq -- ">[[:space:]]*[^[:space:]]*($hook_paths)" <<<"$bare" &&
-    { grep -Eq '^([^[:space:]]*/)?(cat|head|tail|grep|egrep|fgrep|rg|jq|wc|diff|ls|stat|file|realpath|readlink)([[:space:]]|$)' <<<"$bare" ||
-      grep -Eq '^git[[:space:]]+(commit|log|show|grep|status|add|diff|blame)([[:space:]]|$)' <<<"$bare" ||
-      grep -Eq '^gh[[:space:]]+(pr|issue|release)[[:space:]]+(create|comment|edit|view|list)([[:space:]]|$)' <<<"$bare"; }; then
+  # A reader that writes its output into one of these files is no reader.
+  if reader_segment "$bare" && ! grep -Eq -- ">[[:space:]]*[^[:space:]]*($user_hooks|$project_hooks)" <<<"$bare"; then
+    continue
+  fi
+  if ! grep -Eq -- "$user_hooks" <<<"$bare" &&
+    grep -Eq '^([^[:space:]]*/)?cp[[:space:]]' <<<"$bare" && grep -Eq 'guardrails-init/template/' <<<"$bare"; then
     continue
   fi
   deny "changing the agents' hook registrations, or switching hooks off, from the shell; change such a file with the Edit tool, which checks that the kit's hooks stay"
-done <<<"$segments"
+done < <(grep -E -- "$user_hooks|$project_hooks" <<<"$segments" || true)
 
 # Everything below applies inside kit repositories, to commands that name an enforced repository, and to
 # commands that address a repository by its numeric id (which hides its name).
-is_kit_project "$(jq -r '.cwd // empty' <<<"$input")" || mentions_registered_repo "$cmd" ||
-  matches 'repositories/[0-9]+' || allow
+is_kit_project "$cwd" || mentions_registered_repo "$cmd" || matches 'repositories/[0-9]+' || allow
+
+# A git subcommand, after any of git's own options (git -C dir, git -c key=value, git --no-pager).
+git_sub='git([[:space:]]+(-[Cc][[:space:]]*[^[:space:];&|]+|--[a-z-]+(=[^[:space:];&|]*)?|-[a-zA-Z]+))*[[:space:]]+'
 
 # Credentials and token fallbacks.
 matches 'security[[:space:]]+(find|dump|export)-' && deny "reading the macOS keychain"
-matches 'git[[:space:]]+credential' && deny "git credential helper access"
+matches "${git_sub}credential" && deny "git credential helper access"
 matches "$credential_files" && deny "reading stored GitHub credentials"
 matches '(GH|GITHUB)_(ENTERPRISE_)?TOKEN|GH_CONFIG_DIR' && deny "referencing the GitHub token or gh config (read, override or unset)"
 # Without the session's environment, gh and git fall back to the owner's own login (keychain, ~/.config/gh): env -i,
@@ -397,12 +483,14 @@ matches "${command_at}env([[:space:]]+(-[uCPS][[:space:]]*[^[:space:];&|]+|-[a-z
 matches "${command_at}exec[[:space:]]+-[a-zA-Z]*c" && deny "clearing the environment (gh and git would fall back to the owner's login)"
 # Matched as commands with their arguments, so a commit message about a screen reader or tmux stays possible. ssh
 # counts by its destination, after its options, not by a localhost in the remote command or a port forward.
-if matches "${command_at}tmux[[:space:]]+(-[a-zA-Z]+[[:space:]]+[^[:space:]]+[[:space:]]+)*(new(-session|-window)?|neww|split(-window|w)|send(-keys)?|respawn(-pane|-window)?|run(-shell)?|attach(-session)?)([[:space:]]|\$)" ||
-  matches "${command_at}screen[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[dmX]" ||
-  matches "${command_at}crontab[[:space:]]+(-[eir]|[^-[:space:];&|])" ||
-  matches "${command_at}launchctl[[:space:]]+(submit|bootstrap|load|asuser|start|kickstart)" ||
-  matches "${command_at}osascript[^;&|]*do[[:space:]]+(shell[[:space:]]+)?script" ||
-  matches "${command_at}open[[:space:]][^;&|]*(-a[[:space:]]*(Terminal|iTerm[0-9]*)([.[:space:]]|\$)|\\.(command|tool|terminal)([[:space:]]|\$))" ||
+# One grep for the case-insensitive ones: every grep is a process the agent waits for.
+outside_session="${command_at}tmux[[:space:]]+(-[a-zA-Z]+[[:space:]]+[^[:space:]]+[[:space:]]+)*(new(-session|-window)?|neww|split(-window|w)|send(-keys)?|respawn(-pane|-window)?|run(-shell)?|attach(-session)?)([[:space:]]|\$)"
+outside_session+="|${command_at}screen[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[dmX]"
+outside_session+="|${command_at}crontab[[:space:]]+(-[eir]|[^-[:space:];&|])"
+outside_session+="|${command_at}launchctl[[:space:]]+(submit|bootstrap|load|asuser|start|kickstart)"
+outside_session+="|${command_at}osascript[^;&|]*do[[:space:]]+(shell[[:space:]]+)?script"
+outside_session+="|${command_at}open[[:space:]][^;&|]*(-a[[:space:]]*(Terminal|iTerm[0-9]*)([.[:space:]]|\$)|\\.(command|tool|terminal)([[:space:]]|\$))"
+if matches "$outside_session" ||
   matches_case "${command_at}ssh([[:space:]]+(-[46AaCfGgKkMNnqsTtVvXxYy]+|-[BbcDEeFIiJLlmOoPpQRSWw][[:space:]]*[^[:space:];&|]+))*[[:space:]]+([^[:space:];&|@]+@)?(localhost|LOCALHOST|127\\.0\\.0\\.1|::1|\\[::1\\])([[:space:];&|:]|\$)"; then
   deny "starting a shell outside this session (it would run with the owner's login, not the session's)"
 fi
@@ -411,57 +499,67 @@ matches '/statuses/' && deny "commit statuses (merge approval is owner-only)"
 # Printing the environment: printenv, set, export or declare -x without arguments, env without a command, ps with
 # environments (e, -E), and interpreters reading their environment, each as a command.
 # shellcheck disable=SC2016 # backticks are literal regex characters
-if matches "${command_at}(printenv|export([[:space:]]+-p)?|set|(declare|typeset)[[:space:]]+-[a-zA-Z]*[xp][a-zA-Z]*)([[:space:]]*(\$|[;&|)\`]))" ||
-  matches "${command_at}env([[:space:]]+(-[uCPS][[:space:]]*[^[:space:];&|]+|-[a-zA-Z0-9]+|--[a-z-]+(=[^[:space:];&|]*)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*))*[[:space:]]*(\$|[;&|)\`])" ||
-  matches_case "${command_at}ps[[:space:]]+([AaCcdEfghjLlMmOopSTtUuvwXx]*e[AaCcdEfghjLlMmOopSTtUuvwXx]*([[:space:]]|\$)|([^;&|]*[[:space:]])?-[a-zA-Z]*E)" ||
-  matches "${command_at}(python[0-9.]*|node|deno|bun|perl|ruby|php)[[:space:]].*((^|[^[:alnum:]_])environ([^[:alnum:]_]|\$)|process\\.env|%ENV|ENV\\[)"; then
+environment_dump="${command_at}(printenv|export([[:space:]]+-p)?|set|(declare|typeset)[[:space:]]+-[a-zA-Z]*[xp][a-zA-Z]*)([[:space:]]*(\$|[;&|)\`]))"
+environment_dump+="|${command_at}env([[:space:]]+(-[uCPS][[:space:]]*[^[:space:];&|]+|-[a-zA-Z0-9]+|--[a-z-]+(=[^[:space:];&|]*)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*))*[[:space:]]*(\$|[;&|)\`])"
+environment_dump+="|${command_at}(python[0-9.]*|node|deno|bun|perl|ruby|php)[[:space:]].*((^|[^[:alnum:]_])environ([^[:alnum:]_]|\$)|process\\.env|%ENV|ENV\\[)"
+if matches "$environment_dump" ||
+  matches_case "${command_at}ps[[:space:]]+([AaCcdEfghjLlMmOopSTtUuvwXx]*e[AaCcdEfghjLlMmOopSTtUuvwXx]*([[:space:]]|\$)|([^;&|]*[[:space:]])?-[a-zA-Z]*E)"; then
   deny "dumping the environment (may expose tokens)"
 fi
-# Git settings that hand git another credential, URL, transport or hook, by git config, git -c or the environment.
-git_keys='credential|insteadof|hookspath|sshcommand|askpass|extraheader|include\.|includeif|fsmonitor|url\.'
-matches "git[[:space:]]+config[^;&|]*($git_keys)" && deny "changing git credential/URL/hook configuration"
+# Git settings that hand git another credential, URL, remote, transport, hook or alias (an alias can run a shell), by
+# git config, git -c or the environment. git config may read them (--get, --list).
+git_keys='credential|insteadof|hookspath|sshcommand|askpass|extraheader|include\.|includeif|fsmonitor|url\.|pushurl|remote\.[^[:space:]=]*\.url|alias\.'
+if grep -oiE -- "${git_sub}config[^;&|]*" <<<"$cmd" | grep -Ei -- "$git_keys" |
+  grep -Eiv -- '[[:space:]](--get(-all|-regexp|-urlmatch)?|--list|-l)([[:space:]]|$)' >/dev/null; then
+  deny "changing git credential/URL/remote/hook configuration"
+fi
 # git -c <key>=<value> and git --config-env=<key>=<variable> for one command: taken with their case (git -C names a
 # directory, git switch -c a branch) and only as an assignment, which a config override always is; the key is
 # matched without case, as git reads it.
 if matches 'git[[:space:]]'; then
   overrides=$(grep -oE -- '(^|[[:space:]])(-c[[:space:]]*|--config-env[[:space:]=]+)[^[:space:];&|=]+=' <<<"$cmd" || true)
-  ! grep -Eiq -- "$git_keys" <<<"$overrides" || deny "overriding git's credential, URL or hook settings for one command"
+  ! grep -Eiq -- "$git_keys" <<<"$overrides" || deny "overriding git's credential, URL, remote, hook or alias settings for one command"
 fi
 # The agent's identity reaches git through GIT_CONFIG_* (agent_env_exports): setting, clearing (unset, env -u) or
-# reading these variables changes which credentials git uses.
-matches_case '(^|[^[:alnum:]_])(GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+|PARAMETERS|GLOBAL|SYSTEM|NOSYSTEM)|GIT_SSH(_COMMAND|_VARIANT)?|GIT_ASKPASS|SSH_ASKPASS|GIT_EXEC_PATH|GIT_TEMPLATE_DIR)([^[:alnum:]_]|$)' &&
+# reading these variables changes which credentials git uses. Mentioned in text (a commit message, a search) they are
+# fine.
+git_env='GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+|PARAMETERS|GLOBAL|SYSTEM|NOSYSTEM)|GIT_SSH(_COMMAND|_VARIANT)?|GIT_ASKPASS|SSH_ASKPASS|GIT_EXEC_PATH|GIT_TEMPLATE_DIR'
+if matches_case "(^|[^[:alnum:]_])($git_env)[[:space:]]*=|${command_at}(unset|export|declare|typeset|readonly|local)([[:space:]]+[^;&|]*)?[[:space:]]($git_env)([^[:alnum:]_]|\$)|(^|[[:space:]])-u[[:space:]]*($git_env)([^[:alnum:]_]|\$)|\\\$\\{?($git_env)([^[:alnum:]_]|\$)"; then
   deny "changing git's configuration through the environment (GIT_CONFIG_*, GIT_SSH*, GIT_ASKPASS: set, cleared or read)"
+fi
 
 # Git over SSH is refused so pushes go through the same HTTPS credentials as gh.
-matches 'git[[:space:]]+(push|remote|clone|fetch|pull)[^;&|]*(git@github\.com|ssh://)' && deny "git over SSH (use the HTTPS remote with the agent token)"
+matches "${git_sub}(push|remote|clone|fetch|pull)[^;&|]*(git@github\\.com|ssh://)" && deny "git over SSH (use the HTTPS remote with the agent token)"
 
 # Direct GitHub API access outside gh.
 matches '(curl|wget|http|https|xh)[^;&|]*(api\.github\.com|github\.com/[^[:space:]]*/(settings|reviews|merge))' &&
   deny "calling the GitHub API directly"
 
 # Pushing to the default branch or rewriting remote refs.
-if matches 'git[[:space:]]+push'; then
-  matches 'git[[:space:]]+push[^;&|]*([[:space:]:+/](main|master)([[:space:]]|$|[;&|])|--mirror|--tags|--delete|[[:space:]]-d([[:space:]]|$)|--all)' &&
+if matches "${git_sub}push"; then
+  matches "${git_sub}push[^;&|]*([[:space:]:+/](main|master)([[:space:]]|\$|[;&|])|--mirror|--tags|--delete|[[:space:]]-d([[:space:]]|\$)|--all)" &&
     deny "pushing to the default branch, deleting remote refs or pushing tags/all refs"
 fi
 
 # A gh call whose flags this guard checks (merge, edit, auth, api) takes them only from its literal text: command
-# substitution, backticks or a variable in it could add --admin, --base or a write method the check never sees.
-while IFS= read -r simple; do
-  if grep -Eq '(^|[^[:alnum:]_])gh[[:space:]]+(pr[[:space:]]+(merge|edit)|auth|api)([[:space:]]|$)' <<<"$simple" &&
-    grep -Eq '[$`]' <<<"$simple"; then
-    deny "command substitution or a variable in a gh merge, edit, auth or api call; write its arguments literally"
-  fi
-done < <(tr ';&|' '\n' <<<"$cmd")
+# substitution, backticks or a variable in it could add --admin, --base or a write method the check never sees. One
+# pass over the whole command: a per-line loop made a long heredoc outlast the hook's time limit.
+if tr ';&|' '\n' <<<"$cmd" | grep -Ei '(^|[^[:alnum:]_])gh[[:space:]]+(pr[[:space:]]+(merge|edit)|auth|api)([[:space:]]|$)' |
+  grep -E '[$`]' >/dev/null; then
+  deny "command substitution or a variable in a gh merge, edit, auth or api call; write its arguments literally"
+fi
 
 # gh: allow-list of subcommands; the rest needs the human. Each call is checked twice: up to the next separator, so
 # every flag counts, also one after a parenthesis in a title; and up to the next command substitution or
-# redirection, so a call nested in another's arguments ($(gh ...), `gh ...`, <(gh ...)) is a call of its own. Flags
-# are matched in every spelling: --base x, --base=x, -Bx.
+# redirection, so a call nested in another's arguments ($(gh ...), `gh ...`, <(gh ...)) is a call of its own. gh is
+# found in any case (GH runs gh on macOS's file system), and flags are matched in every spelling: --base x,
+# --base=x, -Bx.
 # shellcheck disable=SC2016 # $ is a literal character of the bracket expression in the extraction below
 while IFS= read -r call; do
   [[ -n $call ]] || continue
   read -r _gh group action rest <<<"$call" || true
+  [[ $group != *[A-Z]* ]] || group=$(lower "$group")
+  [[ ${action:-} != *[A-Z]* ]] || action=$(lower "$action")
   case "$group $action" in
     "pr create" | "pr view" | "pr list" | "pr checks" | "pr diff" | "pr status" | "pr comment" | "pr ready" | "pr close" | "pr checkout") ;;
     "pr edit")
@@ -493,8 +591,8 @@ while IFS= read -r call; do
     *) deny "gh $group $action is not on the allow-list" ;;
   esac
 done < <({
-  grep -oE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"']*)?' <<<"$cmd" || true
-  grep -oE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"'$()<>]*)?' <<<"$cmd" || true
-} | sed -E 's/^[/;&|(`"'"'"'[:space:]]+//; s/^.*\/gh /gh /')
+  grep -oiE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"']*)?' <<<"$cmd" || true
+  grep -oiE '(^|[/;&|(`"'"'"'[:space:]])gh[[:space:]]+[a-z-]+([[:space:]]+[^;&|`"'"'"'$()<>]*)?' <<<"$cmd" || true
+} | sed -E 's/^[/;&|(`"'"'"'[:space:]]+//; s/^.*\/[gG][hH] /gh /')
 
 allow
