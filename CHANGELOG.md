@@ -32,9 +32,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 - In a Python project on Python 3.9 to 3.11, every `make test` failed before any test ran: the kit's pytest
   plugin used Python 3.12's `type` statement, and the language adapter tests only ran 3.12. It now loads on
-  3.9 and newer, and the smoke test parses the kit's Python files with their oldest supported grammar.
+  3.9 and newer, so Python 3.11 projects pass the whole gate; on 3.9 and 3.10 the mutation gate still needs
+  3.11 (`tomllib`). The smoke test parses the kit's Python files with their oldest supported grammar.
   `finish`, `start-implement`, `spec-lock` and `ci-run`, run by a relative path from a subdirectory, no longer
-  fail to find the scripts next to them. Projects take both fixes with their next kit update.
+  fail to find the scripts next to them, also with `CDPATH` exported. Projects take both fixes with their next
+  kit update.
 - A repository page in alarm drew its chain as enforced: the ruleset filled in as "protected", and the
   approval as done. The alarm can mean the ruleset is disabled or missing, or that GitHub cannot read the
   repository, so the chain now marks the ruleset broken ("alarm: not confirmed") and the kit and approval

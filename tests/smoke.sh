@@ -150,7 +150,7 @@ expect_failure "pattern covering a locked file rejected" .agent/bin/spec-lock AB
 printf 'src/*.ts\n' >specs/ABC-1/write-allow
 expect_failure "pattern covering a test file rejected" .agent/bin/spec-lock ABC-1
 printf 'src/domain/percent.ts\n' >specs/ABC-1/write-allow
-expect_success "spec-lock succeeds" .agent/bin/spec-lock ABC-1
+expect_success "spec-lock succeeds (run from a subdirectory)" bash -c 'cd src/domain && ../../.agent/bin/spec-lock ABC-1'
 expect_out "tests.lock has the 2 locked tests" "and 2 tests"
 expect_success "lock-verify passes" .agent/bin/lock-verify ABC-1
 expect_success "tests-lock-check passes" .agent/bin/tests-lock-check
@@ -244,7 +244,9 @@ cp "$work/checks.log.bak" "$checks_log"
 printf '// IMPLEMENTED\nexport const x = 1;\n' >src/domain/percent.ts
 expect_failure "report-checks refuses a stale log" .agent/bin/report-checks ABC-1
 implement
-expect_success "finish passes the implement gate (run from a subdirectory)" bash -c 'cd src/domain && ../../.agent/bin/finish'
+# An exported CDPATH makes `cd` print the directory it found, or go to another project's .agent/bin: the script
+# must still find lock-verify next to itself.
+expect_success "finish passes the implement gate (with CDPATH exported)" env CDPATH=.:/nonexistent .agent/bin/finish
 unimplement
 .agent/bin/start-spec ABC-1 >/dev/null
 expect_success "abort leaves without a gate" .agent/bin/abort "ticket dropped"

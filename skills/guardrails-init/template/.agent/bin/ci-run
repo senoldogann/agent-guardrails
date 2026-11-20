@@ -14,7 +14,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require_args 1 $# "ci-run <base-commit>"
 # The directory of this script, resolved before cd_project_root: a relative $0 names it from where it was called.
-bin=$(cd "$(dirname "$0")" && pwd -P)
+# CDPATH is cleared for this cd, which would otherwise print the directory into $bin.
+bin=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 cd_project_root
 
 base=$1
