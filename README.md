@@ -138,8 +138,9 @@ first-launch checklist cover the rest of the set-up on your Mac.
 went over the last N days (default 30; the app offers 7, 30 and 90) in every enforced repository: pull requests
 merged by the agent App and by people, the median and 90th percentile time from ready for review to approval and
 to merge, PRs that needed a new approval after a push, PRs with a failing guard or checks run and how many merged
-after a later green run, merges without an approval on their final commit (an admin bypass, or a merge before the
-guardrails were on), and every ruleset change with its time, author and what changed. It only reads GitHub.
+after a later green run, merges without an approval on their final commit (an admin bypass, a merge before the
+guardrails were on, or an approval of an earlier commit only), and every ruleset change with its time, author and
+what changed. It only reads GitHub.
 
 ### Updating a project's kit files
 

@@ -31,8 +31,8 @@ public struct MergedCounts: Codable, Sendable, Equatable {
     public let otherBots: Int
 }
 
-/// A PR merged without an approval on its final commit: an admin bypassed the review rule, or it merged before
-/// the guardrails were on.
+/// A PR merged without an approval on its final commit: an admin bypassed the review rule, it merged before the
+/// guardrails were on, or the only approval was of an earlier commit.
 public struct AdminMerge: Codable, Sendable, Hashable, Identifiable {
     public let number: Int
     public let title: String

@@ -258,7 +258,7 @@ struct ReportTiles: View {
             StatTile(
                 title: "Without an approval",
                 value: "\(withoutApproval)",
-                note: withoutApproval > 0 ? "merged by an admin bypass" : "none",
+                note: withoutApproval > 0 ? "on the merged commit" : "none",
                 tone: withoutApproval > 0 ? .danger : .plain
             )
         }

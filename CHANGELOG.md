@@ -30,6 +30,12 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- `guardrails report` counted any review still in the approved state as an approval of a merged PR, whatever
+  commit it approved. A PR whose only approval was of an earlier commit (in status mode, where pushes dismiss
+  no review, or after a push that did not dismiss it) did not appear under merges without an approval on the
+  final commit. A review now counts only when it approves the PR's head commit (`headRefOid`, now part of the
+  report's query), and so does a merge-approval status. The final commit is that head, not the last commit
+  GitHub happens to list.
 - In a Python project, `make lint` failed on the kit's own `.agent/workflow/check.py`: `escape-check` found
   its `# noqa: E402` comments. The file now needs no suppression, and the smoke test runs `escape-check` in
   every language over the kit's own files.

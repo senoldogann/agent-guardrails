@@ -1,5 +1,5 @@
 [
-  {"number": 11, "title": "feat(A-11): status mode, fixed after a failed guard", "url": "u11",
+  {"number": 11, "title": "feat(A-11): status mode, fixed after a failed guard", "url": "u11", "headRefOid": "a2",
    "createdAt": "2026-11-02T08:00:00Z", "closedAt": "2026-11-02T12:00:00Z", "mergedAt": "2026-11-02T12:00:00Z",
    "author": {"__typename": "Bot", "login": "guardrails-agent-acme"}, "mergedBy": {"login": "owner"},
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": [
@@ -12,7 +12,7 @@
        {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-02T09:05:00Z"},
        {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-02T09:06:00Z"},
        {"__typename": "StatusContext", "context": "merge-approval", "state": "SUCCESS", "createdAt": "2026-11-02T11:00:00Z"}]}}}}]}},
-  {"number": 12, "title": "feat(A-12): review mode, approved twice", "url": "u12",
+  {"number": 12, "title": "feat(A-12): review mode, approved twice", "url": "u12", "headRefOid": "b2",
    "createdAt": "2026-11-03T08:00:00Z", "closedAt": "2026-11-03T14:00:00Z", "mergedAt": "2026-11-03T14:00:00Z",
    "author": {"__typename": "Bot", "login": "Guardrails-Agent-Acme"}, "mergedBy": {"login": "owner"},
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": [
@@ -25,7 +25,7 @@
      {"commit": {"oid": "b2", "statusCheckRollup": {"contexts": {"nodes": [
        {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-03T12:00:00Z"},
        {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-03T12:00:00Z"}]}}}}]}},
-  {"number": 13, "title": "docs: the owner's own change\u001b[2J", "url": "u13",
+  {"number": 13, "title": "docs: the owner's own change\u001b[2J", "url": "u13", "headRefOid": "c1",
    "createdAt": "2026-11-04T08:00:00Z", "closedAt": "2026-11-04T08:10:00Z", "mergedAt": "2026-11-04T08:10:00Z",
    "author": {"__typename": "User", "login": "owner"}, "mergedBy": {"login": "owner"},
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
@@ -33,7 +33,7 @@
      {"commit": {"oid": "c1", "statusCheckRollup": {"contexts": {"nodes": [
        {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-04T08:05:00Z"},
        {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-04T08:05:00Z"}]}}}}]}},
-  {"number": 14, "title": "chore(deps): bump", "url": "u14",
+  {"number": 14, "title": "chore(deps): bump", "url": "u14", "headRefOid": "d1",
    "createdAt": "2026-11-05T08:00:00Z", "closedAt": null, "mergedAt": null,
    "author": {"__typename": "Bot", "login": "dependabot"}, "mergedBy": null,
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
@@ -41,12 +41,12 @@
      {"commit": {"oid": "d1", "statusCheckRollup": {"contexts": {"nodes": [
        {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "CANCELLED", "completedAt": "2026-11-05T08:05:00Z"},
        {"__typename": "CheckRun", "name": "checks-node", "status": "COMPLETED", "conclusion": "TIMED_OUT", "completedAt": "2026-11-05T08:05:00Z"}]}}}}]}},
-  {"number": 15, "title": "feat: closed before the window", "url": "u15",
+  {"number": 15, "title": "feat: closed before the window", "url": "u15", "headRefOid": "e1",
    "createdAt": "2026-10-01T08:00:00Z", "closedAt": "2026-10-20T08:00:00Z", "mergedAt": "2026-10-20T08:00:00Z",
    "author": {"__typename": "User", "login": "owner"}, "mergedBy": {"login": "owner"},
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
    "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": []}},
-  {"number": 16, "title": "feat(A-16): a long one", "url": "u16",
+  {"number": 16, "title": "feat(A-16): a long one", "url": "u16", "headRefOid": "f9",
    "createdAt": "2026-10-15T08:00:00Z", "closedAt": null, "mergedAt": null,
    "author": {"__typename": "Bot", "login": "guardrails-agent-acme"}, "mergedBy": null,
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []},
