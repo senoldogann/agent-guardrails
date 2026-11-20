@@ -30,6 +30,11 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ### Fixed
 
+- `guardrails report` counted any approving review of a merged PR's final commit, whoever wrote it and
+  whatever they said afterwards. It now counts only reviews from the repository's owner, its organization's
+  members and collaborators, takes each reviewer's latest approving, change-requesting or dismissed review as
+  their word, and lists a merge as without an approval while a change request still stands. The times to
+  approve and the re-approvals count the same reviewers.
 - The review board showed "Guard failed" for a guard run that a newer run had cancelled, while the CLI and the
   approval go by the newer run. It now reads the guard as the CLI does (the run named exactly "guard", a real
   failure first, else the newest run), counts a rerun check by its newest run, and lists a replaced run as
@@ -74,6 +79,14 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   ignored SIGTERM and let go of its output kept running after the timeout.
 - `docs/pilot.md` no longer says that the checks prove the code meets the locked spec. A green run records
   that the evaluated commit passed the locked tests and configured checks; it does not prove complete coverage.
+
+### Security
+
+- The owner's approval read the newest guard run by creation time alone. GitHub lists runs newest first, so of
+  two guard runs created in the same second the older one decided, and an older passing run could stand for a
+  newer failed one. The run ID now breaks the tie. The inbox and the app's pull request list tell checks
+  started in the same second apart by their job ID the same way: a newer guard run still running no longer
+  shows the PR as ready to approve, and a newer passing check no longer counts as failing.
 
 ## [0.6.0] - 2026-11-19
 

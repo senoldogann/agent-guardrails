@@ -798,7 +798,7 @@ report_query='query($endCursor: String) {
           nodes {
             __typename
             ... on ReadyForReviewEvent { createdAt }
-            ... on PullRequestReview { id state submittedAt commit { oid } }
+            ... on PullRequestReview { id state submittedAt commit { oid } author { login } authorAssociation }
             ... on ReviewDismissedEvent { previousReviewState review { id } }
           }
         }
@@ -811,7 +811,7 @@ report_query='query($endCursor: String) {
                 contexts(first: 50) {
                   nodes {
                     __typename
-                    ... on CheckRun { name status conclusion completedAt }
+                    ... on CheckRun { databaseId name status conclusion completedAt }
                     ... on StatusContext { context state createdAt }
                   }
                 }

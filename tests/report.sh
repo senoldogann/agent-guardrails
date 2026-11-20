@@ -49,14 +49,18 @@ expect_eq "nothing in the window" "$(pr_report 2026-11-01T00:00:00Z x <<<'[]' | 
 
 echo "approval on the final commit"
 # One merged PR whose head is "h2": its commits as the query lists them, each with the states of its merge-approval
-# statuses, and its reviews. Prints the numbers adminMerges lists for it. Arguments: commits, reviews (JSON).
+# statuses, and its reviews ({state, oid}, by the owner unless a review names its author and association, in order:
+# the nth review is submitted n minutes after 10:00). Prints the numbers adminMerges lists for it. Arguments:
+# commits, reviews (JSON).
 admin_merges_of() {
   jq -n -c --argjson commits "$1" --argjson reviews "$2" '[{
     number: 30, title: "t", url: "u30", headRefOid: "h2",
     createdAt: "2026-11-02T08:00:00Z", closedAt: "2026-11-02T12:00:00Z", mergedAt: "2026-11-02T12:00:00Z",
     author: {__typename: "Bot", login: "agent"}, mergedBy: {login: "owner"},
     timelineItems: {pageInfo: {hasNextPage: false}, nodes: [$reviews | to_entries[] | {__typename: "PullRequestReview",
-      id: "R\(.key)", state: .value.state, submittedAt: "2026-11-02T10:00:00Z", commit: {oid: .value.oid}}]},
+      id: "R\(.key)", state: .value.state, submittedAt: "2026-11-02T10:\(.key | tostring | if length == 1 then "0" + . else . end):00Z",
+      commit: {oid: .value.oid}, author: {login: (.value.author // "owner")},
+      authorAssociation: (.value.association // "OWNER")}]},
     commits: {pageInfo: {hasPreviousPage: false}, nodes: [$commits[] | {commit: {oid: .oid,
       statusCheckRollup: {contexts: {nodes: [.approvals[]? | {__typename: "StatusContext", context: "merge-approval",
         state: ., createdAt: "2026-11-02T11:00:00Z"}]}}}}]}}]' |
@@ -80,6 +84,20 @@ expect_eq "a failed merge-approval on the final commit" \
 # The commit list is in GitHub's order, not the branch's: the head need not come last.
 expect_eq "the final commit is the head, wherever the list puts it" \
   "$(admin_merges_of '[{"oid": "h2"}, {"oid": "h1"}]' '[{"state": "APPROVED", "oid": "h2"}]')" '[]'
+# Only a reviewer GitHub lets approve counts, and only by their latest word.
+expect_eq "an approval from someone who cannot write to the repository is no approval" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2", "author": "visitor", "association": "CONTRIBUTOR"}]')" '[30]'
+expect_eq "an approval from a member or collaborator counts" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2", "author": "teammate", "association": "COLLABORATOR"}]')" '[]'
+expect_eq "a later change request by the same reviewer withdraws their approval" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2"}, {"state": "CHANGES_REQUESTED", "oid": "h2"}]')" '[30]'
+expect_eq "a later comment by the same reviewer leaves their approval standing" \
+  "$(admin_merges_of "$two_commits" '[{"state": "APPROVED", "oid": "h2"}, {"state": "COMMENTED", "oid": "h2"}]')" '[]'
+expect_eq "another reviewer's change request still standing blocks the approval" \
+  "$(admin_merges_of "$two_commits" '[{"state": "CHANGES_REQUESTED", "oid": "h1", "author": "teammate", "association": "MEMBER"},
+    {"state": "APPROVED", "oid": "h2"}]')" '[30]'
+expect_eq "a change request its reviewer followed with an approval no longer stands" \
+  "$(admin_merges_of "$two_commits" '[{"state": "CHANGES_REQUESTED", "oid": "h1"}, {"state": "APPROVED", "oid": "h2"}]')" '[]'
 
 echo "ruleset history"
 history=$(jq -c 'map(del(.state, .login))' "$fixtures/report-ruleset-versions.json")
