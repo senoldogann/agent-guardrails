@@ -688,51 +688,70 @@ live_rulesets() {
     '{branch: $branch, review: $review, tag: $tag, mergeQueue: $queue, defaultBranch: $default_branch}'
 }
 
+# Prints the inbox items of one enforced repository: its "repo" line, its ruleset alarms and notes, and its PRs.
+# Dies when GitHub cannot read the repository. Argument: owner/repo.
+repo_section() {
+  local repo=$1 state rulesets problems items kind url title note sha problem queued security_workflow
+  rulesets=$(live_rulesets "$repo") || exit 1
+  queued='[]'
+  # Only a repository whose branch ruleset requires the queue can have PRs in it: one more call only there.
+  if [[ $(jq -c .branch <<<"$rulesets" | ruleset_has_merge_queue) == true ]]; then
+    queued=$(queued_prs "$repo") || exit 1
+  fi
+  state=$(jq -r '.branch.enforcement // "missing"' <<<"$rulesets") || exit 1
+  printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
+  # Read in full first: a failed evaluation inside a process substitution would read as "no problems".
+  problems=$(ruleset_problems <<<"$rulesets") || die "cannot evaluate the live rulesets of $repo (jq's error is above)"
+  while IFS= read -r problem; do
+    [[ -n $problem ]] || continue
+    # Without the security workflow on its default branch the repository is behind the kit, not tampered with:
+    # the ruleset cannot require a check that never runs. Once the workflow is there, a missing check is an alarm.
+    if [[ $problem == "$security_not_required" ]]; then
+      security_workflow=$(has_security_workflow "$repo" "$(jq -r .defaultBranch <<<"$rulesets")") || exit 1
+      if [[ $security_workflow == false ]]; then
+        printf 'note\037%s\037\037\037%s needs the kit update: its default branch has no security workflow yet, so the ruleset cannot require the security check. Open the kit update PR (README, "Updating a project'"'"'s kit files"), approve it, then run: guardrails on %s\n' \
+          "$repo" "$repo" "$repo"
+        continue
+      fi
+    fi
+    printf 'alarm\037%s\037\037\037%s: %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
+      "$repo" "$repo" "$problem" "$repo"
+  done <<<"$problems"
+  items=$(repo_items "$repo" "$queued") || exit 1
+  while IFS=$'\t' read -r kind url title note sha; do
+    [[ -n $kind ]] || continue
+    printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note" "$sha"
+  done <<<"$items"
+}
+
 # Prints everything that waits for the owner, one item per line: "<kind> <repo> <url> <title> <note>" separated
 # by the ASCII unit separator (\037), so empty fields survive `read`.
 # Kinds: alarm, note, repo (an enforced repo; note = its ruleset state), answer, approve, wait, blocked
 # (see classify_prs) and turn-on (a /guardrails-init PR in a repo that is not enforced yet). PR items carry a
 # sixth field, the PR's HEAD SHA, so the app notifies again when a push changes a PR that waits.
-# Dies when GitHub cannot be read: an unreachable GitHub must not look like an empty inbox.
+# Dies when GitHub cannot be read at all (the login or the topic search): an unreachable GitHub must not look
+# like an empty inbox. A single repository it cannot read is an alarm about that repository instead.
 inbox_items() {
-  local repo state rulesets problems items kind url title note sha problem queued owner search security_workflow
+  local repo section reason errors_dir owner search
   kit_install_alarm
   remember_listed
   owner=$(login) || exit 1
   search=$(kit_search "$owner") || exit 1
   topic_alarms "$search" || exit 1
+  errors_dir=$(mktemp -d) || die "cannot create a temporary directory"
+  tmp_dirs+=" $errors_dir"
   while IFS= read -r repo; do
     [[ -n $repo ]] || continue
-    rulesets=$(live_rulesets "$repo") || exit 1
-    queued='[]'
-    # Only a repository whose branch ruleset requires the queue can have PRs in it: one more call only there.
-    if [[ $(jq -c .branch <<<"$rulesets" | ruleset_has_merge_queue) == true ]]; then
-      queued=$(queued_prs "$repo") || exit 1
+    # One repository that GitHub cannot read (deleted, renamed, access lost, a failing call) must neither hide the
+    # others nor go silent: it becomes an alarm, and without its "repo" line the app claims no protection for it.
+    # A section is printed only when it was read in full, so a half-read repository shows no items.
+    if section=$(repo_section "$repo" 2>"$errors_dir/err"); then
+      [[ -z $section ]] || printf '%s\n' "$section"
+    else
+      reason=$(clean "$(grep -v '^[[:space:]]*$' "$errors_dir/err" | tail -n 1 | sed 's/^error: //')")
+      printf 'alarm\037%s\037\037\037%s could not be read from GitHub (%s), so its rulesets and pull requests were not checked. Check that it still exists and that you can read it; if you removed it, take it off the list with: guardrails off %s\n' \
+        "$repo" "$repo" "${reason:-no error message}" "$repo"
     fi
-    state=$(jq -r '.branch.enforcement // "missing"' <<<"$rulesets")
-    printf 'repo\037%s\037\037\037%s\n' "$repo" "$state"
-    # Read in full first: a failed evaluation inside a process substitution would read as "no problems".
-    problems=$(ruleset_problems <<<"$rulesets") || die "cannot evaluate the live rulesets of $repo (jq's error is above)"
-    while IFS= read -r problem; do
-      [[ -n $problem ]] || continue
-      # Without the security workflow on its default branch the repository is behind the kit, not tampered with:
-      # the ruleset cannot require a check that never runs. Once the workflow is there, a missing check is an alarm.
-      if [[ $problem == "$security_not_required" ]]; then
-        security_workflow=$(has_security_workflow "$repo" "$(jq -r .defaultBranch <<<"$rulesets")") || exit 1
-        if [[ $security_workflow == false ]]; then
-          printf 'note\037%s\037\037\037%s needs the kit update: its default branch has no security workflow yet, so the ruleset cannot require the security check. Open the kit update PR (README, "Updating a project'"'"'s kit files"), approve it, then run: guardrails on %s\n' \
-            "$repo" "$repo" "$repo"
-          continue
-        fi
-      fi
-      printf 'alarm\037%s\037\037\037%s: %s. If you did not change it, check the audit log; restore with: guardrails on %s\n' \
-        "$repo" "$repo" "$problem" "$repo"
-    done <<<"$problems"
-    items=$(repo_items "$repo" "$queued") || exit 1
-    while IFS=$'\t' read -r kind url title note sha; do
-      [[ -n $kind ]] || continue
-      printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$kind" "$repo" "$url" "$title" "$note" "$sha"
-    done <<<"$items"
   done < <(registered_repos)
   bootstrap_items "$owner" "$search" || exit 1
 }

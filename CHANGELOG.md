@@ -6,6 +6,13 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+### Fixed
+
+- One enforced repository that GitHub could not read (deleted, renamed, access lost, or a failing call) failed
+  the whole inbox, so the menu bar app showed an error instead of every other repository. That repository is now
+  an alarm that names the error, and the other repositories are still read. It gets no ruleset line, so the app
+  claims no protection for it. The inbox still fails as a whole when GitHub cannot be reached at all.
+
 ## [0.7.0] - 2026-11-21
 
 ### Changed
