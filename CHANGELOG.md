@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-21
+
 ### Fixed
 
 - One enforced repository that GitHub could not read (deleted, renamed, access lost, or a failing call) failed
@@ -540,7 +542,8 @@ First versioned release of the kit as it is used today.
 - The Projects list no longer fails with "invalid character '<'" when GitHub takes long to answer the repository query:
   smaller pages and retries with backoff.
 
-[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/senoldogann/agent-guardrails/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...v0.5.0
