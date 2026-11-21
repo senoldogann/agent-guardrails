@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-21
+
 ### Changed
 
 - A pull request's review is one board. The chain of gates — spec, guard, checks, approval, merge — is drawn
@@ -531,7 +533,8 @@ First versioned release of the kit as it is used today.
 - The Projects list no longer fails with "invalid character '<'" when GitHub takes long to answer the repository query:
   smaller pages and retries with backoff.
 
-[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/senoldogann/agent-guardrails/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/senoldogann/agent-guardrails/compare/v0.3.0...v0.4.0
