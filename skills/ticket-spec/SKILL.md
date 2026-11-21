@@ -15,8 +15,9 @@ Requires the guardrail kit (`.agent/` exists); otherwise stop and suggest `/guar
 - Read `AGENTS.md`. Get the ticket text from the arguments or `gh issue view <n> --json title,body`.
   If it is unavailable, stop and ask.
 - Branch `feat/<ID>-<slug>` from the default branch. Run `.agent/bin/start-spec <ID>`. The write-guard now lets
-  you create new files and write `specs/<ID>/`; existing files are read-only (except this ticket's locked files
-  when amending). Never edit `.agent/` or bypass the guard via Bash.
+  you create new files with plain ASCII names (tests, contracts, stubs; not configuration, manifests, build files
+  or dotfiles, also not inside a test directory) and write `specs/<ID>/`; existing files are read-only, except the
+  files this ticket's `spec.lock` locks when amending. Never edit `.agent/` or bypass the guard via Bash.
 - Read `references/<language>.md` next to this file and follow it exactly (stub form, pinned runner
   config, AC naming, banned constructs).
 

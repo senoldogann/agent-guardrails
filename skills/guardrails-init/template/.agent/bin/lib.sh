@@ -152,8 +152,60 @@ manifest_problems() {
 
 # Succeeds when a repo-relative path is human-owned: guardrails, agent context, CI, specs, tests,
 # build/lint/test configuration, manifests, lockfiles and dotfiles. Agents may change such paths only
-# with human review; they can never be write-allowed.
+# with human review; they can never be write-allowed. Names are matched without case (see without_case), except
+# Swift's test file suffixes, which a source file like Latest.swift shares in lower case.
 is_human_owned() {
+  case ${1##*/} in
+    *Tests.swift | *Test.swift) return 0 ;;
+  esac
+  without_case human_owned_match "$1"
+}
+
+# Succeeds for a test source file: a test file name, or a file in a test directory that is no configuration,
+# manifest, build file or dotfile (tests/pytest.ini configures every test below it). These are the human-owned
+# paths the spec phase writes. Matched like is_human_owned. Argument: repository-relative path.
+is_test_path() {
+  case ${1##*/} in
+    *Tests.swift | *Test.swift) return 0 ;;
+  esac
+  without_case test_source_match "$1"
+}
+
+# Runs a path matcher with matching that ignores case: macOS's default file system resolves names without case, so
+# MAKEFILE or CONFTEST.py there is read as Makefile or conftest.py. Arguments: matcher function, path.
+without_case() {
+  local status=1 restore=-u
+  ! shopt -q nocasematch || restore=-s
+  shopt -s nocasematch
+  if "$1" "$2"; then status=0; fi
+  shopt "$restore" nocasematch
+  return "$status"
+}
+
+# Test directories and test file names. Argument: repository-relative path.
+test_path_match() {
+  case $1 in
+    tests/* | */tests/* | test/* | */test/* | */__tests__/* | __tests__/*) return 0 ;;
+  esac
+  case ${1##*/} in
+    *.test.* | *.spec.* | *_test.* | *_tests.* | test_*.py) return 0 ;;
+  esac
+  return 1
+}
+
+# The patterns of is_test_path. Argument: repository-relative path.
+test_source_match() {
+  test_path_match "$1" && ! config_path_match "$1"
+}
+
+# The patterns of is_human_owned. Argument: repository-relative path.
+human_owned_match() {
+  test_path_match "$1" || config_path_match "$1"
+}
+
+# Guardrails, agent context, CI, specs, configuration, manifests, lockfiles and dotfiles, in any directory.
+# Argument: repository-relative path.
+config_path_match() {
   local path=$1 base
   base=${path##*/}
   case "/$path" in
@@ -162,22 +214,28 @@ is_human_owned() {
   case $path in
     specs/* | docs/CODEOWNERS | CODEOWNERS) return 0 ;;
     *.xcodeproj/* | *.xcworkspace/*) return 0 ;;
-    tests/* | */tests/* | test/* | */test/* | Tests/* | */Tests/* | */__tests__/* | __tests__/*) return 0 ;;
   esac
   case $base in
-    .*) return 0 ;;
-    AGENTS.md | CLAUDE.md | Makefile | GNUmakefile | makefile | *.mk) return 0 ;;
-    *.test.* | *.spec.* | *_test.* | *_tests.* | test_*.py | *Tests.swift | *Test.swift) return 0 ;;
+    AGENTS.md | CLAUDE.md | Makefile | GNUmakefile | makefile | *.mk | justfile | Taskfile.yml | Taskfile.yaml) return 0 ;;
+    lefthook.yml | lefthook.yaml | flake.nix | flake.lock | devbox.json | mise.toml) return 0 ;;
     conftest.py | sitecustomize.py | usercustomize.py | *.pth | setup.py | setup.cfg | tox.ini | pytest.ini) return 0 ;;
-    pyproject.toml | uv.lock | requirements*.txt | ruff.toml | pyrightconfig.json | mypy.ini) return 0 ;;
-    package.json | pnpm-lock.yaml | package-lock.json | yarn.lock | pnpm-workspace.yaml) return 0 ;;
+    pyproject.toml | uv.lock | uv.toml | requirements*.txt | requirements*.in | constraints*.txt | noxfile.py) return 0 ;;
+    poetry.lock | poetry.toml | Pipfile | Pipfile.lock | pdm.lock | pdm.toml | hatch.toml | pixi.toml | pixi.lock) return 0 ;;
+    ruff.toml | pyrightconfig.json | mypy.ini | pylintrc) return 0 ;;
+    package.json | pnpm-lock.yaml | package-lock.json | npm-shrinkwrap.json | yarn.lock | pnpm-workspace.yaml) return 0 ;;
+    bun.lock | bun.lockb | bunfig.toml | deno.json | deno.jsonc | deno.lock | turbo.json | nx.json | lerna.json) return 0 ;;
     tsconfig*.json | jsconfig*.json | biome.json | biome.jsonc | *.grit) return 0 ;;
     vite.config.* | vitest.config.* | vitest.workspace.* | vitest.setup.* | *.setup.ts | *.setup.js) return 0 ;;
+    jest.config.* | playwright.config.* | playwright-ct.config.* | cypress.config.* | karma.conf.* | ava.config.*) return 0 ;;
+    eslint.config.* | prettier.config.* | stylelint.config.* | babel.config.* | webpack.config.* | rollup.config.*) return 0 ;;
+    tsup.config.*) return 0 ;;
     stryker.config.* | stryker.conf.* | mutants.toml | setup.cfg.mutmut | mutmut_config.py) return 0 ;;
     Cargo.toml | Cargo.lock | build.rs | clippy.toml | rustfmt.toml | rust-toolchain | rust-toolchain.toml | nextest.toml) return 0 ;;
-    Package.swift | Package.resolved | *.xcconfig | *.pbxproj | *.xcscheme | *.entitlements | Info.plist) return 0 ;;
-    *.xctestplan | *.xcprivacy | *.storekit | project.yml) return 0 ;;
-    Dockerfile | *.dockerfile | docker-compose*.yml | compose*.yml) return 0 ;;
+    deny.toml) return 0 ;;
+    Package.swift | Package@swift*.swift | Package.resolved | *.xcconfig | *.pbxproj | *.xcscheme | *.entitlements) return 0 ;;
+    Info.plist | *.xctestplan | *.xcprivacy | *.storekit | project.yml) return 0 ;;
+    Podfile | Podfile.lock | Cartfile | Cartfile.resolved | Gemfile | Gemfile.lock | Mintfile) return 0 ;;
+    Dockerfile | Containerfile | *.dockerfile | docker-compose*.yml | docker-compose*.yaml | compose*.yml | compose*.yaml) return 0 ;;
   esac
   return 1
 }

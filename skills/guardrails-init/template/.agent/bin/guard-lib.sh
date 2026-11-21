@@ -131,6 +131,33 @@ guard_ticket_spec() {
   fi
 }
 
+# Lists the paths a ticket's PR changes outside the ticket's write-allow. write-guard keeps the agent's file tools
+# inside write-allow in the implement phase, but a shell command can write anywhere, so the owner sees every other
+# path. Left out: specs/, the files the PR creates that the ticket's spec lock locks (contracts written in the spec
+# phase) and the human-owned paths, which guard_review_summary lists. A locked file that was on the base is listed:
+# locking it does not explain why the PR changed it. Arguments: ticket, base commit, head commit.
+guard_write_scope() {
+  local ticket=$1 base=$2 head=$3 patterns locked path pattern inside outside=""
+  patterns=$(git show "$head:specs/$ticket/write-allow" 2>/dev/null | entry_lines) || patterns=""
+  locked=$(git show "$head:specs/$ticket/spec.lock" 2>/dev/null | manifest_paths) || locked=""
+  while IFS= read -r path; do
+    [[ -n $path && $path != specs/* ]] || continue
+    is_human_owned "$path" && continue
+    if grep -Fx -- "$path" <<<"$locked" >/dev/null && ! git cat-file -e "$base:$path" 2>/dev/null; then continue; fi
+    inside=0
+    while IFS= read -r pattern; do
+      # shellcheck disable=SC2053 # glob match against a write-allow pattern is intended
+      if [[ -n $pattern && $path == $pattern ]]; then
+        inside=1
+        break
+      fi
+    done <<<"$patterns"
+    [[ $inside -eq 1 ]] || outside+="  $(quoted_path "$path")"$'\n'
+  done <<<"$changed"
+  [[ -z $outside ]] ||
+    printf 'PATHS OUTSIDE specs/%s/write-allow (written outside the ticket'"'"'s scope; review these closely):\n%s' "$ticket" "$outside"
+}
+
 # Prints the ticket spec locks (specs/<dir>/spec.lock) of a commit, one per line. Argument: commit.
 ticket_locks() {
   local path

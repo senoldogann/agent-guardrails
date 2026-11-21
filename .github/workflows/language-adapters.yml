@@ -26,11 +26,11 @@ permissions:
   contents: read
 jobs:
   adapters:
-    name: adapter-${{ matrix.language }}
+    name: adapter-${{ matrix.language }}${{ matrix.python && format('-{0}', matrix.python) || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     concurrency:
-      group: language-adapters-${{ matrix.language }}-${{ github.event.pull_request.number || github.sha }}
+      group: language-adapters-${{ matrix.language }}-${{ matrix.python || 'default' }}-${{ github.event.pull_request.number || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
@@ -39,6 +39,8 @@ jobs:
           - {language: typescript, runner: ubuntu-24.04, toolchain: node}
           - {language: javascript, runner: ubuntu-24.04, toolchain: node}
           - {language: python, runner: ubuntu-24.04, toolchain: python}
+          # The oldest Python whose mutmut runs here: below 3.11 mutmut reads its configuration with the toml package.
+          - {language: python, runner: ubuntu-24.04, toolchain: python, python: '3.10'}
           - {language: rust, runner: ubuntu-24.04, toolchain: rust}
           - {language: swift, runner: macos-26, toolchain: xcode}
           - {language: swift-xcode, runner: macos-26, toolchain: xcode}
@@ -60,7 +62,7 @@ jobs:
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.13.4
-          python-version: '3.13'
+          python-version: ${{ matrix.python || '3.13' }}
           enable-cache: false
       - if: matrix.toolchain == 'rust'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
