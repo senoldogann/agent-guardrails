@@ -296,7 +296,8 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
 | | Claude Code | Cursor agent | Codex CLI |
 | --- | --- | --- | --- |
 | Shell commands checked by bash-guard | yes | yes (`beforeShellExecution`) | yes (`PreToolUse` `Bash`), once trusted |
-| Files read with the agent's read tool checked for credentials | no | yes (`beforeReadFile`) | no |
+| Files read with the agent's read tools checked for credentials | yes (Read, Grep, Glob) | yes (`beforeReadFile`) | no |
+| File writes kept out of the kit install, its settings and the hook registrations | yes (Edit, Write, MultiEdit, NotebookEdit) | no | no |
 | Reminder on every prompt | yes | no | yes |
 | gh and git push as the agent App | yes | no, your gh login | no, your gh login |
 | Hooks committed with the project | bash-guard, write-guard, stop-check | bash-guard (through `cursor-guard.sh`) | none |
@@ -336,8 +337,20 @@ agents' hooks only translate their protocol to it. What each agent enforces loca
   change the guard that judges it) decide what merges. Local hooks and the app make the right path easy; they
   are not a boundary.
 - **Status mode does not stop a hostile agent.** The agent runs with your login, which can change rulesets.
-  `bash-guard` blocks owner-only commands, credential reads and settings changes by matching command text,
-  which a deliberately disguised command can evade. It stops mistakes and shortcuts, not an adversary.
+  `bash-guard` blocks owner-only commands, credential reads and settings changes by matching command text. It
+  also refuses the plain ways around that: a gh call nested in another's arguments, checked flags in any
+  spelling, commands that drop the session's identity so gh and git fall back to your login (`env -i`,
+  `exec -c`, clearing `GIT_CONFIG_*`, a shell started outside the session), git settings passed with `-c` or
+  through the environment, printing the environment, and changing your hook registrations or
+  `disableAllHooks` from the shell in any spelling the shell reads the same (quotes, `..`, a glob or a
+  variable in the name, a `cd` out of the project, a recursive copy or an archive into the agents'
+  directories). In Claude Code it also checks the file tools by the path, with every link resolved and places
+  compared by file identity: none reads or writes the kit's settings (the agent App's private key among them)
+  or greps the directory that holds them, none writes into the kit install, a change to your hook
+  registrations must leave every kit hook entry as it is, and no file may be written as JSON that sets
+  `disableAllHooks`. It fails closed: any error of its own blocks the call. Shell commands are still matched
+  as text: a path that a script, an archive's contents or a variable set in an earlier call builds at run
+  time can evade it. It stops mistakes and shortcuts, not an adversary.
   **Teams use review mode:** register the agent App (`guardrails agent create`), install it on the
   repositories, and run `guardrails on <repo>` again. Status mode is for one owner who accepts these limits.
 - **The agent's identity is checked per session** (Claude Code only). In a kit repository with the agent App

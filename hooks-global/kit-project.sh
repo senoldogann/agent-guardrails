@@ -24,11 +24,18 @@ is_registered_repo() {
 
 # Succeeds when the directory belongs to a git repository that uses the agent-guardrails kit: its root
 # has .agent/bin/ci-guard, or its origin is an enforced repository (so deleting .agent/ locally does not
-# switch the guard off). Outside such repositories the global hooks stay out of the way.
+# switch the guard off). Outside such repositories the global hooks stay out of the way. Only git's own "not a git
+# repository" says a directory is outside: any other failure of git (a broken install, a dubious owner) counts as a
+# kit repository, so the guards fail closed.
 is_kit_project() {
   local dir=$1 root
   [[ -n $dir && -d $dir ]] || return 1
-  root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || return 1
+  if ! root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null); then
+    case $(LC_ALL=C git -C "$dir" rev-parse --show-toplevel 2>&1 >/dev/null) in
+      *"not a git repository"*) return 1 ;;
+      *) return 0 ;;
+    esac
+  fi
   [[ -x "$root/.agent/bin/ci-guard" ]] && return 0
   is_registered_repo "$(origin_repo "$root")"
 }

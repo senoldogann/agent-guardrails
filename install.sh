@@ -7,8 +7,8 @@
 # 1. Symlinks this kit's skills into ~/.claude/skills (/guardrails-init, /ticket-spec,
 #    /ticket-implement, /process-fix).
 # 2. Registers the global hooks in ~/.claude/settings.json (idempotent, keeps other hooks):
-#    PreToolUse Bash -> hooks-global/bash-guard.sh, UserPromptSubmit -> hooks-global/prompt-reminder.sh,
-#    SessionStart and PreToolUse Bash -> hooks-global/agent-identity.sh.
+#    PreToolUse Bash, Read|Grep|Glob and Edit|Write|MultiEdit|NotebookEdit -> hooks-global/bash-guard.sh,
+#    UserPromptSubmit -> hooks-global/prompt-reminder.sh, SessionStart and PreToolUse Bash -> hooks-global/agent-identity.sh.
 #    Where Cursor is set up (~/.cursor exists): beforeShellExecution and beforeReadFile ->
 #    hooks-global/cursor-guard.sh in ~/.cursor/hooks.json. Where Codex is set up ($CODEX_HOME or ~/.codex exists,
 #    inside $HOME): PreToolUse Bash -> bash-guard.sh and UserPromptSubmit -> prompt-reminder.sh in its hooks.json.
@@ -117,6 +117,8 @@ settings_updated=$(jq --arg guard "$guard" --arg reminder "$reminder" --arg iden
         else . + [{matcher: matcher, hooks: [{type: "command", command: command}]}] end);
   ensure("PreToolUse"; "Bash"; $guard) | ensure("UserPromptSubmit"; ""; $reminder)
   | ensure("SessionStart"; ""; $identity) | ensure("PreToolUse"; "Bash"; $identity)
+  | ensure("PreToolUse"; "Read|Grep|Glob"; $guard)
+  | ensure("PreToolUse"; "Edit|Write|MultiEdit|NotebookEdit"; $guard)
 ' "$settings")
 
 # Prints a hook file's JSON, or an empty object when the file does not exist yet.

@@ -104,6 +104,22 @@ the required checks, the owner's per-HEAD approval); local hooks only catch mist
   repositories (`.agent/bin/ci-guard` exists or the origin is an enforced repo) and on commands that name an
   enforced repo: `bash-guard.sh` blocks owner-only GitHub actions and credential reads, `prompt-reminder.sh`
   adds a one-line reminder per prompt. Everywhere they block the owner's commands and the enforced-repo list.
+  bash-guard is also Claude Code's hook for the file tools, by the physical path (`physical_path`: `x/..`
+  resolved as text first, as Claude Code does, then links; `~` expanded) and by file identity (`is_within`,
+  `same_file`, so another case or the `/System/Volumes/Data` firmlink counts): no read or write of
+  `~/.config/agent-guardrails` and no Grep of it or a parent; writes (Edit, Write, MultiEdit, NotebookEdit) also
+  never into the kit install it runs from. A write to the user's hook registrations is replayed on the file
+  (`content_after_write`, refused when an `old_string` is not there as written) and must keep every kit hook
+  entry as it is (`kit_hooks_problem`) and parse as the agents parse JSON (`strict_json_problem`: no `NaN`);
+  no file may be written as JSON that sets `disableAllHooks` (`hooks_off_problem`). The shell may only read
+  those registrations. The shell rule reads a command as the shell would (`split_commands` drops quotes and
+  backslashes; `./`, `//` and `x/..` resolved) and also counts a glob or variable in a name, a `cd` or `-C`
+  out of the project, and commands that write files they do not name (`tree_writer`); a project's own
+  `.claude/settings*.json` stays writable from the shell. Reads of the kit install go by the path's text, so
+  a skill linked into it stays readable. Command rules anchor the command word with `command_at`
+  (narrow, so a word in a commit message is no command; broad, after any blank, when the command line runs a
+  shell or interpreter), and git rules allow git's own options before the subcommand (`git_sub`). The guard runs
+  as `#!/bin/bash -p` (no `BASH_ENV`) and ends with 0 only through `allow`.
   `agent-identity.sh` (SessionStart, and PreToolUse Bash to renew) points a kit repository's session at a
   one-hour token of the agent App through `CLAUDE_ENV_FILE` (`GH_CONFIG_DIR`, git helper and SSH-to-HTTPS
   rewrite), so gh and git push run as the App's bot; it fails closed when the App is installed but no token

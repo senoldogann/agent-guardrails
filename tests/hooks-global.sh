@@ -19,9 +19,9 @@ failed=0
 cwd=$kit_repo
 
 check() {
-  local want=$1 cmd=$2 got
+  local want=$1 cmd=$2 got said
   set +e
-  jq -n --arg c "$cmd" --arg d "$cwd" '{cwd: $d, tool_input: {command: $c}}' | "$guard" >/dev/null 2>&1
+  said=$(jq -n --arg c "$cmd" --arg d "$cwd" '{cwd: $d, tool_input: {command: $c}}' | "$guard" 2>&1 >/dev/null)
   got=$?
   set -e
   if [[ $got -eq $want ]]; then
@@ -29,6 +29,7 @@ check() {
   else
     failed=$((failed + 1))
     printf '  FAIL want %d got %d: %s\n' "$want" "$got" "$cmd"
+    [[ -z $said ]] || printf '       %s\n' "$(head -n 1 <<<"$said")"
   fi
 }
 allow() { check 0 "$1"; }
@@ -235,6 +236,18 @@ if [[ $invalid_status -eq 2 ]]; then passed=$((passed + 1)); else
   failed=$((failed + 1))
   printf '  FAIL invalid hook input must block (exit 2), got %s\n' "$invalid_status"
 fi
+# A fatal shell error (here a failed source) ends Bash 3.2 with the EXIT trap seeing status 0: it must still block.
+broken_hooks="$work/broken-hooks"
+mkdir -p "$broken_hooks"
+cp "$hooks/bash-guard.sh" "$broken_hooks/bash-guard.sh"
+set +e
+jq -n --arg d "$plain_repo" '{cwd: $d, tool_input: {command: "make check"}}' | "$broken_hooks/bash-guard.sh" >/dev/null 2>&1
+fatal_status=$?
+set -e
+if [[ $fatal_status -eq 2 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL a guard that cannot load its library must block (exit 2), got %s\n' "$fatal_status"
+fi
 
 echo "prompt-reminder"
 reminder_out() { jq -n --arg d "$1" '{cwd: $d, prompt: "hi"}' | "$hooks/prompt-reminder.sh"; }
@@ -317,6 +330,488 @@ cursor_answer=$(jq -n -c '{hook_event_name: "beforeReadFile", workspace_roots: [
 if [[ $cursor_answer == '{"permission":"allow"}' ]]; then passed=$((passed + 1)); else
   failed=$((failed + 1))
   printf '  FAIL an allowed read answers only the permission, got: %s\n' "$cursor_answer"
+fi
+
+echo "bash-guard: nested calls, environment and flag spellings"
+cwd=$kit_repo
+# A gh call inside another's arguments is a call of its own.
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr view 1 $(gh pr review 1 --approve)'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr comment 1 --body "$(gh pr merge 1 --admin --squash)"'
+block 'gh issue list < <(gh pr review 1 --approve)'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr view 1 `gh pr review 1 --approve`'
+allow 'gh pr create --title "fix: rates (x)" --body-file /tmp/b.md'
+# shellcheck disable=SC2016 # literal input under test
+allow 'gh pr comment 1 --body "$(cat /tmp/note.md)"'
+# Protected calls take their flags only literally.
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr merge 1 --squash $(printf -- --admin)'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh pr edit 1 $FLAGS'
+# shellcheck disable=SC2016 # literal input under test
+block 'gh api repos/o/r/pulls $EXTRA'
+allow 'cd /tmp && gh pr merge 12 --auto --squash'
+# shellcheck disable=SC2016 # literal input under test
+allow 'gh pr view $N --json state'
+# shellcheck disable=SC2016 # literal input under test
+allow 'gh pr checks "$(git branch --show-current)"'
+# Every spelling of a checked flag.
+block 'gh pr edit 1 --base=release'
+block 'gh pr edit 1 -Brelease'
+block 'gh pr merge 1 --admin=true --squash'
+block 'gh api repos/o/r/issues/1/comments -fbody=x'
+block 'gh api repos/o/r/issues/1/comments --raw-field=body=x'
+block 'gh api -XPOST repos/o/r/issues/1/comments'
+block 'gh auth status --show-token'
+block 'gh auth status -ht'
+allow 'gh pr edit 1 --title "x" --body-file /tmp/b.md'
+allow 'gh api repos/o/r/pulls/12/files --jq ".[].filename"'
+# A parenthesis in a title or a jq filter does not end the call: the flags after it count.
+block 'gh pr merge 12 --squash --subject "feat: discount (#12)" --admin'
+block 'gh pr edit 12 --title "fix: rates (EUR)" --base release'
+block 'gh api repos/o/r/pulls/1/merge --jq "(.merged)" -X PUT'
+# A line that ends in a backslash continues on the next.
+block $'gh pr merge 12 --squash \\\n  --admin'
+block $'git push origin \\\n  main'
+# Dropping the session's environment hands gh and git the owner's login.
+block 'env -i HOME=/Users/x PATH=/usr/bin:/opt/homebrew/bin gh pr merge 1 --auto --squash'
+block 'env -i PATH=/opt/homebrew/bin git push origin feat/ABC-1-x'
+block 'env - gh pr list'
+block 'env -u FOO -i gh pr list'
+block 'env --ignore-environment gh pr list'
+block 'exec -c gh pr list'
+block 'tmux new-session -d "make test"'
+block 'screen -dm make test'
+block 'crontab /tmp/jobs'
+block 'launchctl submit -l x -- /bin/sh -c make'
+block 'open -a Terminal /tmp/run.command'
+block 'open /tmp/run.command'
+block 'osascript -e "do shell script \"make test\""'
+block 'ssh localhost gh pr list'
+block 'ssh -p 22 me@localhost gh pr list'
+block '/usr/bin/env -i PATH=/usr/bin:/bin gh pr list'
+block 'sudo env -i gh pr list'
+allow 'env FOO=1 grep -i pattern src/a.ts'
+allow 'git commit -m "fix: screen reader labels in tmux docs"'
+allow 'git commit -m "docs: explain how to set up tmux new-session for the dev server"'
+allow 'screen -ls'
+allow 'ssh deploy@prod.example.com "curl -s localhost:8080/health"'
+allow 'ssh -L localhost:5432:db.internal:5432 bastion.example.com'
+allow 'open https://github.com/o/r/pull/1'
+allow 'osascript -e "display notification \"done\""'
+# Git settings by git -c or the environment.
+block 'git -c url.git@github.com:.insteadOf=https://github.com/ push origin feat/x'
+block 'git -c core.hooksPath=/dev/null commit -m x'
+block 'git -c credential.helper=store push origin feat/x'
+block 'git -c core.sshCommand="ssh -i /tmp/k" push origin feat/x'
+block 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= git push origin feat/x'
+block 'GIT_SSH_COMMAND="ssh -i /tmp/k" git push origin feat/x'
+block 'git config core.sshCommand "ssh -i /tmp/k"'
+allow 'git -c user.name=t -c user.email=t@example.invalid commit -m x'
+allow 'git log -c --stat -1'
+block 'git --config-env=credential.helper=H push origin feat/x'
+# The agent's identity lives in GIT_CONFIG_*: clearing it hands git the owner's keychain.
+block 'unset GIT_CONFIG_COUNT; git push origin feat/x'
+block 'env -u GIT_CONFIG_COUNT git push origin feat/x'
+# git -C names a directory and git switch -c a branch; neither overrides a setting.
+allow 'git switch -c fix/credential-rotation'
+allow 'git -C services/credentials status'
+allow 'git grep -c credential -- src'
+allow 'git diff -C src/credentials.ts'
+# Printing the environment.
+block 'export'
+block 'cd /tmp && export'
+block 'bash -c "export"'
+block '/usr/bin/env'
+block 'declare -x'
+block 'typeset -p'
+block 'env -0'
+block 'env -u FOO'
+block 'env FOO=1'
+block 'python3 -c "import os; print(os.environ)"'
+block 'node -e "console.log(process.env)"'
+block 'ps eww 123'
+block 'ps -E -p 123'
+allow 'export FOO=bar; make test'
+allow 'declare -p FOO'
+allow 'ps aux'
+allow 'ps -ef'
+allow 'ps -o user,pid -p 1'
+allow 'git commit -m "docs: the ps entries table"'
+allow 'git commit -m "feat: add CSV export"'
+allow 'gh pr create --title "feat: PDF export" --body "Adds the PDF export"'
+allow 'python3 scripts/check_environment.py'
+allow 'python3 -m pytest tests/test_environments.py'
+allow 'git commit -m "fix: the python helper no longer reads os.environ"'
+# The user's hook registrations change only through the file tools, which check the change; the shell may read them.
+for hook_cwd in "$kit_repo" "$plain_repo"; do
+  cwd=$hook_cwd
+  block "sed -i '' '/bash-guard/d' ~/.claude/settings.json"
+  # shellcheck disable=SC2016 # literal input under test
+  block 'jq "del(.hooks)" "$HOME/.claude/settings.json" >/tmp/s && mv /tmp/s "$HOME/.claude/settings.json"'
+  block 'cd ~/.claude && sed -i "" /bash-guard/d settings.json'
+  block "echo '{\"disableAllHooks\": true}' > .claude/settings.local.json"
+  block 'claude config set -g disableAllHooks true'
+  allow 'cat ~/.claude/settings.json'
+  allow 'jq .hooks ~/.claude/settings.json'
+  allow 'cp ~/.claude/skills/guardrails-init/template/.claude/settings.json .claude/settings.json'
+  allow 'git commit -m "docs: explain disableAllHooks"'
+done
+cwd=$kit_repo
+
+echo "bash-guard: file tools"
+# Runs the guard on a file tool's input; checks its exit status. Arguments: want, tool, tool_input JSON.
+tool_check() {
+  local want=$1 got said
+  set +e
+  said=$(jq -n --arg t "$2" --argjson i "$3" --arg d "$cwd" '{cwd: $d, tool_name: $t, tool_input: $i}' | "$guard" 2>&1 >/dev/null)
+  got=$?
+  set -e
+  if [[ $got -eq $want ]]; then passed=$((passed + 1)); else
+    failed=$((failed + 1))
+    printf '  FAIL %s want %d got %d: %s\n' "$2" "$want" "$got" "$3"
+    [[ -z $said ]] || printf '       %s\n' "$(head -n 1 <<<"$said")"
+  fi
+}
+write_input() { jq -n -c --arg f "$1" --arg c "$2" '{file_path: $f, content: $c}'; }
+edit_input() { jq -n -c --arg f "$1" --arg o "$2" --arg n "$3" '{file_path: $f, old_string: $o, new_string: $n}'; }
+kit_root=$(cd "$hooks/.." && pwd -P)
+cwd=$kit_repo
+# The kit install this guard runs from, also through a link and for a file that does not exist yet.
+tool_check 2 Write "$(write_input "$kit_root/hooks-global/bash-guard.sh" "exit 0")"
+tool_check 2 Edit "$(edit_input "$kit_root/hooks-global/bash-guard.sh" "deny" "true")"
+tool_check 2 Write "$(write_input "$kit_root/hooks-global/new-hook.sh" "x")"
+ln -s "$kit_root/hooks-global" "$work/hooks-link"
+tool_check 2 Write "$(write_input "$work/hooks-link/bash-guard.sh" "exit 0")"
+ln -s "$kit_root/hooks-global/created.sh" "$work/dangling-link"
+tool_check 2 Write "$(write_input "$work/dangling-link" "exit 0")"
+tool_check 0 Write "$(write_input "$kit_repo/src/a.ts" "export const a = 1;")"
+# The owner's kit settings, also through a link.
+mkdir -p "$HOME/.config/agent-guardrails"
+tool_check 2 Write "$(write_input "$HOME/.config/agent-guardrails/repos" "")"
+ln -s "$HOME/.config/agent-guardrails" "$work/settings-link"
+tool_check 2 Write "$(write_input "$work/settings-link/repos" "")"
+# The kit's hook entries in the user's hook registrations stay exactly as they are; anything else there may change.
+mkdir -p "$HOME/.claude" "$HOME/.codex"
+hooked='{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/k/hooks-global/bash-guard.sh"}]}]}}'
+printf '%s\n' "$hooked" >"$HOME/.claude/settings.json"
+printf '%s\n' "$hooked" >"$HOME/.codex/hooks.json"
+tool_check 0 Write "$(write_input "$HOME/.claude/settings.json" "$(jq -c '.theme = "dark"' <<<"$hooked")")"
+tool_check 0 Edit "$(edit_input "$HOME/.claude/settings.json" '{"hooks"' '{"theme": "dark", "hooks"')"
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" '{"theme": "dark", "x": "/k/hooks-global/bash-guard.sh"}')"
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" '{"theme": "dark"}')"
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" '{"hooks": ')"
+tool_check 2 Write "$(write_input "$HOME/.codex/hooks.json" '{}')"
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" '"command": "/k/hooks-global/bash-guard.sh"' '"command": "true"')"
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" 'bash-guard.sh"' 'bash-guard.sh || true"')"
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" '"matcher": "Bash"' '"matcher": "Edit"')"
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" '"PreToolUse"' '"PostToolUse"')"
+tool_check 2 Edit "$(jq -n -c --arg f "$HOME/.claude/settings.json" \
+  '{file_path: $f, old_string: "hooks-global/", new_string: "hooks-global.off/", replace_all: true}')"
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" '{"hooks"' '{"disableAllHooks": true, "hooks"')"
+tool_check 2 MultiEdit "$(jq -n -c --arg f "$HOME/.claude/settings.json" \
+  '{file_path: $f, edits: [{old_string: "/k/hooks-global/bash-guard.sh", new_string: "/bin/true"}]}')"
+tool_check 0 Write "$(write_input "$HOME/.cursor/hooks.json" '{"version": 1}')"
+# A registration linked in from a dotfiles repository, and Codex's under CODEX_HOME.
+mkdir -p "$work/dotfiles" "$work/codex-home"
+mv "$HOME/.claude/settings.json" "$work/dotfiles/settings.json"
+ln -s "$work/dotfiles/settings.json" "$HOME/.claude/settings.json"
+tool_check 2 Write "$(write_input "$work/dotfiles/settings.json" '{}')"
+rm "$HOME/.claude/settings.json"
+mv "$work/dotfiles/settings.json" "$HOME/.claude/settings.json"
+printf '%s\n' "$hooked" >"$work/codex-home/hooks.json"
+export CODEX_HOME="$work/codex-home"
+tool_check 2 Write "$(write_input "$work/codex-home/hooks.json" '{}')"
+unset CODEX_HOME
+tool_check 0 Write "$(write_input "$work/codex-home/hooks.json" '{}')"
+# disableAllHooks in any Claude Code settings file turns the kit's hooks off too; a project's own registrations
+# may otherwise change (the kit copies them).
+tool_check 2 Write "$(write_input "$kit_repo/.claude/settings.local.json" '{"disableAllHooks": true}')"
+tool_check 2 Write "$(write_input "$plain_repo/.claude/settings.json" '{"disableAllHooks": "true"}')"
+tool_check 0 Write "$(write_input "$kit_repo/.claude/settings.json" '{"hooks": {}}')"
+tool_check 0 Write "$(write_input "$plain_repo/.claude/settings.json" '{"disableAllHooks": false}')"
+# Reads: the owner's settings everywhere, credential files in kit repositories; Grep and Glob by their path.
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/agent-guardrails/agent/private-key.pem" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME/.config/agent-guardrails" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+tool_check 0 Read "$(jq -n -c --arg f "$kit_root/hooks-global/bash-guard.sh" '{file_path: $f}')"
+tool_check 0 Glob '{"pattern": "**/*.ts"}'
+# The owner's settings through a link, and a search over the directory that holds them or a parent of it.
+tool_check 2 Read "$(jq -n -c --arg f "$work/settings-link/agent/private-key.pem" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME/.config" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME/" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Grep '{"pattern": "BEGIN", "path": "/"}'
+ln -s "$HOME" "$work/home-link"
+tool_check 2 Grep "$(jq -n -c --arg p "$work/home-link" '{pattern: "BEGIN", path: $p}')"
+tool_check 0 Grep "$(jq -n -c --arg p "$kit_repo" '{pattern: "BEGIN", path: $p}')"
+tool_check 0 Grep '{"pattern": "BEGIN"}'
+tool_check 0 Glob "$(jq -n -c --arg p "$HOME" '{pattern: "*.md", path: $p}')"
+# Grep hands its path over as written and expands ~ itself.
+tool_check 2 Grep '{"pattern": "BEGIN", "path": "~"}'
+tool_check 2 Grep '{"pattern": "BEGIN", "path": "~/"}'
+tool_check 2 Grep '{"pattern": "oauth_token", "path": "~/.config"}'
+# Credentials by their real place, not by a file of the same name.
+mkdir -p "$kit_repo/inventory"
+tool_check 0 Read "$(jq -n -c --arg f "$kit_repo/inventory/hosts.yml" '{file_path: $f}')"
+tool_check 0 Edit "$(edit_input "$kit_repo/inventory/hosts.yml" 'a' 'b')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.netrc" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/git/credentials" '{file_path: $f}')"
+# With XDG_CONFIG_HOME elsewhere (GitHub's Linux runners set it), gh's and git's places count both there and in
+# their default place.
+export XDG_CONFIG_HOME="$work/xdg"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$work/xdg/gh/hosts.yml" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$work/xdg/git/credentials" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$work/xdg" '{pattern: "oauth_token", path: $p}')"
+unset XDG_CONFIG_HOME
+tool_check 2 Read "$(jq -n -c --arg f "$kit_repo/.claude/settings.local.json" '{file_path: $f}')"
+cwd=$HOME
+tool_check 2 Grep '{"pattern": "BEGIN"}'
+cwd=$plain_repo
+tool_check 0 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/agent-guardrails/agent/private-key.pem" '{file_path: $f}')"
+tool_check 2 Grep "$(jq -n -c --arg p "$HOME" '{pattern: "BEGIN", path: $p}')"
+tool_check 2 Write "$(write_input "$kit_root/hooks-global/bash-guard.sh" "exit 0")"
+
+echo "bash-guard: other spellings of a path, replayed edits"
+cwd=$kit_repo
+printf '%s\n' "$hooked" >"$HOME/.claude/settings.json"
+# Claude Code resolves x/.. as text, also when x does not exist.
+tool_check 2 Write "$(write_input "$HOME/.claude/x/../settings.json" '{"theme": "dark"}')"
+tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/x/../gh/hosts.yml" '{file_path: $f}')"
+# macOS reads a new Settings.local.json as settings.local.json.
+tool_check 2 Write "$(write_input "$kit_repo/.claude/Settings.local.json" '{"disableAllHooks": true}')"
+# The same files under the /System/Volumes/Data firmlink, where macOS has one.
+data_home="/System/Volumes/Data$(cd "$HOME" && pwd -P)"
+if [[ -e $data_home/.claude/settings.json ]]; then
+  tool_check 2 Write "$(write_input "$data_home/.claude/settings.json" '{"theme": "dark"}')"
+  cwd=$plain_repo
+  tool_check 2 Grep "$(jq -n -c --arg p "$data_home/.config" '{pattern: "BEGIN", path: $p}')"
+  cwd=$kit_repo
+else
+  echo "  (no /System/Volumes/Data firmlink here: skipped its two checks)"
+fi
+# The Edit tool matches curly quotes against straight ones; an old_string not in the file as written is refused.
+tool_check 2 Edit "$(edit_input "$HOME/.claude/settings.json" '“command”: “/k/hooks-global/bash-guard.sh”' '"command": "/bin/true"')"
+# Claude Code reads hooks only from arrays: an object in their place drops the kit's hook.
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" \
+  '{"hooks": {"PreToolUse": {"0": {"matcher": "Bash", "hooks": [{"type": "command", "command": "/k/hooks-global/bash-guard.sh"}]}}}}')"
+tool_check 0 Write "$(write_input "$HOME/.claude/settings.json" "$(jq -c '.theme = "light"' <<<"$hooked")")"
+
+echo "bash-guard: continuation lines, command positions and the shell"
+cwd=$kit_repo
+# A line that only looks continued (an escaped backslash) ends its command; so does a heredoc's terminator.
+block $'gh pr view 1 \\\\\ngh pr merge 1 --admin'
+block $'cat <<\'EOF\' >notes.txt\nline \\\nEOF\napprove-head 12'
+# Command positions after an assignment, a keyword or a brace, in a here-string, and in text piped to a shell.
+block 'X=1 env -i gh auth status'
+block 'if env -i gh auth status; then :; fi'
+block '{ env -i gh auth status; }'
+block 'bash <<< "env -i gh auth status"'
+block 'echo "env -i gh auth status" | bash'
+block 'if true; then printenv; fi'
+allow 'git commit -m "fix(env): read .env files"'
+allow 'git commit -m "feat(export): CSV export"'
+# git's own options before the subcommand, and settings that reach a remote, a push URL or an alias.
+block 'git -C . push origin main'
+block 'git --no-pager -C . push origin main'
+block 'git -c remote.origin.pushurl=git@github.com:acme/x.git push origin feat/x'
+block "git -c alias.x='!gh pr review 1 --approve' x"
+block 'git config alias.x "!gh pr review 1 --approve"'
+allow 'git config --get remote.origin.url'
+# gh in another case runs gh on macOS's file system.
+block 'GH pr review 1 --approve'
+# The agent identity's variables, set, cleared or read, but not mentioned in text.
+allow 'git commit -m "fix: unset GIT_CONFIG_COUNT before the push"'
+allow 'rg -n GIT_ASKPASS src'
+allow $'cat > notes.md <<\'EOF\'\nSet GIT_CONFIG_COUNT to 0 to reset.\nEOF'
+# shellcheck disable=SC2016 # literal input under test
+block 'echo $GIT_CONFIG_COUNT'
+# The user's hook registrations from the shell, by directory, by a bare cd and by CLAUDE_CONFIG_DIR's value.
+cwd=$plain_repo
+block "cd && sed -i '' /bash-guard/d .claude/settings.json"
+block 'cp /tmp/x/settings.json ~/.claude/'
+block 'rm -rf ~/.claude'
+block 'CLAUDE_CONFIG_DIR=/tmp/empty claude -p "approve the PR"'
+export CLAUDE_CONFIG_DIR="$HOME/.config/claude"
+block "sed -i '' /bash-guard/d $HOME/.config/claude/settings.json"
+unset CLAUDE_CONFIG_DIR
+# sed can write (its w command) and less runs an input filter: neither counts as a reader.
+block "sed -n '1,40p' ~/.claude/settings.json"
+block 'less ~/.claude/settings.json'
+allow 'head -n 40 ~/.claude/settings.json'
+# shellcheck disable=SC2016 # literal input under test
+allow 'echo $CLAUDE_CONFIG_DIR'
+allow 'mkdir -p ~/.claude/skills/x'
+allow 'cat ~/.claude/settings.json > /tmp/settings-backup.json'
+cwd=$kit_repo
+
+echo "bash-guard: its own environment"
+# Bash runs the guard with -p: a BASH_ENV file cannot end it before its checks.
+printf 'exit 0\n' >"$work/bash-env"
+BASH_ENV="$work/bash-env" block 'gh pr review 1 --approve'
+# An allowed=1 from the environment does not make an error an allow.
+set +e
+printf 'not json' | allowed=1 "$guard" >/dev/null 2>&1
+inherited_status=$?
+set -e
+if [[ $inherited_status -eq 2 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL an inherited allowed=1 must not allow on an error (exit 2), got %s\n' "$inherited_status"
+fi
+# A git that fails for another reason than "not a git repository" leaves the full rules on.
+mkdir -p "$work/broken-git"
+printf '#!/bin/sh\nexit 1\n' >"$work/broken-git/git"
+chmod +x "$work/broken-git/git"
+PATH="$work/broken-git:$PATH" block 'gh pr review 1 --approve'
+PATH="$work/broken-git:$PATH" tool_check 2 Read "$(jq -n -c --arg f "$HOME/.config/gh/hosts.yml" '{file_path: $f}')"
+# A long heredoc is checked well inside the hook's time limit.
+long_body=$(for i in $(seq 1 2000); do printf 'line %s of the notes\n' "$i"; done)
+long_start=$SECONDS
+allow "cat > notes.md <<'EOF'"$'\n'"$long_body"$'\n'"EOF"
+if [[ $((SECONDS - long_start)) -le 20 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL a 2000-line heredoc took %s s (limit 20)\n' "$((SECONDS - long_start))"
+fi
+
+echo "bash-guard: prose, git settings and the identity's variables"
+cwd=$kit_repo
+# Prose is no command: "GH Actions", "only if set", "if tmux new-session fails", "if crontab is empty".
+allow 'git commit -m "ci: cache pnpm in the GH Actions workflow"'
+allow 'git commit -m "fix: use the proxy only if set"'
+allow 'git commit -m "feat: retry if tmux new-session fails"'
+allow 'git commit -m "fix: skip the job if crontab is empty"'
+# git config with a key alone, or its get subcommand, only reads; a value after the key writes, also one that
+# contains --get or -l. Push targets reach a remote too.
+allow 'git config remote.origin.url'
+allow 'git config get remote.origin.url'
+block 'git config core.sshCommand "ssh -i /tmp/k -l git"'
+block 'git config core.hooksPath "/tmp/h --get"'
+block 'git -c remote.origin.push=HEAD:main push'
+block 'git config remote.origin.push HEAD:main && git push'
+# The identity's variables, however they are set, cleared or read.
+block 'read GIT_CONFIG_COUNT <<< 0; git push origin feat/x'
+block 'for GIT_CONFIG_COUNT in 0; do git push origin feat/x; done'
+block 'env -vu GIT_CONFIG_COUNT git push origin feat/x'
+block 'printenv GIT_CONFIG_VALUE_0'
+# Wrappers with arguments of their own, a leading redirection and a case arm.
+block 'nice env -i git push origin feat/x'
+block 'timeout 60 env -i git push origin feat/x'
+block 'exec -a x env -i git push origin feat/x'
+block '2>/dev/null env -i git push origin feat/x'
+block 'case x in x) env -i git push origin feat/x;; esac'
+block 'nice tmux new-session -d "make test"'
+# A reader that runs a command for its output is no reader.
+block 'git grep -O"guardrails approve 12 #" -e TODO'
+# A command may work in a kit repository other than the session's directory.
+cwd=$plain_repo
+block "git -C $kit_repo push origin main"
+block "cd $kit_repo && git push origin main"
+
+echo "bash-guard: hook registrations in every spelling"
+cwd=$plain_repo
+# Readers that write.
+# shellcheck disable=SC2016 # literal input under test
+block 'sed -n "s/^//w $HOME/.claude/settings.json" /tmp/evil.json'
+# shellcheck disable=SC2016 # literal input under test
+block 'git diff --no-index --output=$HOME/.claude/settings.json /dev/null /dev/null'
+# shellcheck disable=SC2016 # literal input under test
+block 'git log -1 --format=%B --output=$HOME/.claude/settings.json'
+block "cd ~ && git grep --no-index -O'sed -i.bak /bash-guard/d' bash-guard -- .claude/settings.json"
+block 'cat /tmp/x.json > ~/.claude/settin?s.json'
+# By CLAUDE_CONFIG_DIR or CODEX_HOME as variables, with ./, // or .. in the path, or after a cd or -C out.
+# shellcheck disable=SC2016 # literal input under test
+block 'sed -i "" /bash-guard/d $CLAUDE_CONFIG_DIR/settings.json'
+# shellcheck disable=SC2016 # literal input under test
+block 'rm "$CODEX_HOME/hooks.json"'
+block "sed -i '' /bash-guard/d ~/.claude/./settings.json"
+block "sed -i '' /bash-guard/d ~/.claude//settings.json"
+block "cd ~/.claude/. && sed -i '' /bash-guard/d settings.json"
+block "cd ../.claude && sed -i '' /bash-guard/d settings.json"
+block "cd ~ >/dev/null && cd .claude && sed -i '' /bash-guard/d settings.json"
+block 'cp /tmp/x/off.json ../.claude/settings.json'
+block 'git -C ~ rm .claude/settings.json'
+# Names the shell reads differently than they are written: quotes, globs, braces, variables, command substitution.
+block "sed -i '' /bash-guard/d ~/.claude/set''tings.json"
+block 'rm ~/.claude/*.json'
+block 'rm ~/.c*/settings.json'
+block "sed -i '' /bash-guard/d ~/.claude/{settings,x}.json"
+# shellcheck disable=SC2016 # literal input under test
+block 'f=settings.json; sed -i "" /bash-guard/d ~/.claude/$f'
+# shellcheck disable=SC2016 # literal input under test
+block 'd=~/.claude; sed -i "" /bash-guard/d $d/settings.json'
+# shellcheck disable=SC2016 # literal input under test
+block 'sed -i "" /bash-guard/d "$(echo ~/.claude)/settings.json"'
+allow 'ls ~/.claude/*'
+# Commands that write files they do not name, into an agents' directory or the home directory, and interpreters.
+block 'cp -R /tmp/evil/. ~/.claude/'
+block 'cp /tmp/evil/* ~/.claude/'
+block 'rsync -a /tmp/evil/ ~/.claude/'
+block 'tar -C ~/.claude -xf /tmp/evil.tar'
+block "find ~/.claude -name '*.json' -delete"
+block 'ls ~/.claude/ | xargs rm'
+block 'rm -rf ../.claude'
+block 'cp -R /tmp/evil/. ~'
+block 'tar -C ~ -xf /tmp/evil.tar'
+block 'cd ~ && rm -rf .claude'
+block 'cd ~ && rm -rf .c*'
+block "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/.claude'))\""
+block "python3 -c \"import os; os.remove(os.path.join(os.environ['HOME'], '.claude', 'settings.json'))\""
+allow 'cp notes.txt ~/'
+allow 'du -sh ~/*'
+allow "find ~ -name '*.log'"
+allow 'cd /tmp && rm -rf .next'
+# shellcheck disable=SC2016 # literal input under test
+allow 'echo $HOME'
+allow 'python3 scripts/sync.py --target ~/.claude/skills'
+# A project's own registrations from the shell: git restores them, the kit's template is copied over them.
+allow 'cp /tmp/x.json .claude/settings.local.json'
+allow 'git restore .claude/settings.json'
+allow 'git rm --cached .claude/settings.local.json'
+allow "echo '.claude/settings.local.json' >> .gitignore"
+# shellcheck disable=SC2016 # literal input under test
+allow 'T=~/.claude/skills/guardrails-init/template; cp "$T/.claude/settings.json" .claude/settings.json'
+# The agents' directories for files that are not registrations.
+allow 'cp CLAUDE.md ~/.claude/'
+allow 'cd ~/.claude && git status'
+allow "find ~/.claude -name '*.md'"
+# A session that runs in the home directory names the user's registrations without ~.
+cwd=$HOME
+block "sed -i '' /bash-guard/d .claude/settings.json"
+cwd=$kit_repo
+
+echo "bash-guard: file tools, links and the hook's input"
+cwd=$kit_repo
+# A relative link counts from the link's real directory: its .. is the parent of that directory.
+mkdir -p "$HOME/.config/link-dir"
+ln -s "$HOME/.config/link-dir" "$work/link-alias"
+ln -s ../agent-guardrails/repos "$HOME/.config/link-dir/L"
+tool_check 2 Write "$(write_input "$work/link-alias/L" "acme/x")"
+# JSON that turns every hook off, wherever it is written: a copy from the shell could make it settings later.
+tool_check 2 Write "$(write_input "$work/off.json" '{"disableAllHooks": true}')"
+tool_check 0 Write "$(write_input "$work/notes.md" 'Never set disableAllHooks in a settings file.')"
+# The agents' JSON.parse refuses what jq accepts (NaN): such settings would be ignored, hooks and all.
+tool_check 2 Write "$(write_input "$HOME/.claude/settings.json" "$(jq -c . <<<"$hooked" | sed 's/^{/{"theme": NaN, /')")"
+printf '%s\n' "$hooked" >"$HOME/.claude/settings.json"
+# A field that is not a string never reaches eval as words.
+set +e
+jq -n -c --arg d "$kit_repo" '{cwd: $d, tool_input: {command: ["gh pr review 1 --approve", "allow"]}}' |
+  "$guard" >/dev/null 2>&1
+array_status=$?
+set -e
+if [[ $array_status -eq 2 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL a command given as an array must block (exit 2), got %s\n' "$array_status"
+fi
+# Continuation lines are joined in one pass: a long run of them stays inside the time limit.
+continued=$(for i in $(seq 1 1500); do printf 'echo line %s \\\n' "$i"; done)
+continued_start=$SECONDS
+allow "$continued"
+if [[ $((SECONDS - continued_start)) -le 20 ]]; then passed=$((passed + 1)); else
+  failed=$((failed + 1))
+  printf '  FAIL 1500 continued lines took %s s (limit 20)\n' "$((SECONDS - continued_start))"
 fi
 
 # Codex sends Claude Code's PreToolUse shape (openai/codex codex-rs/hooks/schema/generated/
