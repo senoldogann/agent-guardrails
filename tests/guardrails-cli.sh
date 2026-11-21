@@ -492,7 +492,7 @@ if [[ $1 == api && $2 == graphql ]]; then
   exit
 fi
 case $args in
-  "api user --jq .login") echo owner ;;
+  "api user --jq .login") [[ -z ${FAKE_LOGIN_FAILS:-} ]] || { echo "HTTP 503" >&2; exit 1; }; echo owner ;;
   "api repos/acme/"*" --jq .default_branch") echo main ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails")'*) echo 7 ;;
   "api --paginate repos/acme/shop/rulesets?includes_parents=false --jq "*'"agent-guardrails-tags")'*) echo 9 ;;
@@ -612,10 +612,28 @@ expect_eq "projects: one search, one page of personal and one of organization re
 broken_home="$work/broken-home"
 mkdir -p "$broken_home/.config/agent-guardrails"
 printf 'acme/shop\nacme/broken\n' >"$broken_home/.config/agent-guardrails/repos"
+# One repository GitHub cannot read is an alarm about it; the others are still read, and the unreadable one has
+# no "repo" line, so the app claims no protection for it.
 if broken=$(HOME=$broken_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" inbox --json 2>&1); then
-  fail "an unreadable repository must fail the inbox, not shorten it: $broken"
+  expect_eq "an unreadable repository is an alarm that names what failed" \
+    "$(jq -r 'select(.repo == "acme/broken") | "\(.kind): \(.note)"' <<<"$broken")" \
+    "alarm: acme/broken could not be read from GitHub (cannot list the open PRs of acme/broken), so its rulesets and pull requests were not checked. Check that it still exists and that you can read it; if you removed it, take it off the list with: guardrails off acme/broken"
+  expect_eq "the other repositories are still read" \
+    "$(jq -r 'select(.kind == "repo") | .repo' <<<"$broken" | tr '\n' ' ')" "acme/shop "
+  [[ $(jq -r 'select(.repo == "acme/shop" and .kind != "repo" and .kind != "alarm" and .kind != "note") | .kind' <<<"$broken" | wc -l) -gt 0 ]] ||
+    fail "the readable repository must keep its pull request items: $broken"
+  inbox_text=$(HOME=$broken_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" "$kit/bin/guardrails" inbox 2>&1) ||
+    fail "the text inbox must not fail on one unreadable repository: $inbox_text"
+  grep -q '^ALARM  acme/broken could not be read from GitHub' <<<"$inbox_text" ||
+    fail "the text inbox must show the unreadable repository's alarm: $inbox_text"
 else
-  expect_eq "the inbox names what it could not read" "$(tail -1 <<<"$broken")" "error: cannot list the open PRs of acme/broken"
+  fail "one unreadable repository must not fail the whole inbox: $broken"
+fi
+gone_home="$work/gone-home"
+mkdir -p "$gone_home/.config/agent-guardrails"
+printf 'acme/shop\n' >"$gone_home/.config/agent-guardrails/repos"
+if out=$(HOME=$gone_home PATH="$fake_bin:$PATH" FAKE_PRS="$work/prs.json" FAKE_LOGIN_FAILS=1 "$kit/bin/guardrails" inbox --json 2>&1); then
+  fail "an unreachable GitHub must still fail the inbox, not look empty: $out"
 fi
 
 echo "merge queue in the inbox and on the command line"
