@@ -139,8 +139,11 @@ went over the last N days (default 30; the app offers 7, 30 and 90) in every enf
 merged by the agent App and by people, the median and 90th percentile time from ready for review to approval and
 to merge, PRs that needed a new approval after a push, PRs with a failing guard or checks run and how many merged
 after a later green run, merges without an approval on their final commit (an admin bypass, a merge before the
-guardrails were on, or an approval of an earlier commit only), and every ruleset change with its time, author and
-what changed. It only reads GitHub.
+guardrails were on, an approval of an earlier commit only, or a change request still standing), and every ruleset
+change with its time, author and what changed. A review counts only from a reviewer with write access (as of
+the report), by their latest word before the merge. The review ruleset also asks for a code owner's approval and one
+by someone other than the last pusher, which the report does not check: a listed merge certainly lacked an approval,
+an unlisted one may still have needed a bypass. It only reads GitHub.
 
 ### Updating a project's kit files
 

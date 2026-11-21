@@ -15,11 +15,12 @@
   {"number": 12, "title": "feat(A-12): review mode, approved twice", "url": "u12", "headRefOid": "b2",
    "createdAt": "2026-11-03T08:00:00Z", "closedAt": "2026-11-03T14:00:00Z", "mergedAt": "2026-11-03T14:00:00Z",
    "author": {"__typename": "Bot", "login": "Guardrails-Agent-Acme"}, "mergedBy": {"login": "owner"},
+   "latestOpinionatedReviews": {"nodes": [{"author": {"login": "owner"}}]},
    "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": [
-     {"__typename": "PullRequestReview", "id": "R1", "state": "DISMISSED", "submittedAt": "2026-11-03T09:00:00Z", "commit": {"oid": "b1"}},
+     {"__typename": "PullRequestReview", "id": "R1", "state": "DISMISSED", "submittedAt": "2026-11-03T09:00:00Z", "commit": {"oid": "b1"}, "author": {"login": "owner"}},
      {"__typename": "ReviewDismissedEvent", "previousReviewState": "APPROVED", "review": {"id": "R1"}},
-     {"__typename": "PullRequestReview", "id": "R2", "state": "COMMENTED", "submittedAt": "2026-11-03T10:00:00Z", "commit": {"oid": "b2"}},
-     {"__typename": "PullRequestReview", "id": "R3", "state": "APPROVED", "submittedAt": "2026-11-03T13:00:00Z", "commit": {"oid": "b2"}}]},
+     {"__typename": "PullRequestReview", "id": "R2", "state": "COMMENTED", "submittedAt": "2026-11-03T10:00:00Z", "commit": {"oid": "b2"}, "author": {"login": "owner"}},
+     {"__typename": "PullRequestReview", "id": "R3", "state": "APPROVED", "submittedAt": "2026-11-03T13:00:00Z", "commit": {"oid": "b2"}, "author": {"login": "owner"}}]},
    "commits": {"pageInfo": {"hasPreviousPage": false}, "nodes": [
      {"commit": {"oid": "b1", "statusCheckRollup": null}},
      {"commit": {"oid": "b2", "statusCheckRollup": {"contexts": {"nodes": [

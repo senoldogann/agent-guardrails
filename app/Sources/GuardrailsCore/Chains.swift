@@ -197,10 +197,9 @@ public enum ChecksTone: Sendable, Equatable {
 /// neutral are not) wins, because a workflow the PR adds could report a run of that name; otherwise the newest run
 /// decides, so a run that a newer one cancelled (the guard's concurrency group does that) is not a failure, and only a
 /// newest run that succeeded passes the guard. Every other check is counted by its newest run per name, as GitHub does
-/// for a required check after a rerun. One difference from the CLI, which orders runs by start time: here "newest" is
-/// the highest run id, since GitHub numbers runs as it creates them, while start times have whole seconds and a queued
-/// run has none. A neutral or skipped check is neither a pass nor a failure, so "passed" is said only when every
-/// counted run passed.
+/// for a required check after a rerun. As in the CLI, "newest" is the highest run id, since GitHub numbers runs as it
+/// creates them, while start times have whole seconds and a queued run has none. A neutral or skipped check is
+/// neither a pass nor a failure, so "passed" is said only when every counted run passed.
 public struct ChecksReading: Sendable, Equatable {
     public enum Source: Sendable, Equatable {
         case loading

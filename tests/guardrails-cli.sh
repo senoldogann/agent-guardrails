@@ -311,6 +311,26 @@ expect_eq "a check that passed on its rerun is green" "$(pr_states "[]" <<<"$rer
 expect_eq "a check that failed on its rerun is failing" \
   "$(jq -c '.[0].statusCheckRollup[1].conclusion = "SUCCESS" | .[0].statusCheckRollup[2].conclusion = "FAILURE"' <<<"$rerun" |
     pr_states "[]" | jq -r .note)" "checks failing"
+# Runs started in the same second: the newer job (the higher ID in detailsUrl) counts, wherever the rollup lists it.
+job() { printf 'https://github.com/o/r/actions/runs/1/job/%s' "$1"; }
+same_second=$(jq -n -c --arg old "$(job 900)" --arg new "$(job 1000)" '[{"url":"u10","title":"feat(A-10): tie","isDraft":false,
+  "labels":[],"statusCheckRollup":[
+  {"__typename":"CheckRun","name":"guard","status":"IN_PROGRESS","conclusion":"","startedAt":"2026-01-02T00:00:00Z","detailsUrl":$new},
+  {"__typename":"CheckRun","name":"guard","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z","detailsUrl":$old},
+  {"__typename":"CheckRun","name":"checks-node","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-02T00:00:00Z","detailsUrl":$new},
+  {"__typename":"CheckRun","name":"checks-node","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-02T00:00:00Z","detailsUrl":$old}]}]')
+expect_eq "a guard run started in the same second as a finished one, and newer, is still running" \
+  "$(pr_states "[]" <<<"$same_second" | jq -r .kind)" "wait"
+expect_eq "a check run started in the same second as a failed one, and newer, decides" \
+  "$(jq -c '.[0].statusCheckRollup[0].status = "COMPLETED" | .[0].statusCheckRollup[0].conclusion = "SUCCESS"' <<<"$same_second" |
+    pr_states "[]" | jq -r .note)" "checks green"
+# A queued run has no start time yet (gh writes year 1): its job ID still makes it the newest.
+expect_eq "a newer guard run still queued keeps the PR waiting" \
+  "$(jq -c '.[0].statusCheckRollup[0].status = "QUEUED" | .[0].statusCheckRollup[0].startedAt = "0001-01-01T00:00:00Z"' <<<"$same_second" |
+    pr_states "[]" | jq -r .kind)" "wait"
+# The job ID is the number after /actions/runs/<run>/job/, not any "/job/" in the repository's name.
+job_repo=$(jq -c '(.[0].statusCheckRollup[] | .detailsUrl) |= sub("/o/r/"; "/job/2024/")' <<<"$same_second")
+expect_eq "a repository named job/2024 does not hide the job ID" "$(pr_states "[]" <<<"$job_repo" | jq -r .kind)" "wait"
 
 echo "pr_states"
 expect_eq "every open PR has a kind" "$(pr_states "[]" <<<"$fixture" | jq -r '"\(.url) \(.kind)"' | tr '\n' ' ')" \
@@ -734,6 +754,13 @@ runs='{"workflow_runs":[
  {"path":".github/workflows/lookalike.yml","created_at":"2026-01-03T00:00:00Z","conclusion":"success","pull_requests":[{"number":5,"base":{"ref":"main"}}]}]}'
 expect_eq "a newer run of another PR into another branch does not count" "$(guard_conclusion 5 main <<<"$runs")" "failure"
 expect_eq "a PR with no guard run into the default branch is missing" "$(guard_conclusion 6 main <<<"$runs")" "missing"
+# GitHub lists the newest run first; of two created in the same second, the higher run ID is the newer.
+tie='{"workflow_runs":[
+ {"id":20,"path":".github/workflows/agent-guard.yml","created_at":"2026-01-04T00:00:00Z","conclusion":"failure","pull_requests":[{"number":7,"base":{"ref":"main"}}]},
+ {"id":19,"path":".github/workflows/agent-guard.yml","created_at":"2026-01-04T00:00:00Z","conclusion":"success","pull_requests":[{"number":7,"base":{"ref":"main"}}]}]}'
+expect_eq "of two runs created in the same second, the newer one decides" "$(guard_conclusion 7 main <<<"$tie")" "failure"
+expect_eq "the run number, which counts the workflow's runs, comes before the run ID" \
+  "$(jq -c '.workflow_runs[0].run_number = 7 | .workflow_runs[1].run_number = 8' <<<"$tie" | guard_conclusion 7 main)" "success"
 
 echo "kit install checks"
 fake_kit="$work/fake-kit"

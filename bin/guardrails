@@ -875,12 +875,13 @@ report_query='query($endCursor: String) {
         number title url createdAt closedAt mergedAt headRefOid
         author { __typename login }
         mergedBy { login }
+        latestOpinionatedReviews(first: 100, writersOnly: true) { nodes { author { login } } }
         timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, REVIEW_DISMISSED_EVENT]) {
           pageInfo { hasNextPage }
           nodes {
             __typename
             ... on ReadyForReviewEvent { createdAt }
-            ... on PullRequestReview { id state submittedAt commit { oid } }
+            ... on PullRequestReview { id state submittedAt commit { oid } author { login } }
             ... on ReviewDismissedEvent { previousReviewState review { id } }
           }
         }
@@ -893,7 +894,7 @@ report_query='query($endCursor: String) {
                 contexts(first: 50) {
                   nodes {
                     __typename
-                    ... on CheckRun { name status conclusion completedAt }
+                    ... on CheckRun { databaseId name status conclusion completedAt }
                     ... on StatusContext { context state createdAt }
                   }
                 }

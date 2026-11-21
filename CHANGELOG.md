@@ -103,6 +103,19 @@ versions follow [Semantic Versioning](https://semver.org/). A release is cut by 
   action: right after the confirmation for `on` and for the owner's own merge, through the merge queue for a
   queued PR, and auto-merge or a person for any other approval. After a success they show what happened; after
   a failed run they claim nothing.
+- The owner's approval read the newest guard run by creation time alone. GitHub lists runs newest first, so of
+  two guard runs created in the same second the older one decided, and an older passing run could stand for a
+  newer failed one. The run number and run ID now break the tie. The inbox and the app's pull request list
+  read the newest run of a check by its job ID, as the app's review board already did: a newer guard run that is
+  still queued or running no longer shows the PR as ready to approve, and a newer passing check no longer
+  counts as failing.
+- `guardrails report` counted any approving review of a merged PR's final commit, whoever wrote it, whenever
+  and whatever they said afterwards. It now counts only reviews from reviewers with write access, submitted
+  before the merge, takes each reviewer's latest approving, change-requesting or dismissed review as their word,
+  and lists a merge as without an approval while a change request still stood; a merge-approval posted after
+  the merge no longer counts either. The times to approve and the re-approvals count the same reviews. The
+  review ruleset's code-owner and last-pusher rules are not checked: a listed merge certainly lacked an
+  approval, an unlisted one may still have needed a bypass.
 - `guardrails report` counted any review still in the approved state as an approval of a merged PR, whatever
   commit it approved. A PR whose only approval was of an earlier commit (in status mode, where pushes dismiss
   no review, or after a push that did not dismiss it) did not appear under merges without an approval on the
